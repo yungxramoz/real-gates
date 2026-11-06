@@ -1,0 +1,168 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+
+/**
+ * AC-0.1 — `scripts/ac-trace.mjs`, run as CI runs it: a real process against a throwaway tree.
+ * It passes only when every defined AC is named in a test title (and in a contract, unless
+ * `--no-contracts`), prints every gap by ID, and fails closed on a file it cannot use.
+ */
+
+const SCRIPT = fileURLToPath(new URL('../../scripts/ac-trace.mjs', import.meta.url));
+const roots: string[] = [];
+
+function tree(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), 'ac-trace-'));
+  roots.push(root);
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+  }
+  return root;
+}
+
+function run(root: string, ...args: string[]) {
+  const result = spawnSync(process.execPath, [SCRIPT, '--root', root, ...args], {
+    encoding: 'utf8',
+  });
+  return { code: result.status, out: `${result.stdout}${result.stderr}` };
+}
+
+/**
+ * Fixture test files are assembled with `spec()`, so this file's own source never holds a test
+ * title with a fixture ID in it. Otherwise the repo's real `pnpm ac-trace` would read the
+ * fixtures as tests, and a fixture could satisfy a real AC.
+ */
+function spec(fn: string, title: string, quote = "'"): string {
+  return `${fn}(${quote}${title}${quote}, () => {});\n`;
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+const REQUIREMENTS = [
+  '# Requirements',
+  '',
+  '<!-- Example only:',
+  '- AC-9.9 never counts -->',
+  '',
+  '### AC-1.1 Heading form',
+  '- AC-1.2 List item form',
+  '1. **AC-1.3** Numbered and bold',
+  '- [ ] AC-1.10 Checkbox form',
+  '',
+  'Prose that mentions AC-7.7 is a reference, not a definition.',
+  '',
+  '```md',
+  '- AC-8.8 inside a fence',
+  '```',
+].join('\n');
+
+const ALL_TESTED = [
+  "import { test } from '@playwright/test';\n",
+  spec('test', 'AC-1.1 heading'),
+  spec('test.describe', 'AC-1.2 and AC-1.3 together', '"'),
+  spec('it', 'AC-1.10 template literal', '`'),
+].join('');
+
+describe('ac-trace', () => {
+  it('AC-0.1 passes when every AC is in a test title, contracts skipped', () => {
+    const root = tree({ 'docs/REQUIREMENTS.md': REQUIREMENTS, 'tests/e2e/a.spec.ts': ALL_TESTED });
+    const { code, out } = run(root, '--no-contracts');
+    expect(out).toContain('ac-trace: OK — 4 AC(s) traced to tests (contracts skipped)');
+    expect(code).toBe(0);
+  });
+
+  it('AC-0.1 reads definitions only from list items and headings outside comments and fences', () => {
+    const root = tree({ 'docs/REQUIREMENTS.md': REQUIREMENTS, 'tests/e2e/a.spec.ts': '' });
+    const { out } = run(root, '--no-contracts');
+    expect(out).toContain('FAIL — 4 gap(s) across 4 AC(s)');
+    expect(out).not.toMatch(/AC-(9\.9|7\.7|8\.8) has no test/);
+  });
+
+  it('AC-0.1 prints each AC with no test and exits 1', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': REQUIREMENTS,
+      'tests/unit/a.test.ts': spec('it', 'AC-1.1 only this one'),
+    });
+    const { code, out } = run(root, '--no-contracts');
+    expect(code).toBe(1);
+    expect(out).toContain('AC-1.2 has no test');
+    expect(out).toContain('AC-1.3 has no test');
+    expect(out).toContain('AC-1.10 has no test');
+    expect(out).not.toContain('AC-1.1 has no test');
+    expect(out).toContain('FAIL — 3 gap(s) across 4 AC(s)');
+  });
+
+  it('AC-0.1 a comment naming an AC is not a test', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-2.1 Something',
+      'tests/unit/a.test.ts': `// AC-2.1 is covered below\n${spec('it', 'renders')}`,
+    });
+    const { code, out } = run(root, '--no-contracts');
+    expect(code).toBe(1);
+    expect(out).toContain('AC-2.1 has no test');
+  });
+
+  it('AC-0.1 an ID does not match a longer ID that starts with it', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-1.1 One\n- AC-1.10 Ten',
+      'tests/unit/a.test.ts': spec('it', 'AC-1.10 ten'),
+    });
+    const { code, out } = run(root, '--no-contracts');
+    expect(code).toBe(1);
+    expect(out).toContain('AC-1.1 has no test');
+    expect(out).not.toContain('AC-1.10 has no test');
+  });
+
+  it('AC-0.1 with contracts, an AC missing from every contract is a gap', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-3.1 One\n- AC-3.2 Two',
+      'tests/unit/a.test.ts': spec('it', 'AC-3.1 one') + spec('it', 'AC-3.2 two'),
+      '.loop/contracts/ITEM-1.md': '# Contract\n- AC-3.1 is proven by the unit test.',
+    });
+    const { code, out } = run(root);
+    expect(code).toBe(1);
+    expect(out).toContain('AC-3.2 has no contract');
+    expect(out).not.toContain('AC-3.1 has no contract');
+  });
+
+  it('AC-0.1 with contracts in docs/contracts and .loop/contracts, a full trace passes', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-3.1 One\n- AC-3.2 Two',
+      'tests/unit/a.test.ts': spec('it', 'AC-3.1 one') + spec('it', 'AC-3.2 two'),
+      '.loop/contracts/ITEM-1.md': 'Covers AC-3.1.',
+      'docs/contracts/ITEM-2.md': 'Covers AC-3.2.',
+    });
+    const { code, out } = run(root);
+    expect(out).toContain('OK — 2 AC(s) traced to tests and 2 contract file(s)');
+    expect(code).toBe(0);
+  });
+
+  it('AC-0.1 warns about an AC in a test title that the requirements do not define', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-4.1 One',
+      'tests/unit/a.test.ts': spec('it', 'AC-4.1 one') + spec('it', 'AC-4.9 typo'),
+    });
+    const { code, out } = run(root, '--no-contracts');
+    expect(code).toBe(0);
+    expect(out).toContain('warning: AC-4.9 is named in a test title but not in REQUIREMENTS.md');
+  });
+
+  it('AC-0.1 fails closed on a missing requirements file or one with no AC IDs', () => {
+    expect(run(tree({ 'tests/a.test.ts': '' }), '--no-contracts')).toMatchObject({ code: 1 });
+    const empty = run(tree({ 'docs/REQUIREMENTS.md': '# Nothing yet' }), '--no-contracts');
+    expect(empty.code).toBe(1);
+    expect(empty.out).toContain('no AC IDs found');
+  });
+
+  it('AC-0.1 refuses an unknown argument', () => {
+    const { code, out } = run(tree({ 'docs/REQUIREMENTS.md': '- AC-1.1 x' }), '--bogus');
+    expect(code).toBe(2);
+    expect(out).toContain('unknown argument: --bogus');
+  });
+});

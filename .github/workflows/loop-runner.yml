@@ -1,0 +1,49 @@
+name: loop-runner
+
+# The loop runner is Node built-ins only and runs on whatever machine its owner has, so its suite
+# runs on all three OSes whenever loop/ changes. No `pnpm install`: the runner must work before
+# one. Windows is where path separators and CRLF bite; macOS where BSD tools differ.
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths: ['loop/**', '.github/workflows/loop-runner.yml']
+  push:
+    branches: [develop, main]
+    paths: ['loop/**', '.github/workflows/loop-runner.yml']
+
+concurrency:
+  group: loop-runner-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  loop-runner:
+    name: loop-runner (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      # One red OS must not hide whether the others pass.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The suite creates real git repos; a runner without an identity cannot commit in them.
+      - name: git identity for test repos
+        run: |
+          git config --global user.name "loop-runner CI"
+          git config --global user.email "loop-runner@example.com"
+          git config --global init.defaultBranch main
+
+      # A glob, quoted so Node expands it (not the shell): Node 22+ reads a bare directory
+      # argument as a module path and fails with "Cannot find module '…/loop/test'".
+      - name: node --test loop/test
+        run: node --test "loop/test/**/*.test.mjs"

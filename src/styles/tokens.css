@@ -1,0 +1,34 @@
+/* Design tokens as CSS custom properties. Every colour the UI uses is named here once; components
+ * use the Tailwind utilities mapped onto these in `src/app/globals.css` (`bg-surface`,
+ * `text-muted`), never a literal. Replace the values with your design system's.
+ *
+ * Text pairs meet WCAG 2.2 AA contrast (4.5:1) in both schemes:
+ *   light: text 17.0:1 on bg, muted 8.9:1 on surface, accent 6.4:1 on bg, accent-ink 6.8:1
+ *   dark:  text 15.9:1 on bg, muted 8.2:1 on surface, accent 8.7:1 on bg, accent-ink 8.5:1
+ * Recheck the ratios whenever a value changes. */
+:root {
+  --c-bg: #f8f8f7;
+  --c-surface: #ffffff;
+  --c-line: #dcdcd8;
+  --c-text: #161616;
+  --c-muted: #4a4a46;
+  --c-accent: #2e5b9a;
+  --c-accent-ink: #ffffff;
+  --c-focus: #2e5b9a;
+
+  --font-body:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: #121314;
+    --c-surface: #1b1c1e;
+    --c-line: #2f3134;
+    --c-text: #ededea;
+    --c-muted: #b4b4ae;
+    --c-accent: #8db4ec;
+    --c-accent-ink: #0d1726;
+    --c-focus: #8db4ec;
+  }
+}

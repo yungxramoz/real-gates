@@ -1,0 +1,259 @@
+name: CI
+
+# Runs on every PR to the base and production branches, and on every push to them: the loop waits
+# for `ci` on the merge commit, so base CI must run after a merge too. Make `ci` the one required
+# status check in branch protection.
+#
+# One job, not one per check. GitHub bills every job rounded up to a whole minute, so a dozen
+# parallel one-minute jobs bill a dozen minutes for one minute of wall clock; the same checks in
+# sequence bill a fraction of that. Every check step runs even when an earlier one failed
+# (`!cancelled()`), so one red step never hides another, and the last step names every step that
+# did not pass.
+#
+# Adding a check: add a step with `if: ${{ !cancelled() }}` and an `id`, and add the id to the
+# final step's list. A check that is not in that list does not gate the merge.
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The Node version the Vercel project builds with, so a green CI build means a green deploy.
+  NODE_VERSION: '24'
+
+  # Sentinels, not secrets. The build gets fake server-only keys and `bundle_guard` proves they
+  # did not reach a client chunk. The property tested is the same as with real keys, and the real
+  # keys never need to exist in GitHub Actions. Never replace these with real values.
+  SUPABASE_SECRET_KEY: 'ci-sentinel-supabase-secret-key-must-never-reach-the-browser'
+  EMAIL_API_KEY: 'ci-sentinel-email-api-key-must-never-reach-the-browser'
+
+  # Stub mode (src/lib/stub.ts): the e2e suite runs against this job's own production build with
+  # no Supabase project and no email provider. `NEXT_PUBLIC_*` values are inlined at build time,
+  # so build and e2e share them. The Supabase URL is loopback, which stub mode requires.
+  APP_ENV: preview
+  STUB_MODE: '1'
+  NEXT_PUBLIC_SITE_URL: http://127.0.0.1:4791
+  NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-stub-publishable-key
+  E2E_PORT: '4791'
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # A missing scaffold is a loud, named red rather than a silent skip.
+      - name: preflight
+        id: preflight
+        run: |
+          set -uo pipefail
+          missing=''
+          for f in package.json pnpm-lock.yaml; do
+            [ -f "$f" ] || missing="${missing} ${f}"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing from the repository root:${missing}"
+            exit 1
+          fi
+          echo "OK: package.json and pnpm-lock.yaml are present."
+
+      # No `version:` input: pnpm/action-setup reads `packageManager` from package.json, which
+      # keeps CI and every developer on exactly one pnpm.
+      - uses: pnpm/action-setup@v4
+        if: ${{ !cancelled() }}
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      # --frozen-lockfile: an out-of-date lockfile is a red build, not a silent re-resolve.
+      - name: install
+        id: install
+        if: ${{ !cancelled() }}
+        run: pnpm install --frozen-lockfile
+
+      - name: lint
+        id: lint
+        if: ${{ !cancelled() }}
+        run: pnpm lint
+
+      # If this is red, run `pnpm format` and commit.
+      - name: format
+        id: format
+        if: ${{ !cancelled() }}
+        run: pnpm format:check
+
+      - name: typecheck
+        id: typecheck
+        if: ${{ !cancelled() }}
+        run: pnpm typecheck
+
+      # Vitest with v8 coverage. The thresholds in vitest.config.mts are a ratchet: a run below
+      # them fails here.
+      - name: test:unit
+        id: test_unit
+        if: ${{ !cancelled() }}
+        run: pnpm test:unit
+
+      - name: build
+        id: build
+        if: ${{ !cancelled() }}
+        run: pnpm build
+
+      # Greps every client chunk for the sentinel values above. It prints the file a sentinel was
+      # found in, never the bytes around it: a leaked key must not then leak into a public log.
+      - name: bundle-guard
+        id: bundle_guard
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -uo pipefail
+          if [ ! -d .next/static ]; then
+            echo "::error::.next/static does not exist; nothing to scan."
+            exit 1
+          fi
+          leaked=''
+          for name in SUPABASE_SECRET_KEY EMAIL_API_KEY; do
+            value="${!name}"
+            files=$(grep -rlF -- "$value" .next/static || true)
+            if [ -n "$files" ]; then
+              leaked="${leaked} ${name}"
+              echo "::error::The value of ${name} reached a client chunk:"
+              echo "$files"
+            fi
+          done
+          [ -z "$leaked" ] || exit 1
+          echo "OK: no server-only key value in .next/static."
+
+      # Playwright + axe against `next start` on this job's build, in stub mode (the config
+      # starts the server). Chromium only: the projects are a 360 px phone and a desktop.
+      - name: e2e
+        id: e2e
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          pnpm exec playwright install --with-deps chromium
+          pnpm test:e2e
+
+      - name: upload e2e report
+        if: ${{ failure() && steps.e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: artifacts/playwright-report
+          retention-days: 7
+
+      # Every AC in docs/REQUIREMENTS.md must be named in a test title, and in a contract once
+      # the loop has written any. Before the first loop run there are no contracts, so only the
+      # test half can be checked; the step says so instead of skipping silently.
+      - name: ac-trace
+        id: ac_trace
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          if ls .loop/contracts/*.md docs/contracts/*.md >/dev/null 2>&1; then
+            pnpm ac-trace
+          else
+            echo "::notice::No contracts in .loop/contracts or docs/contracts yet; checking tests only."
+            pnpm ac-trace --no-contracts
+          fi
+
+      # The project rule table may only grow. On a PR it is compared with the base branch; on a
+      # push with the commit the push replaced.
+      - name: check:rules
+        id: check_rules
+        if: ${{ !cancelled() }}
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            pnpm check:rules --base "origin/${BASE_REF}"
+          elif [ -n "${BEFORE:-}" ] && [ "${BEFORE}" != "0000000000000000000000000000000000000000" ]; then
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+            pnpm check:rules --base "$BEFORE"
+          else
+            echo "::notice::No earlier commit to compare with; checking the rule examples only."
+            pnpm check:rules
+          fi
+
+      - name: check:skills
+        id: check_skills
+        if: ${{ !cancelled() }}
+        run: pnpm check:skills
+
+      # No identifiers from another project, no personal data, no secrets in the tree.
+      - name: sanitize
+        id: sanitize
+        if: ${{ !cancelled() }}
+        run: pnpm sanitize
+
+      # The loop runner's own suite (Node built-ins). loop-runner.yml runs it on three OSes when
+      # loop/ changes; here it gates every merge on Linux.
+      - name: test:loop
+        id: test_loop
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # The suite creates real git repos; a runner without an identity cannot commit in them.
+          git config --global user.name "loop-runner CI"
+          git config --global user.email "loop-runner@example.com"
+          pnpm test:loop
+
+      # The repo scripts' own suites (sanitizer, skill checker, ac-trace helpers): Node built-ins.
+      - name: test:scripts
+        id: test_scripts
+        if: ${{ !cancelled() }}
+        run: pnpm test:scripts
+
+      # Allow-list, not a deny-list: only `success` passes. A skipped check has not passed.
+      - name: Every check must have run and passed
+        if: ${{ always() }}
+        env:
+          OUTCOMES: >-
+            preflight=${{ steps.preflight.outcome }}
+            install=${{ steps.install.outcome }}
+            lint=${{ steps.lint.outcome }}
+            format=${{ steps.format.outcome }}
+            typecheck=${{ steps.typecheck.outcome }}
+            test_unit=${{ steps.test_unit.outcome }}
+            build=${{ steps.build.outcome }}
+            bundle_guard=${{ steps.bundle_guard.outcome }}
+            e2e=${{ steps.e2e.outcome }}
+            ac_trace=${{ steps.ac_trace.outcome }}
+            check_rules=${{ steps.check_rules.outcome }}
+            check_skills=${{ steps.check_skills.outcome }}
+            sanitize=${{ steps.sanitize.outcome }}
+            test_loop=${{ steps.test_loop.outcome }}
+            test_scripts=${{ steps.test_scripts.outcome }}
+        run: |
+          set -uo pipefail
+          bad=''
+          for pair in $OUTCOMES; do
+            echo "  ${pair}"
+            [ "${pair#*=}" = "success" ] || bad="${bad} ${pair}"
+          done
+          if [ -n "$bad" ]; then
+            for b in $bad; do echo "::error::CI check did not pass: ${b}"; done
+            exit 1
+          fi
+          echo ""
+          echo "CI green: every check ran and passed."

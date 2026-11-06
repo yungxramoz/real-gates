@@ -1,0 +1,9 @@
+# pnpm settings live here from pnpm 11 on (the "pnpm" field in package.json is ignored).
+#
+# pnpm blocks dependency install scripts by default and this repo keeps that default. `allowBuilds`
+# is an explicit per-package allowlist: adding a name here is a reviewable supply-chain decision,
+# not a convenience. If `pnpm install` fails with ERR_PNPM_IGNORED_BUILDS, read what the package
+# does before adding it. Never reach for `dangerouslyAllowAllBuilds`.
+allowBuilds:
+  # Native resolver behind eslint-import-resolver-typescript (pulled in by eslint-config-next).
+  unrs-resolver: true
