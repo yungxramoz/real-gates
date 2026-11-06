@@ -7,8 +7,10 @@ that will actually hold**, and say in the PR why that rung:
 1. **A lesson** in `docs/LESSONS.md`: one row that states the rule and **names the command that
    proves it** (a test, a script, a grep). Every later session reads this file. Use it when the
    rule needs judgement.
-2. **A test or check** that fails when the mistake comes back: a unit test, a lint rule, a script
-   CI runs. Use it when the mistake can be detected mechanically in the code.
+2. **A test** that fails when the mistake comes back, in the existing test suites (`tests/`), so CI
+   runs it without any config change. Use it when the mistake can be detected mechanically in the
+   code. You cannot change CI's own wiring (`package.json` scripts, `scripts/`, the lint, test and
+   type configs): if the check needs that, ship it as a patch (below).
 3. **A stricter guard rule**: add a row to `loop/rules/project-rules.json` with an `id` (`P-<n>`),
    `target` (shell, path, sql or mcp), `pattern`, `reason` (what the agent should do instead) and
    `examples.block` / `examples.allow`. Run `node loop/scripts/check-rules.mjs`. Use it when an

@@ -56,8 +56,25 @@ function decideMcp(tool, input, ctx) {
 }
 
 // ----------------------------------------------------------------------------------------- shell
+/**
+ * The command line with the spellings that hide a command from a pattern removed: quotes, `git -C
+ * <dir>` / `-c k=v` / `--git-dir=`, `gh -R <repo>` / `--repo`, `--method=PUT` / `-XPUT`.
+ * The rules below match against this. They are an early warning: the runner's own checks after
+ * every session (base and production unmoved, harness files unchanged) are the hard stop.
+ */
+export function normalizeShell(cmd) {
+  return String(cmd)
+    .replace(/["'`]/g, '')
+    .replace(/\\\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\bgit((?:\s+(?:-C|-c)\s+\S+|\s+--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+|\s+--no-pager|\s+-P)+)/gi, 'git')
+    .replace(/(\bgh\b[^;|&]*?)\s(?:-R|--repo)(?:=|\s+)\S+/gi, '$1')
+    .replace(/--method=/gi, '--method ')
+    .replace(/(\s)-X(DELETE|PUT|PATCH|POST)\b/gi, '$1-X $2');
+}
+
 function decideShell(cmd, ctx) {
-  const c = cmd.replace(/\s+/g, ' ');
+  const c = normalizeShell(cmd);
   const { base, production } = ctx.cfg;
   const g = ctx.cfg.guard || {};
   const branches = [base, production].filter(Boolean).map(esc).join('|');
@@ -72,14 +89,19 @@ function decideShell(cmd, ctx) {
   if (/\bgh\s+pr\s+merge\b/i.test(c)) return no('core:merge', 'only the runner merges, after CI and review. Stop once the PR is open.');
   if (/\bgh\s+(repo\s+(delete|edit|rename|archive)|release\s+(create|delete|edit)|secret\s|variable\s|ruleset\s)/i.test(c)) return no('core:repo-admin', 'repository settings, releases, secrets and variables are the owner\'s.');
   if (/\bgh\s+api\b.*(-X|--method)\s*(DELETE|PUT|PATCH)/i.test(c)) return no('core:gh-api-write', 'mutating gh api calls are not allowed in the loop.');
-  if (/\bgh\s+api\b.*(protection|rulesets|\/merges\b|\/git\/refs)/i.test(c)) return no('core:gh-api-write', 'branch protection, rulesets and refs are the owner\'s.');
+  if (/\bgh\s+api\b.*(protection|rulesets|\/merges?\b|\/git\/refs)/i.test(c)) return no('core:gh-api-write', 'merges, branch protection, rulesets and refs are the owner\'s.');
+  if (/\bgh\s+api\s+graphql\b.*\bmutation\b/i.test(c) || (/\bgh\s+api\s+graphql\b/i.test(c) && /--input|-F\s+query=@|-f\s+query=@/i.test(c))) return no('core:gh-api-write', 'GraphQL mutations are not allowed in the loop.');
+  if (/\bgit\s+config\b[^;|&]*\b(push\.|remote\.|branch\.\S+\.(merge|remote|pushRemote)|alias\.|core\.hooksPath|url\.)/i.test(c)) return no('core:git-config', 'push, remote, branch-tracking, alias and hook settings are not the loop\'s to change.');
+  if (/\bgit\s+remote\s+(add|set-url|rename|remove|rm)\b/i.test(c)) return no('core:git-config', 'the remotes are not the loop\'s to change.');
+  if (/\bgit\s+push\b[^;|&]*\s--(all|tags|follow-tags)\b/i.test(c)) return no('core:push-base', 'push one feature branch by name; never all branches or tags.');
   if (/(^|[;&|(]\s*|\bnpx\s+|\bpnpm\s+(dlx\s+|exec\s+)?)vercel\s+(env|deploy\b[^;&|]*--prod|promote|rollback|domains?|alias|remove|rm|project|link)\b/i.test(c)) return no('core:vercel-write', 'Vercel settings and production deploys are the owner\'s.');
   if (/\brm\s+-\w*r\w*\s+(\/(\s|$)|~\/?(\s|$)|\$HOME\/?(\s|$)|\*|\.\/?(\s|$)|\.\.(\/|\s|$)|[A-Za-z]:[\\/]?(\s|$))/i.test(c) || /Remove-Item\b[^;|&]*-Recurse[^;|&]*\s(\.|\*|[A-Za-z]:\\?|~)(\s|$)/i.test(c)) return no('core:broad-delete', 'refusing a broad recursive delete.');
   if (/\bgit\s+clean\s+-\w*f/i.test(c) || (production && new RegExp(`\\bgit\\s+reset\\s+--hard\\s+(origin/)?${esc(production)}\\b`, 'i').test(c))) return no('core:git-destroy', 'git clean -f and resetting to production are not allowed.');
   if (/\bgit\s+add\s+(-A|--all|\.)(\s|$|;|&)/i.test(c)) return no('core:add-all', 'add explicit paths. A blanket add commits runtime files (.loop/) and anything else lying in the tree.');
   for (const ref of g.forbiddenRefs || []) if (ref && c.includes(ref)) return no('core:forbidden-ref', `project ${ref} is out of bounds.`);
   if (READ_ONLY_PHASES.has(ctx.phase)) {
-    if (/\bgit\s+(commit|push|merge|rebase|reset|cherry-pick|tag|am|apply|stash|checkout\s+-b|switch\s+-c|branch\s+-[dDmM])\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: no commits, pushes or branch changes.`);
+    if (/\bgit\s+(commit|push|merge|rebase|reset|cherry-pick|revert|tag|am|apply|stash|restore|rm|mv|update-ref|commit-tree|checkout\s+(-b|-B|--|\.)|switch\s+-c|branch\s+-[dDmMcC])(?=\s|$|;|&|\|)/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: no commits, pushes or branch changes.`);
+    if (/(^|[^0-9&>])>{1,2}\s*(?!&|\/dev\/null|\$null|NUL\b|\/tmp\/|\$TMPDIR|\$env:TEMP|%TEMP%|\.loop\/|\S*[\\/]\.loop[\\/])\S/i.test(c) || /\b(sed\s+-i|perl\s+-p?i|Set-Content|Add-Content|Out-File)\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: redirect output only into .loop/.`);
     if (/\bgh\s+pr\s+(close|edit|ready|merge|create|reopen)\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step may comment on PRs, not change them.`);
   }
   // Shell writes into protected files. The pre-merge check is the hard stop; this catches the obvious ones early.

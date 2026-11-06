@@ -1,5 +1,7 @@
-// The settings every loop session starts with, and the guard snapshot they point at.
+// The settings every loop session starts with, the guard snapshot they point at, and the integrity
+// check the runner makes after every session.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -9,26 +11,28 @@ import { writeJson } from './state.mjs';
 export const GUARD_FILES = ['loop/guard.mjs', 'loop/guard/core.mjs', 'loop/guard/sql.mjs', 'loop/guard/paths.mjs', 'loop/guard/rules.mjs', 'loop/lib/config.mjs'];
 
 /**
- * Copy the guard from origin/<base> into .loop/guard/ (a protected path), so a working-tree edit
- * cannot switch a rule off mid-session. Before the base has the guard (the very first run of a
- * fresh template) it copies the working tree and says so.
+ * Copy the guard from origin/<base> into .loop/guard/ (a protected path), with the runner's own
+ * config beside it, so neither a working-tree edit nor a config edit can switch a rule off. Before
+ * the base has the guard (the first run of a fresh template) it copies the working tree and says so.
  */
-export function snapshotGuard(root, base, proc) {
+export function snapshotGuard(root, cfg, proc) {
   const dir = path.join(root, '.loop', 'guard');
   fs.rmSync(dir, { recursive: true, force: true });
   let fromTree = false;
   for (const rel of GUARD_FILES) {
-    const r = proc.gitTry('show', `origin/${base}:${rel}`);
+    const r = proc.sh('git', ['show', `origin/${cfg.base}:${rel}`], { allowFail: true, raw: true });
     const dest = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    if (r.ok) fs.writeFileSync(dest, r.out + '\n');
+    if (r.ok) fs.writeFileSync(dest, r.out);
     else {
       fromTree = true;
       fs.copyFileSync(path.join(root, rel), dest);
     }
   }
   fs.writeFileSync(path.join(dir, 'package.json'), '{ "type": "module" }\n');
-  return { dir, entry: path.join(dir, 'loop', 'guard.mjs'), fromTree };
+  const config = path.join(dir, 'config.json');
+  writeJson(config, cfg);
+  return { dir, entry: path.join(dir, 'loop', 'guard.mjs'), config, fromTree };
 }
 
 export function sessionSettings(guardEntry) {
@@ -53,4 +57,19 @@ export function sessionSettings(guardEntry) {
 
 export function writeSettings(file, guardEntry) {
   writeJson(file, sessionSettings(guardEntry));
+}
+
+/** sha256 of each file (null when missing), for the after-session integrity check. */
+export function fingerprint(files) {
+  return Object.fromEntries(files.map((f) => [f, fs.existsSync(f) ? crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex') : null]));
+}
+
+/** Files whose fingerprint changed. */
+export function changedFiles(before, after) {
+  return Object.keys(before).filter((f) => before[f] !== after[f]);
+}
+
+/** Every file of the snapshot plus the session settings. */
+export function harnessFiles(snapshot, settingsFile) {
+  return [...GUARD_FILES.map((rel) => path.join(snapshot.dir, rel)), snapshot.config, settingsFile];
 }

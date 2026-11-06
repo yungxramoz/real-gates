@@ -17,8 +17,9 @@ import { configProblems, loadConfig, MIN_CLAUDE_VERSION, versionNumber } from '.
 import { backlogProblems, createState, HELD_PHASE, readJson, TERMINAL, writeJson } from './lib/state.mjs';
 import { binary, createProc } from './lib/proc.mjs';
 import { isolationProblems, repoMcpServers, runClaudeOnce, userSkillNames } from './lib/claude.mjs';
-import { snapshotGuard, writeSettings } from './lib/settings.mjs';
-import { runItem } from './lib/engine.mjs';
+import { changedFiles, fingerprint, harnessFiles, snapshotGuard, writeSettings } from './lib/settings.mjs';
+import { countFailure, runItem } from './lib/engine.mjs';
+import { READ_ONLY_PHASES } from './guard/core.mjs';
 import { packMilestones } from './lib/milestones.mjs';
 import { POST_MERGE } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
@@ -87,6 +88,7 @@ function childEnv(phase, item) {
     LOOP_PHASE: phase,
     LOOP_ITEM: item || '',
     LOOP_GUARD_LOG: paths.guardLog,
+    LOOP_GUARD_CONFIG: path.join(RUN, 'guard', 'config.json'),
   });
   return env;
 }
@@ -192,6 +194,65 @@ const L = {
   checkIsolation,
   envBase: process.env,
 };
+// ------------------------------------------------------------------------- session integrity
+// Before every session: a fresh guard snapshot from the base branch and fresh settings. After it:
+// the snapshot and settings must be unchanged, and the base and production branches must not have
+// moved (only the runner's own merge moves the base). The guard's shell rules are an early
+// warning; these checks hold whatever spelling a command used.
+let harness = null;
+let warnedTree = false;
+function beforeSession() {
+  fs.mkdirSync(RUN, { recursive: true });
+  const snap = snapshotGuard(ROOT, cfg, proc);
+  if (snap.fromTree && !warnedTree) {
+    warnedTree = true;
+    log(`⚠ the guard is not on origin/${cfg.base} yet: sessions use the working-tree copy until it is.`);
+  }
+  writeSettings(paths.settings, snap.entry);
+  const files = harnessFiles(snap, paths.settings);
+  harness = { files, prints: fingerprint(files) };
+}
+function stopRun(why, ask) {
+  fs.writeFileSync(paths.stop, `Stopped by run.mjs: ${why}
+`);
+  log(`!!! ${why} — wrote .loop/STOP`);
+  progress(`**run stopped** — ${why}`);
+  if (ask) ownerAction('run', ask);
+}
+function remoteHeads() {
+  proc.gitTry('fetch', 'origin', '--prune');
+  const at = (b) => proc.gitTry('rev-parse', '--verify', `origin/${b}`).out || null;
+  return { base: at(cfg.base), production: at(cfg.production) };
+}
+function afterSession(res, phase, item) {
+  if (harness) {
+    const changed = changedFiles(harness.prints, fingerprint(harness.files));
+    if (changed.length) stopRun(`session ${path.basename(res.log)} changed the guard snapshot or the session settings (${changed.map((f) => path.relative(ROOT, f)).join(', ')})`, `A loop session (${item?.id || '-'}, ${phase}) changed harness files it may not touch. Read ${path.relative(ROOT, res.log)}, then re-run: the runner rebuilds them from ${cfg.base}.`);
+  }
+  const heads = remoteHeads();
+  const S = store.S;
+  for (const [name, now] of Object.entries(heads)) {
+    const was = name === 'base' ? S.baseHead : S.productionHead;
+    if (was !== undefined && now !== was) {
+      const branch = cfg[name];
+      stopRun(`origin/${branch} moved outside the runner during ${phase} of ${item?.id || '-'} (${String(was).slice(0, 7)} → ${String(now).slice(0, 7)})`, `origin/${branch} moved from ${String(was).slice(0, 7)} to ${String(now).slice(0, 7)} during a loop session (${item?.id || '-'}, ${phase}), not by the runner's merge. Inspect it (git log ${String(was).slice(0, 7)}..origin/${branch}), revert anything unreviewed, then re-run. Branch protection on ${branch} that requires the ${cfg.ciCheck} check prevents this.`);
+    }
+  }
+  if (READ_ONLY_PHASES.has(phase)) {
+    const dirty = proc.gitTry('status', '--porcelain', '--untracked-files=no').out;
+    if (dirty) {
+      countFailure(L, 'guard:core:read-only-tree', `the ${phase} session changed tracked files: ${dirty.split('\n').slice(0, 5).join('; ')}`, item?.id ? item : { id: String(item?.id || '-') });
+      progress(`${item?.id || '-'} · the ${phase} session changed tracked files — kept aside as a stash, not used`);
+    }
+  }
+}
+function recordHeads() {
+  const heads = remoteHeads();
+  store.S.baseHead = heads.base;
+  store.S.productionHead = heads.production;
+  store.save();
+}
+
 L.session = {
   cfg,
   root: ROOT,
@@ -208,6 +269,8 @@ L.session = {
     return store.S.iterations;
   },
   uncountSession: () => runSessions--,
+  beforeSession,
+  afterSession,
   onLimit: (ms, opts) => {
     setStatus('usage-limit-wait', opts.item, { until: new Date(Date.now() + ms).toISOString() });
     log(`⏸ usage limit — sleeping ${Math.round(ms / 60000)} min and retrying the same step`);
@@ -216,6 +279,17 @@ L.session = {
 };
 
 // --------------------------------------------------------------------------------- run lifecycle
+function lockHolder() {
+  const l = readJson(paths.lock, null);
+  if (!l?.pid || l.pid === process.pid) return null;
+  try {
+    process.kill(l.pid, 0);
+    return l.pid;
+  } catch {
+    return null;
+  }
+}
+
 function acquireLock() {
   fs.mkdirSync(RUN, { recursive: true });
   const l = readJson(paths.lock, null);
@@ -262,10 +336,6 @@ function preflight() {
     console.error('Preflight failed:\n - ' + problems.join('\n - '));
     process.exit(1);
   }
-  fs.mkdirSync(RUN, { recursive: true });
-  const snap = snapshotGuard(ROOT, cfg.base, proc);
-  if (snap.fromTree) log(`⚠ the guard is not on origin/${cfg.base} yet: sessions use the working-tree copy until it is.`);
-  writeSettings(paths.settings, snap.entry);
 }
 
 /**
@@ -313,6 +383,10 @@ async function smokeTest() {
 async function main() {
   fs.mkdirSync(RUN, { recursive: true });
   if (args.status) return printStatus(L);
+  if ((args.reset || args.skip || args.release) && lockHolder()) {
+    console.error(`A loop is running (pid ${lockHolder()}). Stop it first (.loop/STOP), then change its state: a running loop would overwrite the change.`);
+    process.exit(1);
+  }
   if (args.reset) {
     delete store.S.items[args.reset];
     store.save();
@@ -338,6 +412,7 @@ async function main() {
     return;
   }
   acquireLock();
+  recordHeads();
   await smokeTest();
   log(`loop starting — ${store.allItems().length} items, budget ${cfg.budgets.maxSessions} sessions / ${cfg.budgets.maxHours} h`);
   progress(`loop started (pid ${process.pid})`);

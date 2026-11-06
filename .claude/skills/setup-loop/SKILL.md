@@ -122,7 +122,10 @@ asked.
 3. If `base` or `production` differ from the `branches:` filters in `.github/workflows/*.yml`,
    update the filters.
 4. Append owner actions (accounts, secrets, branch protection, host env vars) to
-   `docs/OWNER-ACTIONS.md`, one row each: what, where, why, and how to verify.
+   `docs/OWNER-ACTIONS.md`, one row each: what, where, why, and how to verify. Always include
+   branch protection on `base`: require a pull request and the `ciCheck` status check, no direct
+   pushes, no force-pushes. Nobody reviews the loop's PRs, so this is what stops a session's
+   stray push at GitHub; the runner's after-session check only notices it afterwards.
 
 ### 8. Validate
 

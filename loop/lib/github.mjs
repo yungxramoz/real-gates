@@ -34,8 +34,11 @@ export function diagnoseRun(ctx, runId, tag) {
   const text = (logs.out || logs.err || '').split('\n').slice(-500).join('\n');
   const file = path.join(ctx.paths.logs, `ci-${tag}-${runId}.txt`);
   fs.mkdirSync(ctx.paths.logs, { recursive: true });
-  fs.writeFileSync(file, `Failed jobs: ${failed.map((j) => j.name).join(', ') || '(none reported)'}\n\n${text}`);
-  return { kind: 'red', runId, file, jobs: failed.map((j) => j.name) };
+  // One CI job with many steps is the norm (one job bills less), so the failed *steps* name what broke.
+  const steps = failed.flatMap((j) => (j.steps || []).filter((st) => st.conclusion === 'failure').map((st) => st.name));
+  const names = steps.length ? steps : failed.map((j) => j.name);
+  fs.writeFileSync(file, `Failed: ${names.join(', ') || '(none reported)'}\n\n${text}`);
+  return { kind: 'red', runId, file, jobs: names };
 }
 
 const pollMs = (ctx) => ctx.cfg.pollMs ?? 30_000;
@@ -50,6 +53,7 @@ export async function waitForPrCi(ctx, pr) {
   for (;;) {
     if (ctx.stopRequested()) return { ok: false, kind: 'stopped' };
     const v = prView(ctx, pr);
+    if (v.state === 'MERGED') return { ok: false, kind: 'merged', text: `PR #${pr} was merged before the runner merged it` };
     if (v.state !== 'OPEN') return { ok: false, kind: 'closed', text: `PR #${pr} is ${v.state}` };
     if (v.mergeStateStatus === 'DIRTY') return { ok: false, kind: 'conflict' };
     const ci = (v.statusCheckRollup || []).find((c) => c.__typename === 'CheckRun' && c.name === ctx.cfg.ciCheck);
@@ -115,11 +119,76 @@ export async function waitForCommitCi(ctx, sha) {
   }
 }
 
-/** Numbers in a `thresholds: { … }` block of a Vitest config, for the coverage ratchet check. */
+const stripJsComments = (t) => String(t || '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:\\])\/\/.*$/gm, '$1');
+const THRESHOLD = /\b(lines|functions|branches|statements)\s*:\s*(\d+(?:\.\d+)?)/g;
+
+/** Threshold numbers in a Vitest config, comments ignored. With several blocks, the lowest per key. */
 export function coverageThresholds(text) {
-  const block = String(text || '').match(/thresholds\s*:\s*\{([\s\S]*?)\}/);
-  if (!block) return {};
-  return Object.fromEntries([...block[1].matchAll(/(lines|functions|branches|statements)\s*:\s*(\d+(?:\.\d+)?)/g)].map((m) => [m[1], Number(m[2])]));
+  const out = {};
+  for (const block of stripJsComments(text).matchAll(/thresholds\s*:\s*\{([\s\S]*?)\}/g)) {
+    for (const m of block[1].matchAll(THRESHOLD)) out[m[1]] = Math.min(out[m[1]] ?? Infinity, Number(m[2]));
+  }
+  return out;
+}
+
+/** A Vitest config with its threshold numbers blanked: the only change a PR may make is raising them. */
+const vitestShape = (text) => stripJsComments(text).replace(THRESHOLD, '$1: N').replace(/\s+/g, ' ').trim();
+
+/**
+ * Files CI runs through. A PR that changes them could switch a gate off and still be green, so the
+ * loop may not change them: package.json "scripts" (dependencies may change), the repo scripts,
+ * and the test, lint and type configs. The Vitest config may change only by raising thresholds.
+ */
+export const GATE_FILES = ['scripts/**', 'playwright.config.*', 'eslint.config.*', 'tsconfig.json', '.prettierrc*', '.prettierignore'];
+const VITEST_CONFIGS = ['vitest.config.mts', 'vitest.config.ts', 'vitest.config.mjs', 'vitest.config.js'];
+
+function gateProblems(proc, cfg, branch, changes) {
+  const problems = [];
+  const show = (ref, f) => proc.gitTry('show', `${ref}:${f}`);
+  for (const { status, files } of changes) {
+    for (const file of files) {
+      if (matchesAny(file, cfg.guard?.gateFiles || GATE_FILES)) problems.push(`\`${file}\` (${status}): CI runs through it, so the loop may not change it. Ask for the change in owner_actions, or ship it as a patch in loop/patches/.`);
+      if (VITEST_CONFIGS.includes(file) && !status.startsWith('M')) problems.push(`\`${file}\` (${status}): the coverage config may not be added, removed or renamed by the loop.`);
+    }
+  }
+  const pkgBefore = show(`origin/${cfg.base}`, 'package.json');
+  const pkgAfter = show(branch, 'package.json');
+  if (pkgBefore.ok) {
+    let a = null;
+    let b = null;
+    try {
+      a = JSON.parse(pkgBefore.out).scripts || {};
+      b = pkgAfter.ok ? JSON.parse(pkgAfter.out).scripts || {} : null;
+    } catch {
+      problems.push('package.json: not valid JSON on the branch.');
+    }
+    if (a && JSON.stringify(a) !== JSON.stringify(b)) problems.push('package.json: the "scripts" changed. CI runs every gate through them, so the loop may not change them (dependencies may change).');
+  }
+  for (const f of VITEST_CONFIGS) {
+    const before = show(`origin/${cfg.base}`, f);
+    if (!before.ok) continue;
+    const after = show(branch, f);
+    if (!after.ok) continue; // reported above as removed or renamed
+    if (vitestShape(before.out) !== vitestShape(after.out)) problems.push(`${f}: only the coverage threshold numbers may change, and only upwards.`);
+    const a = coverageThresholds(before.out);
+    const b = coverageThresholds(after.out);
+    for (const [k, v] of Object.entries(a)) if (!(b[k] >= v)) problems.push(`${f}: coverage threshold ${k} went from ${v} to ${b[k] ?? 'removed'} — the ratchet only goes up. Add tests instead.`);
+  }
+  return problems;
+}
+
+/** `git diff --name-status -z` → [{ status, files }], with unquoted, forward-slash paths. */
+function nameStatus(proc, range) {
+  const raw = proc.sh('git', ['-c', 'core.quotePath=false', 'diff', '--name-status', '-z', range], { raw: true }).out.toString('utf8');
+  const parts = raw.split('\0').filter((x) => x !== '');
+  const out = [];
+  for (let i = 0; i < parts.length; ) {
+    const status = parts[i++];
+    const n = /^[RC]/.test(status) ? 2 : 1;
+    out.push({ status, files: parts.slice(i, i + n).map((f) => f.replace(/\\/g, '/')) });
+    i += n;
+  }
+  return out;
 }
 
 /** Structural checks the reviewer should never have to catch. {ok} | {ok:false, text} */
@@ -130,28 +199,17 @@ export function preMergeChecks(ctx, s) {
   if (!proc.gitTry('merge-base', '--is-ancestor', `origin/${cfg.base}`, branch).ok) {
     return { ok: false, text: `\`${cfg.base}\` has moved since this branch was cut. Merge \`origin/${cfg.base}\` into \`${s.branch}\` (no rebase, no force-push), resolve conflicts, re-run the local gates and push. CI must run on what will actually land (L-01).` };
   }
-  const changes = proc.git('diff', '--name-status', `origin/${cfg.base}...${branch}`).split('\n').filter(Boolean);
+  const changes = nameStatus(proc, `origin/${cfg.base}...${branch}`);
   const migrationDirs = (cfg.postMerge || []).map((x) => x.migrationsDir).filter(Boolean);
   const guardCtx = { cfg, isOnBase: (rel) => proc.gitTry('cat-file', '-e', `origin/${cfg.base}:${rel}`).ok };
-  const problems = [];
-  for (const line of changes) {
-    const [status, ...rest] = line.split('\t');
-    const files = rest.map((f) => f.replace(/\\/g, '/'));
+  const problems = gateProblems(proc, cfg, branch, changes);
+  for (const { status, files } of changes) {
     for (const file of files) {
       if (migrationDirs.some((d) => file.startsWith(d.replace(/\/$/, '') + '/')) && /\.sql$/.test(file) && !status.startsWith('A')) problems.push(`\`${file}\` (${status}): migrations already on ${cfg.base} are frozen — revert this change and fix forward with a new file.`);
       if (/(^|\/)\.env($|\.(?!example$))/.test(file)) problems.push(`\`${file}\`: env files must never be committed.`);
       else if (/^\.loop\//.test(file)) problems.push(`\`${file}\`: loop runtime files must not be committed.`);
       else if (isProtected(file, guardCtx) || (matchesAny(file, ['loop/patches/*']) && !status.startsWith('A'))) problems.push(`\`${file}\` (${status}): part of the harness or the owner's. A runner change ships as a new file in loop/patches/.`);
     }
-  }
-  // The coverage ratchet only goes up.
-  for (const cfgFile of ['vitest.config.mts', 'vitest.config.ts', 'vitest.config.mjs']) {
-    const before = proc.gitTry('show', `origin/${cfg.base}:${cfgFile}`);
-    const after = proc.gitTry('show', `${branch}:${cfgFile}`);
-    if (!before.ok || !after.ok) continue;
-    const a = coverageThresholds(before.out);
-    const b = coverageThresholds(after.out);
-    for (const [k, v] of Object.entries(a)) if (!(b[k] >= v)) problems.push(`${cfgFile}: coverage threshold ${k} went from ${v} to ${b[k] ?? 'removed'} — the ratchet only goes up. Add tests instead.`);
   }
   if (problems.length) return { ok: false, text: 'Pre-merge checks failed:\n- ' + problems.join('\n- ') };
   return { ok: true };
@@ -169,6 +227,8 @@ export function mergePr(ctx, s) {
   const ci = (v.statusCheckRollup || []).find((c) => c.__typename === 'CheckRun' && c.name === cfg.ciCheck);
   if (!ci || ci.conclusion !== 'SUCCESS') return { ok: false, kind: 'ci', text: `\`${cfg.ciCheck}\` is not green on the head commit` };
   proc.git('fetch', 'origin', '--prune');
+  // L-01 again at the last moment: CI and the review saw the branch on top of this base, not an older one.
+  if (!proc.gitTry('merge-base', '--is-ancestor', `origin/${cfg.base}`, `origin/${s.branch}`).ok) return { ok: false, kind: 'behind', text: `\`${cfg.base}\` moved after CI and review` };
   const baseBefore = proc.git('rev-parse', `origin/${cfg.base}`);
   s.baseBefore = baseBefore;
   const m = proc.ghTry('pr', 'merge', String(s.pr), '--repo', cfg.repo, '--squash', '--delete-branch', '--match-head-commit', s.reviewedSha);
@@ -197,6 +257,14 @@ export function landedCheck(ctx, { baseBefore, reviewedSha, mergeSha }) {
   if (!proc.gitTry('merge-base', '--is-ancestor', mergeSha, `origin/${cfg.base}`).ok) return { ok: false, why: `merge commit ${mergeSha.slice(0, 7)} is not on origin/${cfg.base}` };
   const parent = proc.gitTry('rev-parse', `${mergeSha}^`);
   if (!parent.ok) return { ok: false, why: `merge commit ${mergeSha.slice(0, 7)} has no parent` };
+  // The usual case: the branch contained the base (L-01) and the base did not move, so the squash
+  // result must be the reviewed tree exactly, whitespace included.
+  if (baseBefore && parent.out === baseBefore && proc.gitTry('merge-base', '--is-ancestor', baseBefore, reviewedSha).ok) {
+    const tree = (rev) => proc.gitTry('rev-parse', `${rev}^{tree}`).out;
+    if (tree(mergeSha) === tree(reviewedSha)) return { ok: true, why: '' };
+    const diff = proc.gitTry('diff', '--name-only', reviewedSha, mergeSha).out.split('\n').filter(Boolean);
+    return { ok: false, why: `what landed differs from what was reviewed; not reviewed: ${diff.join(', ') || '(content only)'}` };
+  }
   const from = proc.gitTry('merge-base', baseBefore || parent.out, reviewedSha);
   if (!from.ok) return { ok: false, why: `cannot find where ${reviewedSha.slice(0, 7)} left ${cfg.base}` };
   const merged = patchId(proc, [`${mergeSha}^`, mergeSha]);

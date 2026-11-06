@@ -204,3 +204,28 @@ describe('the real hook', () => {
     fs.rmSync(path.join(repo, 'loop', 'rules'), { recursive: true });
   });
 });
+
+describe('spellings that used to slip past (adversarial review)', () => {
+  const bad = [
+    ['core:push-base', 'git push origin "HEAD:develop"'],
+    ['core:push-base', "git push origin 'develop'"],
+    ['core:push-base', 'git -C . push origin HEAD:develop'],
+    ['core:push-base', 'git -c core.x=y push origin develop'],
+    ['core:git-config', 'git config push.default upstream'],
+    ['core:git-config', 'git remote set-url origin https://example.com/x.git'],
+    ['core:merge', 'gh pr -R acme/app merge 5'],
+    ['core:merge', 'gh pr merge --repo=acme/app 5'],
+    ['core:gh-api-write', 'gh api --method=PUT repos/acme/app/pulls/5/merge'],
+    ['core:gh-api-write', 'gh api -XPUT repos/acme/app/pulls/5/merge'],
+    ['core:gh-api-write', 'gh api graphql -f query="mutation { mergePullRequest(input:{}) { clientMutationId } }"'],
+    ['core:push-base', 'git push --all origin'],
+  ];
+  for (const [rule, cmd] of bad) test(`${rule}: ${cmd}`, () => blocked(sh(cmd), rule));
+  test('read-only phases cannot write through the shell', () => {
+    for (const cmd of ['echo hi > src/app/page.tsx', 'sed -i s/a/b/ src/x.ts', 'git -C . commit -m x', 'git checkout -- src/x.ts']) blocked(sh(cmd, { phase: 'review' }), 'core:read-only');
+    for (const cmd of ['pnpm build > .loop/build.log 2>&1', 'node x.mjs 2>&1', 'pnpm test > /dev/null', 'git diff origin/develop...origin/feat/x']) allowed(sh(cmd, { phase: 'review' }));
+  });
+  test('ordinary feature-branch work stays allowed', () => {
+    for (const cmd of ['git push -u origin feat/a', 'git -C .loop/review-wt status', 'gh pr create --base develop --title "x" --body-file .loop/pr.md', 'gh api repos/acme/app/pulls/5', 'git config user.name']) allowed(sh(cmd));
+  });
+});

@@ -85,6 +85,10 @@ try {
     git(wt, 'checkout', '-q', pr.baseRefName);
     git(wt, 'merge', '--squash', `origin/${pr.headRefName}`);
     if (S.tamperMerge) fs.writeFileSync(path.join(wt, 'TAMPERED.txt'), 'not reviewed\n');
+    if (S.tamperWhitespace) {
+      const first = git(wt, 'diff', '--cached', '--name-only').split('\n')[0];
+      fs.writeFileSync(path.join(wt, first), fs.readFileSync(path.join(wt, first), 'utf8').replace(/^/gm, '    '));
+    }
     git(wt, 'add', '-A');
     git(wt, 'commit', '-q', '-m', `${pr.title} (#${pr.number})`);
     git(wt, 'push', '-q', 'origin', pr.baseRefName);

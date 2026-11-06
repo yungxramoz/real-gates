@@ -254,3 +254,55 @@ test('dry run on a fresh config names what /setup-loop must set', async () => {
   assert.match(r.stderr, /gitAuthor\.email/);
   assert.equal(sb.calls().length, 0);
 });
+
+test('a session that pushes to the base outside the runner stops the run', async () => {
+  const sb = box();
+  sb.queue(smokeStep(), { commit: { branch: 'develop', files: { 'sneaked.txt': 'x\n' }, message: 'direct push' } });
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(sb.file('.loop/REPORT.md'), /origin\/develop moved outside the runner/);
+  assert.match(sb.file('.loop/OWNER-ACTIONS.md'), /revert anything unreviewed/);
+  assert.notEqual(sb.state().items.A1.status, 'done');
+});
+
+test('a session that rewrites the session settings stops the run', async () => {
+  const sb = box();
+  sb.queue(smokeStep(), { writes: { '.loop/claude-settings.json': '{}' } });
+  await sb.run();
+  assert.match(sb.file('.loop/REPORT.md'), /changed the guard snapshot or the session settings/);
+});
+
+test('a PR the session merged itself is held, stays held, and is rebuilt after release', async () => {
+  const sb = box();
+  const [build] = happyItem('A1');
+  const clearStop = () => fs.rmSync(path.join(sb.root, '.loop', 'STOP'), { force: true }); // what the owner does
+  sb.queue(smokeStep(), { ...build, ghMerge: true });
+  await sb.run();
+  assert.match(sb.file('.loop/PROGRESS.md'), /run stopped.*moved outside the runner/);
+  assert.match(sb.file('.loop/REPORT.md'), /held \(outside-merge\): PR #1 was already merged/);
+  let a = sb.state().items.A1;
+  assert.equal(a.phase, 'hold');
+  assert.equal(a.hold.kind, 'outside-merge');
+  assert.equal(a.attempts, 0, 'an outside merge is not a failed attempt to retry');
+  assert.match(sb.file('.loop/OWNER-ACTIONS.md'), /merged by something other than the runner/);
+  clearStop();
+  sb.queue(smokeStep());
+  await sb.run(); // still held: only the owner can clear it
+  assert.equal(sb.state().items.A1.phase, 'hold');
+  assert.equal((await sb.run(['--release', 'A1'])).code, 0);
+  clearStop();
+  sb.queue(smokeStep(), happyItem('A1', { branch: 'feat/a1-again', files: { 'src/A1.txt': 'A1, rebuilt through the gates\n' } }));
+  await sb.run();
+  a = sb.state().items.A1;
+  assert.equal(a.status, 'done', `${a.lastError}\n${sb.file('.loop/PROGRESS.md').slice(-1500)}`);
+  assert.equal(a.prs.at(-1), 2);
+});
+
+test('owner commands refuse while a loop holds the lock', async () => {
+  const sb = box();
+  fs.mkdirSync(path.join(sb.root, '.loop'), { recursive: true });
+  fs.writeFileSync(path.join(sb.root, '.loop', 'lock'), JSON.stringify({ pid: process.pid, since: 'now' }));
+  const r = await sb.run(['--skip', 'A1']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /A loop is running/);
+});

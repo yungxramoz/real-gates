@@ -92,6 +92,7 @@ function killTree(child) {
  */
 export function runClaudeOnce(ctx, { prompt, phase, item, timeoutMin, model, schema }) {
   return new Promise((resolve) => {
+    ctx.beforeSession?.(phase, item); // fresh guard snapshot and settings for every session
     const n = String(ctx.nextSessionNumber()).padStart(3, '0');
     const logFile = path.join(ctx.paths.logs, `${n}-${item?.id || 'x'}-${phase}.jsonl`);
     fs.mkdirSync(ctx.paths.logs, { recursive: true });
@@ -162,7 +163,14 @@ export function runClaudeOnce(ctx, { prompt, phase, item, timeoutMin, model, sch
         fs.writeFileSync(ctx.paths.stop, `Stopped by run.mjs: ${alarm} (session ${n}).\n`);
         ctx.log(`!!! ${alarm} — wrote .loop/STOP`);
       }
-      resolve({ ok: !isError, text, structured: final?.structured_output ?? null, init, isError, limited, resetAt: limited ? parseReset(errText) : null, transient, timedOut, cost: final?.total_cost_usd, turns: final?.num_turns, log: logFile, code });
+      const res = { ok: !isError, text, structured: final?.structured_output ?? null, init, isError, limited, resetAt: limited ? parseReset(errText) : null, transient, timedOut, cost: final?.total_cost_usd, turns: final?.num_turns, log: logFile, code };
+      try {
+        ctx.afterSession?.(res, phase, item); // integrity: harness unchanged, base and production unmoved
+      } catch (e) {
+        ctx.log(`!!! after-session check failed: ${e.message}`);
+        fs.writeFileSync(ctx.paths.stop, `Stopped by run.mjs: the after-session check could not run (${e.message}).\n`);
+      }
+      resolve(res);
     });
   });
 }

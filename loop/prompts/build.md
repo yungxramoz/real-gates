@@ -74,10 +74,13 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
    the runner applies merged migrations after CI and review. Destructive SQL (`DROP`, `TRUNCATE`,
    unbounded `DELETE`, dropping a column) is never applied automatically and waits for the owner.
 
-8. **Harness changes.** `loop/`, `.github/`, `.claude/` and `.env*` are not yours. The guard blocks
-   edits and the runner refuses a PR that touches them. Two exceptions: you may add rows to
-   `loop/rules/project-rules.json`, and you may write a new `loop/patches/<item>.patch` for a runner
-   change the owner applies later.
+8. **Harness and gate changes.** `loop/`, `.github/`, `.claude/` and `.env*` are not yours, and
+   neither is CI's wiring: the `scripts` in `package.json`, `scripts/`, and the lint, test, type
+   and format configs. The Vitest config may change only by raising coverage thresholds. The guard
+   blocks the edits and the runner refuses a PR that makes them. You may add dependencies, add rows
+   to `loop/rules/project-rules.json`, and write a new `loop/patches/<item>.patch` for a change the
+   owner applies later. If you need a wiring change, take a default that works without it and put
+   the ask in `owner_actions`.
 
 9. **Commit and open the PR.** `git add` explicit paths only. Commit messages follow the repo style
    (`feat(…): …`). In the same PR, update `docs/BACKLOG.md` and add any decision rows. Push the

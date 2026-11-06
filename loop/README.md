@@ -110,6 +110,23 @@ base branch, so a change in the working tree cannot switch a rule off. Its locke
 | Read-only steps | review, accept and packet: any write outside `.loop/`, any git write. These sessions also start without write tools |
 | Hosting | Vercel settings writes |
 
+**After every session** the runner checks what no command pattern can be trusted to catch, and
+stops the run (`.loop/STOP`, with an entry in `.loop/OWNER-ACTIONS.md`) if any fails:
+
+| Check | Why |
+| --- | --- |
+| The guard snapshot and the session settings are byte-for-byte unchanged | a session that edits them would switch the guard off for every later one. Both are rebuilt from the base branch before every session |
+| `origin/<base>` and `origin/<production>` did not move | only the runner's own merge moves the base. A push or merge by a session, in whatever spelling, shows up here |
+| A read-only session left the tree clean | otherwise the change is counted as a guard violation and kept aside as a stash |
+
+A PR found already merged before the runner merged it is **held** (`outside-merge`) until you
+release it; the item is then rebuilt through the gates. Branch protection on the base branch that
+requires the CI check stops such a merge at GitHub as well; `/setup-loop` lists it as an owner action.
+
+**Pre-merge, the runner also refuses** changes to CI's wiring: the `scripts` in `package.json`,
+`scripts/`, the lint, test, type and format configs, and any Vitest config change other than
+raised threshold numbers. A PR that could switch a gate off must not be able to pass it.
+
 **Session flags.** Every session runs with `--setting-sources project,local`,
 `--strict-mcp-config` (plus the repo's `.mcp.json` if there is one), `--permission-mode auto`,
 `--permission-prompts none` and `--max-budget-usd`. Never `--bare`, because it skips hooks. Never

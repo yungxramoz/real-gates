@@ -92,6 +92,11 @@ try {
     s.prs[n] = { number: n, state: 'OPEN', baseRefName: step.createPr.base || s.base, headRefName: br, headRefOid: git('rev-parse', 'HEAD'), title: step.createPr.title || br, isDraft: false, mergeCommit: null };
     fs.writeFileSync(path.join(DIR, 'gh-state.json'), JSON.stringify(s, null, 2));
   }
+  if (step.ghMerge) {
+    // a session that merges its own PR, the way the guard is there to prevent
+    const n = Object.values(gh().prs).filter((p) => p.state === 'OPEN').at(-1).number;
+    spawnSync(process.execPath, [path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'fake-gh.mjs'), 'pr', 'merge', String(n), '--squash'], { cwd, env: process.env, encoding: 'utf8' });
+  }
   for (const [rel, content] of Object.entries(step.writes || {})) {
     fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true });
     fs.writeFileSync(path.join(cwd, rel), typeof content === 'string' ? content : JSON.stringify(subst(content), null, 2));

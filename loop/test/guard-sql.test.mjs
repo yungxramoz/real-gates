@@ -114,3 +114,8 @@ describe('destructive SQL', () => {
     assert.equal(sqlBlockReason(undefined), R.readOnly);
   });
 });
+
+test('a column type change counts as destructive', () => {
+  assert.equal(sqlBlockReason('alter table app.t alter column n type text;', W), R.destructive);
+  assert.equal(sqlBlockReason('alter table app.t alter column n set default 0;', W), null);
+});

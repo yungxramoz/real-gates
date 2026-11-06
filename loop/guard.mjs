@@ -68,7 +68,9 @@ try {
   }
   const cwd = ev.cwd && fs.existsSync(ev.cwd) ? ev.cwd : process.cwd();
   if (!root) root = git(cwd, ['rev-parse', '--show-toplevel']).out || cwd;
-  const cfg = loadConfig(root);
+  // The runner hands over the config it loaded at start (LOOP_GUARD_CONFIG, in the protected
+  // snapshot), so editing loop/loop.config.json mid-run cannot rename the base branch away.
+  const cfg = process.env.LOOP_GUARD_CONFIG ? JSON.parse(fs.readFileSync(process.env.LOOP_GUARD_CONFIG, 'utf8')) : loadConfig(root);
   const onBase = new Map();
   const ctx = {
     phase: PHASE,

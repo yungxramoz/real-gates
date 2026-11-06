@@ -16,7 +16,8 @@ import { recordFailure, reviewSignatures, REVIEW_CATEGORIES } from './learn.mjs'
 import { REVIEW_SCHEMA } from './schemas.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
-const NEXT_AFTER_HOLD = { landed: 'baseci', baseci: 'postmerge', postmerge: 'finish' };
+const NEXT_AFTER_HOLD = { landed: 'baseci', baseci: 'postmerge', postmerge: 'finish', 'outside-merge': 'rebuild' };
+const RECHECKABLE = new Set(['landed', 'baseci', 'postmerge']);
 
 export function goalPrompt(L, condition) {
   return L.cfg.useGoal ? `/goal ${condition} Stop after ${L.cfg.goalMaxTurns} turns.` : condition;
@@ -198,6 +199,8 @@ export async function runItem(L, item) {
     L.progress(`${item.id} · **${status}**${why ? ` — ${why}` : ''}`);
     return status;
   };
+  const outsideMergeAsk = (it, pr) =>
+    `${it.id}: PR #${pr} was merged by something other than the runner, before CI and review finished. The change is on ${L.cfg.base} unreviewed. Inspect it (gh pr view ${pr}), revert it if needed, then release the item so it is rebuilt through the gates: node loop/run.mjs --release ${it.id}`;
   const hold = (kind, why, ownerAction) => {
     Object.assign(s, { phase: HELD_PHASE, hold: { kind, why, at: new Date().toISOString() }, lastError: `held (${kind}): ${why}` });
     save();
@@ -215,7 +218,9 @@ export async function runItem(L, item) {
         L.progress(`${item.id} · released by the owner (${s.released}) from hold: ${s.hold?.kind}`);
         s.phase = NEXT_AFTER_HOLD[s.hold?.kind] || 'finish';
         delete s.released;
-      } else s.phase = s.hold?.kind || 'postmerge'; // verify again
+      } else if (RECHECKABLE.has(s.hold?.kind)) s.phase = s.hold.kind; // verify again
+      else return 'held'; // only the owner can clear this one (--release)
+      if (s.phase === 'rebuild') Object.assign(s, { phase: 'build', pr: null, branch: null, pendingFix: null, hold: null });
       save();
     }
 
@@ -254,6 +259,11 @@ export async function runItem(L, item) {
       try {
         v = r.pr ? prView(L, r.pr) : null;
       } catch {}
+      if (v && v.state === 'MERGED' && v.baseRefName === L.cfg.base) {
+        // Merged during the build session itself: the change is on the base unreviewed. Never retry on top of it.
+        Object.assign(s, { pr: v.number, branch: v.headRefName });
+        return hold('outside-merge', `PR #${v.number} was already merged when the build session ended`, outsideMergeAsk(item, v.number));
+      }
       if (!v || v.state !== 'OPEN' || v.baseRefName !== L.cfg.base || [L.cfg.base, L.cfg.production].includes(v.headRefName)) {
         s.attempts++;
         s.lastError = `result.json claimed ${r.outcome} with PR ${r.pr}, but no open PR from a feature branch into ${L.cfg.base} was found.`;
@@ -272,6 +282,9 @@ export async function runItem(L, item) {
       const ci = await waitForPrCi(L, s.pr);
       if (ci.kind === 'stopped') return 'stopped';
       if (!ci.ok) {
+        if (ci.kind === 'merged') {
+          return hold('outside-merge', ci.text, outsideMergeAsk(item, s.pr));
+        }
         if (ci.kind === 'closed') {
           Object.assign(s, { pr: null, phase: 'build', lastError: ci.text });
           save();
@@ -328,11 +341,21 @@ export async function runItem(L, item) {
       save();
     }
 
+    if (['merge', 'landed', 'baseci', 'postmerge'].includes(s.phase) && L.stopRequested()) return 'stopped';
+
     if (s.phase === 'merge') {
       L.setStatus('merge', item, { pr: s.pr });
       const m = mergePr(L, s);
       if (!m.ok) {
         L.progress(`${item.id} · merge of PR #${s.pr} refused: ${m.kind} ${m.text || ''}`);
+        if (m.kind === 'behind') {
+          s.ciFixes++;
+          if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `could not merge PR #${s.pr}: ${L.cfg.base} kept moving`);
+          fix = { kind: 'premerge', text: `\`${L.cfg.base}\` moved after CI and review. Merge \`origin/${L.cfg.base}\` into \`${s.branch}\` (no rebase, no force-push), re-run the local gates and push (L-01).`, pr: s.pr };
+          Object.assign(s, { pendingFix: fix, phase: 'build' });
+          save();
+          continue;
+        }
         if (['conflict', 'moved', 'ci'].includes(m.kind)) {
           s.ciFixes++;
           if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `could not merge PR #${s.pr}: ${m.kind}`);
@@ -347,6 +370,7 @@ export async function runItem(L, item) {
       }
       Object.assign(s, { mergeSha: m.sha, baseBefore: m.baseBefore || s.baseBefore, phase: 'landed' });
       s.prs.push(s.pr);
+      L.store.S.baseHead = m.sha; // the only way the base may move during a run
       L.progress(`${item.id} · merged PR #${s.pr} → ${L.cfg.base} ${String(m.sha).slice(0, 7)}`);
       save();
     }

@@ -168,3 +168,61 @@ test('the fake claude emits init then result', () => {
   assert.equal(lines[0].subtype, 'init');
   assert.deepEqual(lines.at(-1).structured_output, { a: 1 });
 });
+
+test('pre-merge refuses changed package.json scripts, gate scripts and configs, a non-threshold Vitest change', async () => {
+  const pkg = (scripts) => JSON.stringify({ name: 'x', scripts, dependencies: {} }, null, 2) + '\n';
+  const vitest = (lines, extra = '') => `export default { test: { coverage: { ${extra}thresholds: { lines: ${lines}, autoUpdate: true } } } }\n`;
+  const { sb, ctx } = setup({ files: { 'package.json': pkg({ 'check:rules': 'node loop/scripts/check-rules.mjs' }), 'scripts/ac-trace.mjs': '// x\n', 'vitest.config.mts': vitest(80), 'playwright.config.ts': '// x\n' } });
+  openPr(sb, 'feat/a', { 'package.json': pkg({ 'check:rules': 'node -e 0' }), 'scripts/ac-trace.mjs': '// gutted\n', 'playwright.config.ts': '// y\n', 'vitest.config.mts': vitest(90, "exclude: ['src/**'], ") });
+  const r = preMergeChecks(ctx, { branch: 'feat/a' });
+  assert.equal(r.ok, false);
+  assert.match(r.text, /package\.json: the "scripts" changed/);
+  assert.match(r.text, /scripts\/ac-trace\.mjs/);
+  assert.match(r.text, /playwright\.config\.ts/);
+  assert.match(r.text, /only the coverage threshold numbers may change/);
+});
+
+test('pre-merge allows raised thresholds and new dependencies', async () => {
+  const vitest = (lines) => `export default { test: { coverage: { thresholds: { lines: ${lines}, autoUpdate: true } } } }\n`;
+  const { sb, ctx } = setup({ files: { 'package.json': '{"scripts":{"a":"b"},"dependencies":{}}\n', 'vitest.config.mts': vitest(80) } });
+  openPr(sb, 'feat/a', { 'package.json': '{"scripts":{"a":"b"},"dependencies":{"zod":"4.0.0"}}\n', 'vitest.config.mts': vitest(82.5) });
+  assert.deepEqual(preMergeChecks(ctx, { branch: 'feat/a' }), { ok: true });
+});
+
+test('a commented-out higher threshold does not hide a lowered one', () => {
+  assert.deepEqual(coverageThresholds('// thresholds: { lines: 100 }\nthresholds: { lines: 0 }'), { lines: 0 });
+});
+
+test('a non-ASCII file name under a protected path is still caught', async () => {
+  const { sb, ctx } = setup();
+  openPr(sb, 'feat/a', { '.github/workflows/é.yml': 'on: push\n' });
+  const r = preMergeChecks(ctx, { branch: 'feat/a' });
+  assert.equal(r.ok, false);
+  assert.match(r.text, /\.github\/workflows\/é\.yml/);
+});
+
+test('landed check catches a whitespace-only change', async () => {
+  const { sb, ctx } = setup();
+  sb.setGhState((s) => (s.tamperWhitespace = true));
+  const { pr, head } = openPr(sb, 'feat/a', { 'a.py': 'def f():\n    return 1\n' });
+  const m = mergePr(ctx, { pr, reviewedSha: head, branch: 'feat/a' });
+  const r = landedCheck(ctx, { baseBefore: m.baseBefore, reviewedSha: head, mergeSha: m.sha });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /a\.py/);
+});
+
+test('merge is refused when the base moved after CI and review (L-01 at merge time)', async () => {
+  const { sb, ctx } = setup();
+  const a = openPr(sb, 'feat/a', { 'a.txt': 'a\n' });
+  const b = openPr(sb, 'feat/b', { 'b.txt': 'b\n' });
+  assert.equal(mergePr(ctx, { pr: b.pr, reviewedSha: b.head, branch: 'feat/b' }).ok, true);
+  const r = mergePr(ctx, { pr: a.pr, reviewedSha: a.head, branch: 'feat/a' });
+  assert.equal(r.kind, 'behind');
+});
+
+test('a PR merged by someone else is reported as merged, not closed', async () => {
+  const { sb, ctx } = setup();
+  const { pr } = openPr(sb, 'feat/a', { 'a.txt': 'a\n' });
+  sb.setGhState((s) => (s.prs[pr].state = 'MERGED'));
+  assert.equal((await waitForPrCi(ctx, pr)).kind, 'merged');
+});

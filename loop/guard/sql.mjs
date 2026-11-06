@@ -99,7 +99,7 @@ export function stripSqlComments(sql) {
 const READ_START = /^\s*(select|with|explain|show)\b/i;
 const WRITE_WORD = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|comment\s+on|call|do|copy|vacuum|reindex|refresh|set\s+role|reset\s+role)\b/i;
 /** Same rule as the post-merge adapter: re-creating a policy, function or trigger loses no data. */
-export const DESTRUCTIVE = /\bdrop\s+(?!policy\s+if\s+exists|function\s+if\s+exists|trigger\s+if\s+exists)\w|\btruncate\b|delete\s+from\s+[\w."]+\s*(;|$)|alter\s+table[^;]*\bdrop\b/i;
+export const DESTRUCTIVE = /\bdrop\s+(?!policy\s+if\s+exists|function\s+if\s+exists|trigger\s+if\s+exists)\w|\btruncate\b|delete\s+from\s+[\w."]+\s*(;|$)|alter\s+table[^;]*\bdrop\b|alter\s+table[^;]*\balter\s+(column\s+)?[\w"]+\s+(set\s+data\s+)?type\b/i;
 /** Supabase's own schemas. Nothing the app builds lives there. */
 const PLATFORM_SCHEMAS = ['auth', 'storage', 'supabase_migrations', 'supabase_functions', 'realtime', 'vault', 'graphql', 'pgsodium'];
 
