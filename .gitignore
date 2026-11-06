@@ -1,0 +1,27 @@
+# loop runtime state, logs, guard snapshot (never committed)
+/.loop/
+
+# dependencies and build output
+node_modules/
+.next/
+out/
+coverage/
+next-env.d.ts
+*.tsbuildinfo
+
+# test output
+playwright-report/
+test-results/
+artifacts/
+blob-report/
+
+# env files: only the example is committed
+.env
+.env.*
+!.env.example
+
+# machine noise
+.DS_Store
+Thumbs.db
+*.stackdump
+.vercel/

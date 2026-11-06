@@ -1,0 +1,18 @@
+node_modules
+.next
+coverage
+artifacts
+test-results
+playwright-report
+pnpm-lock.yaml
+next-env.d.ts
+
+# The runner and the setup skills are protected paths: loop sessions are blocked from editing
+# them, so a formatting gate on them would be a red check no session could fix. `.loop/` is the
+# runner's git-ignored runtime state.
+loop
+.loop
+.claude
+
+# Plans and specs are history that later decisions cite; they stay as they were agreed.
+docs/superpowers
