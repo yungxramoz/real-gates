@@ -1,0 +1,51 @@
+{
+  "$comment": "Sample backlog for a team lunch poll app. Items point at REQUIREMENTS.md instead of copying the ACs. Order matters: the loop takes the first item whose dependsOn are done. Refs assume the pair is installed as loop/backlog.json and docs/REQUIREMENTS.md.",
+  "milestones": ["M1", "M2"],
+  "items": [
+    {
+      "id": "P1",
+      "milestone": "M1",
+      "title": "Create a poll",
+      "refs": ["docs/REQUIREMENTS.md#s11--create-a-poll", "DESIGN.md"],
+      "scope": "Table polls and options in a new migration, RLS default deny, a SECURITY DEFINER function create_poll. The create form and the share link. Covers AC-1.1, AC-1.2, AC-1.3.",
+      "ui": true,
+      "dependsOn": []
+    },
+    {
+      "id": "P2",
+      "milestone": "M1",
+      "title": "Vote on a poll",
+      "refs": ["docs/REQUIREMENTS.md#s12--vote", "DESIGN.md"],
+      "scope": "Table votes keyed by poll and a browser token, a SECURITY DEFINER function cast_vote that replaces an earlier vote. The vote page at /p/[id]. Covers AC-1.4, AC-1.5, AC-1.6.",
+      "ui": true,
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "R1",
+      "milestone": "M2",
+      "title": "Show results and close at the deadline",
+      "refs": ["docs/REQUIREMENTS.md#s21--results"],
+      "scope": "Vote counts on the poll page while open; at the closing time cast_vote refuses and the page shows the winner or the tied options. The closing check lives in the database function, not in application code. Covers AC-2.1, AC-2.2.",
+      "ui": true,
+      "dependsOn": ["P2"]
+    },
+    {
+      "id": "R2",
+      "milestone": "M2",
+      "title": "Email sending with a preview stub",
+      "refs": ["docs/REQUIREMENTS.md#s22--reminder", "docs/architecture/03-context.md"],
+      "scope": "sendEmail() through the email provider, routed to the stub when APP_ENV=preview, with an email log table. The provider account and domain are owner actions. Covers AC-2.4.",
+      "ui": false,
+      "dependsOn": []
+    },
+    {
+      "id": "R3",
+      "milestone": "M2",
+      "title": "Reminder 15 minutes before closing",
+      "refs": ["docs/REQUIREMENTS.md#s22--reminder"],
+      "scope": "A scheduled job that sends one reminder per poll 15 minutes before closing, marked as sent in the database so it never goes twice. Covers AC-2.3.",
+      "ui": false,
+      "dependsOn": ["R1", "R2"]
+    }
+  ]
+}
