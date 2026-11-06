@@ -1,0 +1,53 @@
+{
+  "skill": "shape-project",
+  "baseline": "Without the skill, Claude asks ten questions at once or none, writes a long spec in one go, copies acceptance criteria into the backlog items (so they drift from REQUIREMENTS.md), writes untestable criteria such as 'the page is fast', creates items too large for one session, invents AC IDs that are not in REQUIREMENTS.md, and never checks the docs from the point of view of a builder without the chat, so the loop later guesses on missing details.",
+  "scenarios": [
+    {
+      "id": "new-app-from-idea",
+      "skills": ["shape-project"],
+      "query": "/shape-project — I want a small site for my climbing gym: members see the route setting schedule and can sign up for intro courses with limited spots.",
+      "files": ["docs/BRIEF.md (skeleton)", "docs/REQUIREMENTS.md (skeleton)", "loop/backlog.json (LOOP-0 only)"],
+      "expected_behavior": [
+        "Copies the shaping checklist into the reply and works through it in order",
+        "Asks one question per message, each with a recommended answer",
+        "Plays back each topic in a few bullets and the whole picture before writing any doc",
+        "Writes ACs as AC-<epic>.<n>, each defined once on its own list line, each with an observable result",
+        "Covers the full-course case (waiting list or a clear message) with its own AC",
+        "Keeps LOOP-0 as the first item and puts setup items in M0",
+        "Backlog items reference AC IDs and doc paths and do not copy AC text into scope",
+        "Runs check-backlog.mjs and fixes every PROBLEM before moving on",
+        "Dispatches a fresh subagent with the builder-check prompt and no chat history",
+        "Turns each guess from the builder check into one question with a recommendation and writes the answer into the named doc"
+      ],
+      "expected_files": ["docs/BRIEF.md", "docs/REQUIREMENTS.md", "docs/BACKLOG.md", "loop/backlog.json", "docs/DECISIONS.md", "docs/OWNER-ACTIONS.md"]
+    },
+    {
+      "id": "add-epic",
+      "skills": ["shape-project"],
+      "query": "/shape-project payments — members should be able to pay the course fee online when they sign up.",
+      "files": ["docs/REQUIREMENTS.md with E1-E3 and AC-1.1 to AC-3.4", "loop/backlog.json with M0-M2"],
+      "expected_behavior": [
+        "Reads the existing requirements and backlog first and keeps all existing IDs",
+        "Shapes only the payments epic, continuing the numbering (E4, AC-4.1, ...)",
+        "Asks which payment provider with a recommendation, and puts the account and keys into OWNER-ACTIONS.md",
+        "Adds an AC for a failed or cancelled payment",
+        "Puts the new items into a new or the last milestone without making earlier items depend on them",
+        "Reruns check-backlog.mjs until OK"
+      ],
+      "expected_files": ["docs/REQUIREMENTS.md", "loop/backlog.json", "docs/BACKLOG.md", "docs/OWNER-ACTIONS.md"]
+    },
+    {
+      "id": "broken-backlog",
+      "skills": ["shape-project"],
+      "query": "/shape-project — I edited backlog.json by hand and the loop now refuses to start. Can you fix it?",
+      "files": ["loop/backlog.json with a duplicate id, a cycle between two items and a ref to AC-9.9 that does not exist"],
+      "expected_behavior": [
+        "Runs check-backlog.mjs first and quotes the named problems",
+        "Fixes the duplicate id and the cycle, asking the owner only where the intended order is unclear",
+        "Asks whether AC-9.9 was meant to be a new AC or a typo, with a recommendation, instead of inventing it",
+        "Reruns check-backlog.mjs and quotes the OK"
+      ],
+      "expected_files": ["loop/backlog.json"]
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+# Where the run's facts are
+
+The runner writes everything under `.loop/` (not committed) and the committed files below. Read the
+files; do not infer numbers from the chat.
+
+## Contents
+
+- Runtime files
+- Committed files
+- Computing the metrics
+
+## Runtime files
+
+| File | What it holds |
+|---|---|
+| `.loop/state.json` | per item: status, phase, rounds, CI fixes, review rounds, PR and merge sha; the learn counters per failure signature; LEARN, FIX and ACC items |
+| `.loop/PROGRESS.md` | one line per step, in order, with times |
+| `.loop/REPORT.md` | the run's final summary, when the run ended normally |
+| `.loop/OWNER-ACTIONS.md` | asks raised during the run |
+| `.loop/reviews/<milestone>.md` | milestone packets with follow-ups and screenshots |
+| `.loop/logs/guard.log` | one line per blocked action: time, item, reason with rule id |
+| `.loop/logs/NNN-<item>-<phase>.jsonl` | every session in full |
+| `docs/contracts/<item>.md` | the contract each build wrote first (committed with its PR) |
+
+The exact field names in `state.json` follow the runner version in this repo. Open the file and
+read its keys before counting; never assume them.
+
+## Committed files
+
+| File | During the run |
+|---|---|
+| `docs/LESSONS.md` | lesson rows written by LEARN items |
+| `docs/DECISIONS.md` | small calls the loop made instead of asking |
+| `loop/rules/project-rules.json` | rules added by LEARN items (add-only) |
+| `loop/patches/*.patch` | runner changes the loop wanted but may not make |
+| tests and CI checks | added by LEARN items; find them with `git log --grep LEARN` |
+
+## Computing the metrics
+
+| Metric | How |
+|---|---|
+| First-pass review | items approved in review round 1 ÷ items merged |
+| Time per item | first build start to merge, from `PROGRESS.md`, median and mean |
+| PR to merge | PR creation to merge, from `gh pr list --state merged --json createdAt,mergedAt` |
+| Guard blocks by rule | count `guard.log` lines by rule id |
+| Repeated failures | the learn counters in `state.json`: every signature with a count of 2 or more |
+| Held items | items whose phase was a hold phase, with the reason from `PROGRESS.md` |

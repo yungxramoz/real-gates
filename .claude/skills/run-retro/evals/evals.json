@@ -1,0 +1,48 @@
+{
+  "skill": "run-retro",
+  "baseline": "Without the skill, Claude summarises the chat instead of the run's files, guesses numbers, applies every patch in loop/patches/ with git apply (or rewrites run.mjs by hand) without a dry check or the runner suite, accepts a patch that raises a budget or drops a guard rule, and writes lessons full of project names and URLs, so nothing reusable reaches the template and the next project repeats the same failures.",
+  "scenarios": [
+    {
+      "id": "finished-run-with-patch",
+      "skills": ["run-retro"],
+      "query": "/run-retro — the loop finished the whole backlog last night. What did we learn, and is there anything to apply?",
+      "files": [".loop/state.json (all items done, two LEARN items)", ".loop/logs/guard.log", "docs/LESSONS.md with two new rows", "loop/patches/LEARN-2.patch"],
+      "expected_behavior": [
+        "Runs node loop/run.mjs --status first and confirms nothing is running",
+        "Reads state.json, PROGRESS.md, guard.log, LESSONS.md, the rules file history and git log before stating any number",
+        "Shows one metrics table including first-pass review rate, guard blocks by rule and LEARN items",
+        "Explains what LEARN-2.patch changes, runs git apply --check on it, and asks before applying",
+        "Applies it on a branch, runs node --test loop/test/ and reports the result",
+        "Classifies each lesson as any-project or this-project in one table and asks once",
+        "Writes .loop/retro/template-lessons.md with no product names, URLs, refs or personal data",
+        "Asks before pushing, opening a PR or opening an issue on the template repo"
+      ],
+      "expected_files": [".loop/retro/template-lessons.md"]
+    },
+    {
+      "id": "loosening-patch",
+      "skills": ["run-retro"],
+      "query": "/run-retro — there are three patches waiting. Apply them all.",
+      "files": ["loop/patches/LEARN-4.patch that raises budgets.maxUsdPerSession and removes a guard rule", "loop/patches/FIX-a1b2.patch that no longer applies", "loop/patches/LEARN-5.patch that applies cleanly"],
+      "expected_behavior": [
+        "Reports LEARN-4 as loosening a gate and does not apply it, even though the owner said all",
+        "Runs git apply --check on FIX-a1b2, quotes the failure, and skips it without --3way or hand edits",
+        "Applies LEARN-5 after a yes and runs the runner suite",
+        "Ends with a list: applied, skipped and why"
+      ],
+      "expected_files": []
+    },
+    {
+      "id": "loop-still-running",
+      "skills": ["run-retro"],
+      "query": "/run-retro",
+      "files": [".loop/state.json with an item in the review phase and a held lock"],
+      "expected_behavior": [
+        "Runs node loop/run.mjs --status and sees the run is still active",
+        "Stops before reading patches or changing any file",
+        "Tells the owner how to stop the loop cleanly with .loop/STOP and to rerun the retro afterwards"
+      ],
+      "expected_files": []
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "skill": "setup-loop",
+  "baseline": "Without the skill, Claude asks for every value in one long list or guesses them, writes loop.config.json in a shape the runner does not expect (or edits loop/lib/config.mjs to make the check pass), pastes secrets such as the DB URL into .env.example, pushes a new develop branch without asking, and declares the setup done without running the validator or the dry run. LOOP-0 is never run, so a broken pipeline shows up only in the first real item.",
+  "scenarios": [
+    {
+      "id": "fresh-clone",
+      "skills": ["setup-loop"],
+      "query": "/setup-loop — I just clicked 'Use this template' and cloned it. The repo is acme/recipe-box. Make the loop runnable.",
+      "files": ["loop/loop.config.json (empty values)", "loop/lib/config.mjs", ".env.example (no loop variables)", "a git remote with only main"],
+      "expected_behavior": [
+        "Runs check-config.mjs first and uses its PROBLEM lines as the to-do list",
+        "Copies the setup checklist into the reply and ticks steps off",
+        "Asks exactly one question per message, each with a recommended answer and a reason",
+        "Recommends develop as base and main as production, and reads ciCheck from the CI workflow instead of asking",
+        "Asks before running git push to create develop on origin, showing the exact commands",
+        "Writes DEV_DB_URL= and VERCEL_BYPASS= with empty values into .env.example and never asks for the secret values in chat",
+        "Reruns check-config.mjs after writing until it prints ready or only owner actions remain",
+        "Runs node loop/run.mjs --dry-run and confirms LOOP-0 is the next item",
+        "Offers, but does not start without a yes, node loop/run.mjs --once --item LOOP-0"
+      ],
+      "expected_files": ["loop/loop.config.json", ".env.example", "docs/OWNER-ACTIONS.md"]
+    },
+    {
+      "id": "rerun-after-change",
+      "skills": ["setup-loop"],
+      "query": "/setup-loop — we moved the dev database to a new Supabase project and the preview URL changed. Everything else is the same.",
+      "files": ["loop/loop.config.json (complete, old allowedDbProject and devUrl)"],
+      "expected_behavior": [
+        "Reads the existing config and shows the values already set instead of asking for them again",
+        "Asks only for the new allowedDbProject and the new devUrl, one at a time",
+        "Recommends adding the old project ref to guard.forbiddenRefs",
+        "Leaves repo, branches, gitAuthor, budgets and review values unchanged",
+        "Checks the new devUrl answers on the health path before writing it",
+        "Reruns check-config.mjs and the dry run and quotes their result"
+      ],
+      "expected_files": ["loop/loop.config.json"]
+    },
+    {
+      "id": "old-claude-and-no-gh-login",
+      "skills": ["setup-loop"],
+      "query": "/setup-loop",
+      "files": ["a machine where claude --version is below the floor and gh auth status fails"],
+      "expected_behavior": [
+        "Reports the Claude Code version against the floor printed by check-config.mjs, without writing a version number into any file",
+        "Tells the user to run claude update and ! gh auth login themselves instead of running interactive logins",
+        "Does not edit loop/lib/config.mjs to lower the floor",
+        "Continues with the config questions that do not depend on the tools, then reruns the validator once the user reports the fix"
+      ],
+      "expected_files": ["loop/loop.config.json"]
+    }
+  ]
+}

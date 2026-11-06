@@ -1,0 +1,48 @@
+{
+  "skill": "sync-arc42",
+  "baseline": "Without the skill, Claude writes a full twelve-section arc42 from scratch, copies decision text into the decisions section, draws diagrams in ASCII or PlantUML that GitHub does not render, describes the code from memory instead of the diff, and pushes straight to the base branch or merges its own PR, skipping the gates.",
+  "scenarios": [
+    {
+      "id": "milestone-with-new-integration",
+      "skills": ["sync-arc42"],
+      "query": "/sync-arc42 M2 — milestone 2 is done. We added email sending and a payments webhook along the way.",
+      "files": ["docs/architecture/ with all seven files", ".loop/reviews/M2.md", "git history with a new src/lib/email and src/app/api/webhooks/payments"],
+      "expected_behavior": [
+        "Finds the range from the last milestone tag or the M2 packet and confirms it in one line",
+        "Reads git log, git diff --stat and the DECISIONS.md diff for the range before editing",
+        "Lists the drift in a table with evidence before changing any file",
+        "Adds the email service and the payment provider to the section 3 Mermaid context diagram",
+        "Adds the new modules to the section 5 building-block diagram, each matching a real folder",
+        "Links new decisions in section 9 by ID without copying their text",
+        "Adds the M2 packet's follow-ups to section 11",
+        "Asks before git push and gh pr create, opens the PR against the base branch, and does not merge it"
+      ],
+      "expected_files": ["docs/architecture/03-context.md", "docs/architecture/05-building-blocks.md", "docs/architecture/09-decisions.md", "docs/architecture/11-risks.md"]
+    },
+    {
+      "id": "no-drift",
+      "skills": ["sync-arc42"],
+      "query": "/sync-arc42",
+      "files": ["a milestone whose PRs already updated their arc42 sections"],
+      "expected_behavior": [
+        "Determines the range and compares every section with its source of truth",
+        "Reports that nothing drifted and changes no file",
+        "Does not open a PR"
+      ],
+      "expected_files": []
+    },
+    {
+      "id": "copied-decisions",
+      "skills": ["sync-arc42"],
+      "query": "/sync-arc42 — the architecture docs feel out of date. Clean them up.",
+      "files": ["docs/architecture/09-decisions.md with three decisions pasted in full", "a building-block diagram naming a folder that was removed"],
+      "expected_behavior": [
+        "Falls back to the last commit that touched docs/architecture/ when there is no milestone tag",
+        "Replaces the pasted decisions with one-line links to their IDs in DECISIONS.md",
+        "Removes the deleted folder from the building-block diagram after checking git ls-files",
+        "Checks every link in docs/architecture/ resolves before proposing the PR"
+      ],
+      "expected_files": ["docs/architecture/09-decisions.md", "docs/architecture/05-building-blocks.md"]
+    }
+  ]
+}

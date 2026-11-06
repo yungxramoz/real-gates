@@ -1,0 +1,52 @@
+{
+  "skill": "draft-design",
+  "baseline": "Without the skill, Claude writes one design straight into React components, in the generic look (centred hero, gradient, three rounded feature cards, lorem ipsum), never checks it at 360 px, so it scrolls sideways on a phone, and writes no DESIGN.md or accepted mocks. The loop's reviewer then has nothing concrete to score against, and every UI item invents its own spacing and colours.",
+  "scenarios": [
+    {
+      "id": "first-direction",
+      "skills": ["draft-design"],
+      "query": "/draft-design — the brief and requirements are done. I have no idea what it should look like yet; show me some options.",
+      "files": ["docs/BRIEF.md", "docs/REQUIREMENTS.md", "no DESIGN.md"],
+      "expected_behavior": [
+        "Asks which two or three screens with a recommendation, then asks for three feel words, one question at a time",
+        "Builds three directions under design/mocks/directions/ that differ on at least three axes, each with its idea written down",
+        "Uses real content from the brief, CSS custom properties on :root and no external JavaScript",
+        "Runs shoot.mjs on the directions, opens the PNGs, fixes every overflow or console error and reruns until clean",
+        "Shows the directions side by side and recommends one, then asks the owner to pick or mix",
+        "Does exactly one refinement round",
+        "Writes DESIGN.md with tokens copied from the final :root, a type scale, components, voice, do and don't, and a contrast table with ratios",
+        "Copies the final screens and shots into design/mocks/accepted/",
+        "Asks before deleting design/mocks/directions/"
+      ],
+      "expected_files": ["DESIGN.md", "design/mocks/accepted/<screen>.html", "design/mocks/accepted/shots/<screen>-360.png", "design/mocks/accepted/shots/<screen>-1280.png"]
+    },
+    {
+      "id": "screens-for-epic",
+      "skills": ["draft-design"],
+      "query": "/draft-design screens E4 — the loop gets to the payments epic next week. Prototype its screens first.",
+      "files": ["DESIGN.md (accepted)", "design/mocks/accepted/", "docs/REQUIREMENTS.md with E4", "loop/backlog.json with E4 items"],
+      "expected_behavior": [
+        "Reads reference/screens-mode.md and follows its checklist",
+        "Lists E4's screens with the ACs and states each needs and confirms the list with the owner",
+        "Builds the screens in design/mocks/accepted/E4/ with the :root block from DESIGN.md unchanged",
+        "Shows the failed-payment and cancelled states the ACs require",
+        "Runs shoot.mjs on the epic folder until clean",
+        "Adds each mock path to the refs of the E4 backlog items and reruns check-backlog.mjs until OK"
+      ],
+      "expected_files": ["design/mocks/accepted/E4/<screen>.html", "loop/backlog.json"]
+    },
+    {
+      "id": "overflow-fix",
+      "skills": ["draft-design"],
+      "query": "/draft-design — I like direction B but the table screen looks broken on my phone.",
+      "files": ["design/mocks/directions/b-club/schedule.html with a fixed-width table"],
+      "expected_behavior": [
+        "Runs shoot.mjs and quotes the overflow problem with the element that sticks out",
+        "Changes the layout for small screens (stacked rows or a scroll container with a visible cue) instead of shrinking the text below the type scale",
+        "Reruns shoot.mjs until the 360 px page has no horizontal overflow and looks at the new PNG",
+        "Treats this as the refinement round for direction B and continues to acceptance"
+      ],
+      "expected_files": ["design/mocks/directions/b-club/schedule.html", "design/mocks/directions/b-club/shots/schedule-360.png"]
+    }
+  ]
+}
