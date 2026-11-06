@@ -1,0 +1,4 @@
+{
+  "$comment": "Project guard rules. The loop may ADD rows (a LEARN item does, after a repeated failure); CI (loop/scripts/check-rules.mjs) fails any PR that removes or changes a row from the base branch. Row: { id, target: shell|path|sql|mcp, pattern, flags?, phases?, reason, examples: { block, allow } }.",
+  "rules": []
+}

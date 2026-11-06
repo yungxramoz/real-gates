@@ -1,0 +1,128 @@
+// The locked core of the loop guard: the rules every project needs, decided as a pure function.
+//
+// This file is a protected path. The loop cannot edit it, and nothing in loop/rules/ can switch a
+// rule here off: project rules can only add blocks. Every rule has a block case and an allow case in
+// loop/test/guard-core.test.mjs.
+
+import { sqlBlockReason } from './sql.mjs';
+import { matchesAny } from './paths.mjs';
+import { matchRules } from './rules.mjs';
+
+export const READ_ONLY_PHASES = new Set(['review', 'accept', 'packet']);
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+
+const ok = { block: false };
+const no = (rule, reason) => ({ block: true, rule, reason });
+const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Decide one PreToolUse event.
+ * ctx: { phase, item, branch, cfg, rel(path) -> repo-relative path | null, isOnBase(rel) -> bool,
+ *        projectRules: compiled rows }
+ */
+export function decide(event, ctx) {
+  const tool = String(event?.tool_name || '');
+  const input = event?.tool_input || {};
+  if (/^mcp__/.test(tool)) return decideMcp(tool, input, ctx);
+  if (SHELL_TOOLS.has(tool)) return decideShell(String(input.command || ''), ctx);
+  if (EDIT_TOOLS.has(tool)) return decideEdit(String(input.file_path || input.notebook_path || ''), ctx);
+  return ok;
+}
+
+// ------------------------------------------------------------------------------------------- MCP
+function decideMcp(tool, input, ctx) {
+  const g = ctx.cfg.guard || {};
+  const text = JSON.stringify(input);
+  for (const ref of g.forbiddenRefs || []) if (ref && text.includes(ref)) return no('core:forbidden-ref', `project ${ref} is out of bounds, reads included.`);
+  if (/supabase/i.test(tool)) {
+    const projectId = input.project_id || input.projectId || input.project_ref;
+    if (projectId !== undefined && projectId !== g.allowedDbProject) return no('core:db-project', `only the configured Supabase project (${g.allowedDbProject || 'none configured'}) may be touched; got ${projectId}.`);
+    if (/apply_migration$/i.test(tool)) return no('core:apply-migration', 'migrations are applied by the runner after merge, never by a session.');
+    if (/(create_project|delete_branch|create_branch|merge_branch|reset_branch|rebase_branch|pause_project|restore_project|deploy_edge_function|create_edge_function_secret|delete_feedback)$/i.test(tool)) return no('core:db-admin', `${tool} is the owner's, not the loop's.`);
+    if (/execute_sql$/i.test(tool)) {
+      const reason = sqlBlockReason(input.query || input.sql || '', { allowWrite: false, schema: g.dbSchema || '' });
+      if (reason) return no('core:sql', reason);
+      const hit = matchRules(ctx.projectRules || [], 'sql', input.query || input.sql || '', ctx.phase);
+      if (hit) return no(hit.id, hit.reason);
+    }
+  }
+  if (/vercel/i.test(tool) && !/^(get|list|search|web_fetch|aggregate|count|filter)/i.test(tool.split('__').pop())) {
+    return no('core:vercel-write', 'Vercel settings and deployments are the owner\'s; the loop only reads them.');
+  }
+  const hit = matchRules(ctx.projectRules || [], 'mcp', `${tool} ${text}`, ctx.phase);
+  if (hit) return no(hit.id, hit.reason);
+  return ok;
+}
+
+// ----------------------------------------------------------------------------------------- shell
+function decideShell(cmd, ctx) {
+  const c = cmd.replace(/\s+/g, ' ');
+  const { base, production } = ctx.cfg;
+  const g = ctx.cfg.guard || {};
+  const branches = [base, production].filter(Boolean).map(esc).join('|');
+  const onProtectedBranch = [base, production].includes(ctx.branch);
+
+  if (/--dangerously-skip-permissions|\bbypassPermissions\b|--permission-mode\s+(bypassPermissions|dontAsk)/i.test(c)) return no('core:bypass', 'no session may bypass permissions.');
+  if (/\bsupabase\s+(db\s+(push|reset)|migration\s+(up|repair|squash))\b/i.test(c)) return no('core:db-apply', 'the runner applies migrations after merge; a session never applies or resets a database.');
+  if (/\bgit\s+push\b[^|;&]*(\s--force\b|\s-f\b|\s--force-with-lease\b|\s--mirror\b|\s--delete\b|\s-d\b|\s\+\S|\s:\S)/i.test(c)) return no('core:force-push', `no force-push, mirror or remote delete. To catch up, merge origin/${base} into your branch.`);
+  if (branches && new RegExp(`\\bgit\\s+push\\b[^|;&]*?(\\s|:|/)(${branches})(\\s|$|;|&|\\|)`, 'i').test(c)) return no('core:push-base', `never push ${base} or ${production}. Push your feature branch and open a PR to ${base}.`);
+  if (/\bgit\s+push\b/i.test(c) && onProtectedBranch) return no('core:push-base', `you are on ${ctx.branch}: never push it. Create a feature branch from origin/${base} first.`);
+  if (/\bgit\s+commit\b/i.test(c) && onProtectedBranch) return no('core:commit-base', `you are on ${ctx.branch}: commit on a feature branch.`);
+  if (/\bgh\s+pr\s+merge\b/i.test(c)) return no('core:merge', 'only the runner merges, after CI and review. Stop once the PR is open.');
+  if (/\bgh\s+(repo\s+(delete|edit|rename|archive)|release\s+(create|delete|edit)|secret\s|variable\s|ruleset\s)/i.test(c)) return no('core:repo-admin', 'repository settings, releases, secrets and variables are the owner\'s.');
+  if (/\bgh\s+api\b.*(-X|--method)\s*(DELETE|PUT|PATCH)/i.test(c)) return no('core:gh-api-write', 'mutating gh api calls are not allowed in the loop.');
+  if (/\bgh\s+api\b.*(protection|rulesets|\/merges\b|\/git\/refs)/i.test(c)) return no('core:gh-api-write', 'branch protection, rulesets and refs are the owner\'s.');
+  if (/(^|[;&|(]\s*|\bnpx\s+|\bpnpm\s+(dlx\s+|exec\s+)?)vercel\s+(env|deploy\b[^;&|]*--prod|promote|rollback|domains?|alias|remove|rm|project|link)\b/i.test(c)) return no('core:vercel-write', 'Vercel settings and production deploys are the owner\'s.');
+  if (/\brm\s+-\w*r\w*\s+(\/(\s|$)|~\/?(\s|$)|\$HOME\/?(\s|$)|\*|\.\/?(\s|$)|\.\.(\/|\s|$)|[A-Za-z]:[\\/]?(\s|$))/i.test(c) || /Remove-Item\b[^;|&]*-Recurse[^;|&]*\s(\.|\*|[A-Za-z]:\\?|~)(\s|$)/i.test(c)) return no('core:broad-delete', 'refusing a broad recursive delete.');
+  if (/\bgit\s+clean\s+-\w*f/i.test(c) || (production && new RegExp(`\\bgit\\s+reset\\s+--hard\\s+(origin/)?${esc(production)}\\b`, 'i').test(c))) return no('core:git-destroy', 'git clean -f and resetting to production are not allowed.');
+  if (/\bgit\s+add\s+(-A|--all|\.)(\s|$|;|&)/i.test(c)) return no('core:add-all', 'add explicit paths. A blanket add commits runtime files (.loop/) and anything else lying in the tree.');
+  for (const ref of g.forbiddenRefs || []) if (ref && c.includes(ref)) return no('core:forbidden-ref', `project ${ref} is out of bounds.`);
+  if (READ_ONLY_PHASES.has(ctx.phase)) {
+    if (/\bgit\s+(commit|push|merge|rebase|reset|cherry-pick|tag|am|apply|stash|checkout\s+-b|switch\s+-c|branch\s+-[dDmM])\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: no commits, pushes or branch changes.`);
+    if (/\bgh\s+pr\s+(close|edit|ready|merge|create|reopen)\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step may comment on PRs, not change them.`);
+  }
+  // Shell writes into protected files. The pre-merge check is the hard stop; this catches the obvious ones early.
+  const protectedHit = protectedPathMentioned(c, ctx);
+  if (protectedHit && /(>|\btee\b|\bsed\s+-i|\bperl\s+-p?i|\bcp\b|\bmv\b|\brm\b|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bgit\s+(checkout|restore|apply|rm)\b)/i.test(c)) {
+    return no('core:protected-path', `${protectedHit} is part of the harness or the owner's; the loop cannot change it.`);
+  }
+  const hit = matchRules(ctx.projectRules || [], 'shell', c, ctx.phase);
+  if (hit) return no(hit.id, hit.reason);
+  return ok;
+}
+
+function protectedPathMentioned(c, ctx) {
+  const words = c.split(/[\s"'`;|&()<>]+/).filter(Boolean);
+  for (const w of words) {
+    const rel = ctx.rel(w);
+    if (rel && isProtected(rel, ctx)) return rel;
+  }
+  return null;
+}
+
+// ----------------------------------------------------------------------------------------- edits
+/** Protected and not one of the two harness files the loop may add to. */
+export function isProtected(rel, ctx) {
+  if (/^\.loop\/(guard\/|claude-settings\.json$|state\.json$)/.test(rel)) return true; // the guard snapshot, session settings and runner state
+  if (/^\.loop\//.test(rel)) return false;
+  if (rel === 'loop/rules/project-rules.json') return false; // add-only, enforced by check-rules in CI
+  if (/^loop\/patches\/[^/]+\.patch$/.test(rel)) return ctx.isOnBase(rel); // a new patch may be written
+  if (/(^|\/)\.env\.example$/.test(rel)) return false;
+  return matchesAny(rel, ctx.cfg.guard?.protectedPaths || []);
+}
+
+function decideEdit(file, ctx) {
+  const rel = ctx.rel(file);
+  if (READ_ONLY_PHASES.has(ctx.phase) && !(rel && /^\.loop\//.test(rel))) return no('core:read-only', `the ${ctx.phase} step may only write under .loop/.`);
+  if (rel === null) return ok; // outside the repository: scratch files
+  if (/^loop\/patches\/[^/]+$/.test(rel) && ctx.isOnBase(rel)) return no('core:patch-frozen', `this runner patch is already on ${ctx.cfg.base} and waits for the owner. Write a new patch file instead.`);
+  if (isProtected(rel, ctx)) return no('core:protected-path', `${rel} is part of the harness or the owner's; the loop cannot change it. A runner change ships as a new file in loop/patches/.`);
+  const migrations = (ctx.cfg.postMerge || []).map((s) => s.migrationsDir).filter(Boolean);
+  if (migrations.some((d) => rel.startsWith(d.replace(/\/$/, '') + '/')) && /\.sql$/i.test(rel) && ctx.isOnBase(rel)) {
+    return no('core:frozen-migration', `this migration is already on ${ctx.cfg.base}, so it is applied or about to be. Fix forward with a new file.`);
+  }
+  const hit = matchRules(ctx.projectRules || [], 'path', rel, ctx.phase);
+  if (hit) return no(hit.id, hit.reason);
+  return ok;
+}
