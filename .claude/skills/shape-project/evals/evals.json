@@ -1,12 +1,18 @@
 {
   "skill": "shape-project",
-  "baseline": "Without the skill, Claude asks ten questions at once or none, writes a long spec in one go, copies acceptance criteria into the backlog items (so they drift from REQUIREMENTS.md), writes untestable criteria such as 'the page is fast', creates items too large for one session, invents AC IDs that are not in REQUIREMENTS.md, and never checks the docs from the point of view of a builder without the chat, so the loop later guesses on missing details.",
+  "baseline": "Without the skill, Claude asks ten questions at once or none, writes a long spec in one go, copies acceptance criteria into the backlog items (so they drift from REQUIREMENTS.md), writes untestable criteria such as 'the page is fast', creates items too large for one session, invents AC IDs that are not in REQUIREMENTS.md, and never checks the docs from the point of view of a builder without the chat, so the loop later guesses on missing details. It also fills in words the owner never wrote when a request arrives cut off, shortens a list of states it has just read in the source, and leaves the numbers it promises (a run, a cost, a duration) undefined.",
   "scenarios": [
     {
       "id": "new-app-from-idea",
-      "skills": ["shape-project"],
+      "skills": [
+        "shape-project"
+      ],
       "query": "/shape-project — I want a small site for my climbing gym: members see the route setting schedule and can sign up for intro courses with limited spots.",
-      "files": ["docs/BRIEF.md (skeleton)", "docs/REQUIREMENTS.md (skeleton)", "loop/backlog.json (LOOP-0 only)"],
+      "files": [
+        "docs/BRIEF.md (skeleton)",
+        "docs/REQUIREMENTS.md (skeleton)",
+        "loop/backlog.json (LOOP-0 only)"
+      ],
       "expected_behavior": [
         "Copies the shaping checklist into the reply and works through it in order",
         "Asks one question per message, each with a recommended answer",
@@ -19,13 +25,25 @@
         "Dispatches a fresh subagent with the builder-check prompt and no chat history",
         "Turns each guess from the builder check into one question with a recommendation and writes the answer into the named doc"
       ],
-      "expected_files": ["docs/BRIEF.md", "docs/REQUIREMENTS.md", "docs/BACKLOG.md", "loop/backlog.json", "docs/DECISIONS.md", "docs/OWNER-ACTIONS.md"]
+      "expected_files": [
+        "docs/BRIEF.md",
+        "docs/REQUIREMENTS.md",
+        "docs/BACKLOG.md",
+        "loop/backlog.json",
+        "docs/DECISIONS.md",
+        "docs/OWNER-ACTIONS.md"
+      ]
     },
     {
       "id": "add-epic",
-      "skills": ["shape-project"],
+      "skills": [
+        "shape-project"
+      ],
       "query": "/shape-project payments — members should be able to pay the course fee online when they sign up.",
-      "files": ["docs/REQUIREMENTS.md with E1-E3 and AC-1.1 to AC-3.4", "loop/backlog.json with M0-M2"],
+      "files": [
+        "docs/REQUIREMENTS.md with E1-E3 and AC-1.1 to AC-3.4",
+        "loop/backlog.json with M0-M2"
+      ],
       "expected_behavior": [
         "Reads the existing requirements and backlog first and keeps all existing IDs",
         "Shapes only the payments epic, continuing the numbering (E4, AC-4.1, ...)",
@@ -34,20 +52,61 @@
         "Puts the new items into a new or the last milestone without making earlier items depend on them",
         "Reruns check-backlog.mjs until OK"
       ],
-      "expected_files": ["docs/REQUIREMENTS.md", "loop/backlog.json", "docs/BACKLOG.md", "docs/OWNER-ACTIONS.md"]
+      "expected_files": [
+        "docs/REQUIREMENTS.md",
+        "loop/backlog.json",
+        "docs/BACKLOG.md",
+        "docs/OWNER-ACTIONS.md"
+      ]
     },
     {
       "id": "broken-backlog",
-      "skills": ["shape-project"],
+      "skills": [
+        "shape-project"
+      ],
       "query": "/shape-project — I edited backlog.json by hand and the loop now refuses to start. Can you fix it?",
-      "files": ["loop/backlog.json with a duplicate id, a cycle between two items and a ref to AC-9.9 that does not exist"],
+      "files": [
+        "loop/backlog.json with a duplicate id, a cycle between two items and a ref to AC-9.9 that does not exist"
+      ],
       "expected_behavior": [
         "Runs check-backlog.mjs first and quotes the named problems",
         "Fixes the duplicate id and the cycle, asking the owner only where the intended order is unclear",
         "Asks whether AC-9.9 was meant to be a new AC or a typo, with a recommendation, instead of inventing it",
         "Reruns check-backlog.mjs and quotes the OK"
       ],
-      "expected_files": ["loop/backlog.json"]
+      "expected_files": [
+        "loop/backlog.json"
+      ]
+    },
+    {
+      "id": "report-on-an-existing-source",
+      "skills": [
+        "shape-project"
+      ],
+      "query": "/shape-project — I want a small tool that tells me how one of our automated runs went: how many work items were finished, how many were\n  the run took and what it cost, and how two runs compare.",
+      "files": [
+        "docs/BRIEF.md (skeleton)",
+        "docs/REQUIREMENTS.md (skeleton)",
+        "loop/backlog.json (LOOP-0 only)",
+        "loop/lib/state.mjs (defines five end states of an item)"
+      ],
+      "expected_behavior": [
+        "Quotes the sentence that arrived cut off and asks what it said, as the first question and alone, without offering its own reconstruction",
+        "Asks one decision per question; no question also asks the owner to confirm an assumption",
+        "Asks how the owner will know it works and records a measure with a number",
+        "Reads the source the tool reports on before the data topic and lists every end state it defines, naming the file",
+        "Asks what one run is (stops and resumes), whether cost is exact or an estimate, and how runs of different size compare",
+        "Adds an open question to a topic in which the owner accepted every recommendation",
+        "The whole-picture play-back contains every decision from the topic play-backs, including defaults it set itself",
+        "Writes \"What success looks like\" and \"Terms\" into docs/BRIEF.md; check-backlog.mjs prints OK"
+      ],
+      "expected_files": [
+        "docs/BRIEF.md",
+        "docs/REQUIREMENTS.md",
+        "docs/BACKLOG.md",
+        "loop/backlog.json",
+        "docs/DECISIONS.md"
+      ]
     }
   ]
 }

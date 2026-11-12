@@ -7,14 +7,19 @@
 // (AC-<n>.<n>) mentioned exists in docs/REQUIREMENTS.md exactly once, and every file ref resolves,
 // including a #heading anchor in a markdown file.
 //
-// Usage: node check-backlog.mjs [--root <repo dir>] [--backlog <file>] [--requirements <file>]
+// Once the backlog holds more than the setup item, it also checks docs/BRIEF.md: the sections
+// "What success looks like" and "Terms" must say something. A build session reads the brief
+// first; without a success measure and without defined terms it guesses what "done" and what
+// each number means.
+//
+// Usage: node check-backlog.mjs [--root <repo dir>] [--backlog <file>] [--requirements <file>] [--brief <file>]
 // Exit 0 when clean, 1 with every problem named.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HELP = `Usage: node check-backlog.mjs [--root <repo dir>] [--backlog <file>] [--requirements <file>]
+const HELP = `Usage: node check-backlog.mjs [--root <repo dir>] [--backlog <file>] [--requirements <file>] [--brief <file>]
 
 Checks loop/backlog.json against docs/REQUIREMENTS.md:
   - shape: milestones[] and items[] with id, milestone, title, refs[], scope, dependsOn[], and type (string) or ui (boolean)
@@ -22,10 +27,12 @@ Checks loop/backlog.json against docs/REQUIREMENTS.md:
   - dependsOn resolves, has no cycles, never points at a later milestone
   - every AC ID (AC-<n>.<n>) in refs, title or scope is defined in REQUIREMENTS.md, and defined once
   - every file ref exists (a "#heading" anchor in a .md file must match a heading)
+  - once there are items beyond the setup item: docs/BRIEF.md has a success measure and its terms
 
   --root <dir>           repo root (default: nearest folder above the current one with loop/backlog.json)
   --backlog <file>       backlog file (default: <root>/loop/backlog.json)
   --requirements <file>  requirements file (default: <root>/docs/REQUIREMENTS.md)
+  --brief <file>         brief (default: <root>/docs/BRIEF.md; not checked with --backlog unless given)
 
 File refs resolve against the repo root. Exit code 0 when clean, 1 with named problems.`;
 
@@ -40,7 +47,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
-    else if (['--root', '--backlog', '--requirements'].includes(a)) {
+    else if (['--root', '--backlog', '--requirements', '--brief'].includes(a)) {
       if (!argv[i + 1]) throw new Error(`${a} needs a value`);
       args[a.slice(2)] = argv[++i];
     } else throw new Error(`unknown argument "${a}" (see --help)`);
@@ -75,6 +82,47 @@ export function headingSlugs(md) {
     slugs.add(n ? `${base}-${n}` : base);
   }
   return slugs;
+}
+
+/** Sections of the brief a build session cannot work without, by heading. */
+export const BRIEF_SECTIONS = [
+  { heading: 'What success looks like', why: 'say how the owner will know it works: one observable result with a number' },
+  { heading: 'Terms', why: 'define every noun that carries a number, and give every list taken from a source in full' },
+];
+
+/** The text under a `## heading`, up to the next heading of the same or a higher level, without comments. */
+export function sectionText(md, heading) {
+  const lines = String(md ?? '').replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/);
+  const start = lines.findIndex((l) => new RegExp(`^##\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i').test(l));
+  if (start === -1) return null;
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^#{1,2}\s/.test(l));
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n');
+}
+
+/** Does a section say something? A table's header row and its rule are layout, not content. */
+function written(text) {
+  const lines = text.split(/\r?\n/);
+  const rule = (l) => /^\s*\|?\s*:?-{3,}/.test(l || '');
+  const content = lines.filter((l, i) => !rule(l) && !rule(lines[i + 1]));
+  return /[\p{L}\p{N}]/u.test(content.join('\n'));
+}
+
+/**
+ * What the brief still lacks. A section counts as written when it has words that are not table
+ * rules or empty table cells. Only asked once the backlog holds more than the setup item.
+ */
+export function briefProblems(briefText, backlog) {
+  const real = (backlog?.items || []).filter((i) => i && i.id !== 'LOOP-0');
+  if (!real.length) return [];
+  if (briefText === null) return ['docs/BRIEF.md not found; the build sessions read it first'];
+  const p = [];
+  for (const { heading, why } of BRIEF_SECTIONS) {
+    const text = sectionText(briefText, heading);
+    if (text === null) p.push(`docs/BRIEF.md has no "## ${heading}" section: ${why}`);
+    else if (!written(text)) p.push(`docs/BRIEF.md: "## ${heading}" is empty: ${why}`);
+  }
+  return p;
 }
 
 /** Problems of a parsed backlog, given the requirements text and a file resolver. */
@@ -247,7 +295,13 @@ function main() {
     exists: (f) => fs.existsSync(resolve(f)),
     read: (f) => fs.readFileSync(resolve(f), 'utf8'),
   });
-  const problems = [...pre, ...result.problems];
+  // The brief belongs to the repo's own backlog. A sample checked with --backlog has none, unless one is named.
+  let brief = [];
+  if (args.brief || !args.backlog) {
+    const briefFile = path.resolve(root, args.brief || path.join('docs', 'BRIEF.md'));
+    brief = briefProblems(fs.existsSync(briefFile) ? fs.readFileSync(briefFile, 'utf8') : null, backlog);
+  }
+  const problems = [...pre, ...result.problems, ...brief];
 
   const unreferenced = [...result.defined].filter((ac) => !result.referenced.has(ac));
   console.log(`check-backlog: ${backlog?.items?.length ?? 0} item(s), ${backlog?.milestones?.length ?? 0} milestone(s), ${result.defined.size} AC(s) in REQUIREMENTS.md`);

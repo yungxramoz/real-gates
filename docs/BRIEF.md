@@ -26,6 +26,12 @@
 <!-- shape-project: three to five observable outcomes. "A guest can sign up on a phone in under a
 minute", not "good UX". -->
 
+## Terms
+
+<!-- shape-project: every noun that carries a number, one line each: what starts and ends it, what
+is included, whether it is exact or an estimate. Every list taken from an existing source
+(statuses, stages, types), complete, with the file it came from. -->
+
 ## Out of scope
 
 <!-- shape-project: what we deliberately do not build in this version. -->

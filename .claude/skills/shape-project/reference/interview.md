@@ -6,13 +6,26 @@ the brief without guessing.
 
 ## Contents
 
+- Before the first question
 - Problem and audience
 - Core journeys
 - Scope edges
 - Data and integrations
+- Terms and numbers
 - Constraints
 - Accounts and owner actions
 - Play-back format
+
+## Before the first question
+
+Read the owner's message as it arrived, not as it was probably meant.
+
+- **Cut off or garbled?** A sentence that stops in the middle, a list item with no end, a line
+  that does not parse: quote it and ask what it said. This is the first question, alone. Do not
+  fill the gap yourself and do not ask the owner to confirm your filling.
+- **A word that could mean two systems or two things?** ("our runs", "the report", "users".) Ask
+  which, and say what each reading would change.
+- **Start the running list** (rule 7): one line per answer and per default, from here on.
 
 ## Problem and audience
 
@@ -20,7 +33,7 @@ the brief without guessing.
 |---|---|
 | Who uses it, and what do they do today instead? | name one primary user group; others come later |
 | What is the one thing it must do well on day one? | the job the primary user comes back for |
-| How will you know it works? | one number or event you can see within a month |
+| How will you know it works? **Always ask.** | one number or event you can see within a month |
 | Who runs it day to day (admin, content, support)? | the owner, through a small admin area |
 
 ## Core journeys
@@ -51,6 +64,26 @@ gets a confirmation email". Aim for three to five.
 | Who may see which data? | public reads only aggregate or published data; everything else behind auth with row-level security |
 | Which external services: email, payments, maps, analytics? | one provider per need; each gets a stub for CI |
 | Does any data come from elsewhere (import, API)? | a one-off import script before a live sync |
+
+When the product reads or reports on something that exists, read that source before you ask
+(rule 5). Bring to the owner:
+
+- every list the product will show, complete and with the file it comes from (all statuses, all
+  stages, all kinds of check), never a shortened or remembered one;
+- what the source does **not** hold and where that would have to come from;
+- what differs between old and new versions of the source.
+
+## Terms and numbers
+
+Every number the product shows needs a definition the owner agreed to (rule 6). Ask one at a time.
+
+| Question | Recommend |
+|---|---|
+| What exactly is one <thing that is counted>? Where does it start and end? | the smallest unit the owner already talks about; say what a stop, a retry or a resume does to it |
+| Is this number exact or an estimate? Whose number is it? | label an estimate as one wherever it is shown |
+| "How long": working time, or from first start to last end? | show both when they can differ by much |
+| When two of them are compared and differ in size, what is fair? | per-unit figures beside the totals |
+| What does "the biggest / slowest / most expensive" mean: a top list, a threshold, all sorted? | all, sorted, with a way to limit |
 
 ## Constraints
 
@@ -86,5 +119,10 @@ What I heard about <topic>:
 Anything wrong or missing?
 ```
 
-After the whole interview, one screen: who, journeys (numbered), out of scope, integrations,
-constraints, owner actions. Then ask: "Is this the app?"
+When the owner said yes to every recommendation in the topic, or their request was short, add one
+open question before you move on: "What did I leave out here?"
+
+After the whole interview, one screen, written from the running list: who, journeys (numbered),
+terms (what each number means), success (the measure), out of scope, integrations, constraints,
+defaults you set, owner actions. Check it against the list line by line before sending. Then ask:
+"Is this the app?"
