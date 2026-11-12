@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temps = [];
@@ -280,3 +280,29 @@ test(
     }
   },
 );
+
+test('a shallow clone of the template still names the files that are yours and changed', async () => {
+  const { sync } = await import('./sync-template.mjs');
+  const template = copyOfRepo('template');
+  const project = makeProject(template);
+  assert.equal(node(['scripts/sync-template.mjs', '--from', template], project).status, 0);
+  commitAll(project, 'lock');
+  evolve(template);
+  // what a sync from a git URL works on: a clone that does not hold the commit of the last sync
+  const shallow = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-sync-shallow-'));
+    temps.push(dir);
+    git(dir, 'clone', '-q', '--depth', '1', pathToFileURL(template).href, 'template');
+    return path.join(dir, 'template');
+  };
+  const fetched = sync(project, shallow(), { dry: true, fetchMissing: true, log: () => {} });
+  assert.equal(fetched.ok, true);
+  assert.ok(fetched.elsewhere.includes('docs/BRIEF.md'), JSON.stringify(fetched.elsewhere));
+
+  // when the commit cannot be had, the run says so instead of reporting nothing
+  const lines = [];
+  const blind = sync(project, shallow(), { dry: true, log: (l) => lines.push(l) });
+  assert.equal(blind.ok, true);
+  assert.equal(blind.elsewhere, null);
+  assert.match(lines.join('\n'), /warning: the commit of the last sync .* cannot tell/);
+});

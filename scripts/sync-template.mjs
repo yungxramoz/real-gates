@@ -164,12 +164,31 @@ export function plan(project, source) {
   };
 }
 
-/** Files outside the harness that the template changed since the last sync: the project's to look at. */
-function changedElsewhere(project, source, p) {
+/**
+ * Is a commit in the template checkout? A clone made for this run is shallow, so the commit of the
+ * last sync may be missing: ask the remote for that one commit, and failing that for the history.
+ */
+function haveCommit(source, sha, fetchMissing) {
+  const has = () => git(source, 'cat-file', '-e', `${sha}^{commit}`).status === 0;
+  if (!/^[0-9a-f]{7,64}$/i.test(String(sha))) return false;
+  if (has()) return true;
+  if (!fetchMissing) return false;
+  git(source, 'fetch', '-q', '--depth', '1', 'origin', sha);
+  if (has()) return true;
+  git(source, 'fetch', '-q', '--unshallow', 'origin');
+  return has();
+}
+
+/**
+ * Files outside the harness that the template changed since the last sync: the project's to look
+ * at. Null when the two commits cannot be compared; the caller says so instead of staying silent.
+ */
+function changedElsewhere(project, source, p, fetchMissing) {
   const last = readJson(path.join(project, LOCK), {}).commit;
   if (!last || !p.commit || last === p.commit) return [];
+  if (!haveCommit(source, last, fetchMissing)) return null;
   const r = git(source, 'diff', '--name-only', `${last}..${p.commit}`);
-  if (r.status !== 0) return [];
+  if (r.status !== 0) return null;
   const own = (rel) =>
     (p.manifest.mirror || []).some((d) => rel.startsWith(`${d}/`)) ||
     (p.manifest.files || []).includes(rel) ||
@@ -201,7 +220,7 @@ function dirtyTree(root) {
 export function sync(
   project,
   source,
-  { dry = false, force = false, label = source, log = console.log } = {},
+  { dry = false, force = false, label = source, log = console.log, fetchMissing = false } = {},
 ) {
   const p = plan(project, source);
   if (p.problems.length) return { ok: false, problems: p.problems };
@@ -213,7 +232,7 @@ export function sync(
         problems: [`${dirty}. Commit or stash first so git can undo this, or pass --force.`],
       };
   }
-  const elsewhere = changedElsewhere(project, source, p);
+  const elsewhere = changedElsewhere(project, source, p, fetchMissing);
   log(
     `${dry ? 'Would sync' : 'Syncing'} from ${label}${p.commit ? ` at ${p.commit.slice(0, 7)}` : ''}`,
   );
@@ -230,7 +249,12 @@ export function sync(
   }
   if (!p.write.length && !p.remove.length) log('  nothing to do: the template part is up to date');
   for (const n of p.notes) log(`  note    ${n}`);
-  if (elsewhere.length) {
+  if (elsewhere === null) {
+    log(
+      `
+warning: the commit of the last sync (${String(readJson(path.join(project, LOCK), {}).commit).slice(0, 7)}) is not in the template any more, so this run cannot tell which of your own files the template changed since. Compare README.md, CLAUDE.md, docs and the CI workflow with the template yourself.`,
+    );
+  } else if (elsewhere.length) {
     log(
       `\nThe template also changed files that are yours. They were not touched; compare them yourself:`,
     );
@@ -314,7 +338,12 @@ function main() {
   }
 
   try {
-    const r = sync(project, source, { dry: o.dry, force: o.force, label: from });
+    const r = sync(project, source, {
+      dry: o.dry,
+      force: o.force,
+      label: from,
+      fetchMissing: !!temp,
+    });
     if (!r.ok) {
       for (const line of r.problems) console.error(`sync-template: ${line}`);
       return 1;
