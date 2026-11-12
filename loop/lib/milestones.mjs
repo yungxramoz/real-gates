@@ -108,6 +108,7 @@ export async function packMilestones(L, only) {
       if (res?.pass) {
         a.passed = true;
         L.progress(`${m} · acceptance round ${a.rounds} ${where}: **pass**`);
+        L.event('acceptance.round', { milestone: m, round: a.rounds, mode, pass: true, failures: 0 });
       } else {
         const failures = (res?.failures || []).slice(0, 8);
         if (!res) failures.push({ title: `Acceptance run for ${m} produced no verdict`, scope: mode === 'site' ? 'Re-run the milestone acceptance; check the dev deployment and the health endpoint first.' : 'Re-run the milestone acceptance; check that the merged base installs and starts first.' });
@@ -116,6 +117,7 @@ export async function packMilestones(L, only) {
         );
         for (const x of res?.owner || []) L.ownerAction(m, x);
         L.progress(`${m} · acceptance round ${a.rounds} ${where}: **${failures.length} failure(s)** → fix items queued first in line`);
+        L.event('acceptance.round', { milestone: m, round: a.rounds, mode, pass: false, failures: failures.length });
         L.store.save();
         // Fix first. The packet is written only once these items are settled, also after the last
         // round: a packet written before its fixes were built would describe a site that is gone.
@@ -128,6 +130,7 @@ export async function packMilestones(L, only) {
       L.progress(`${m} · packed with the last acceptance round's fixes not re-accepted ${where}`);
     }
     S.packed.push(m);
+    L.event('milestone.packed', { milestone: m, unverified: !!a.unverified });
     L.store.save();
     await packetSession(L, m, mode);
   }

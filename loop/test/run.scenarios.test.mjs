@@ -547,3 +547,46 @@ test('base CI in the background: a run a later merge cancelled is re-run, and no
   assert.deepEqual(sb.calls().map((c) => c.item), ['preflight', 'A1', 'A1', 'A2', 'A2']);
   assert.ok(sb.ghState().calls.some((c) => c.startsWith('run rerun')));
 });
+
+test('the event file says what happened in fields a program can read', async () => {
+  const events = (sb) => sb.file('.loop/events.jsonl').trim().split('\n').map((l) => JSON.parse(l));
+
+  // a red CI round, then merged: the send-back, the merge and the end are each one line
+  const red = box();
+  red.setGhState((s) => (s.ciQueue = ['failure']));
+  const [build, review] = happyItem('A1');
+  red.queue(smokeStep(), build, fixRound('A1'), review);
+  assert.equal((await red.run()).code, 0);
+  const ev = events(red);
+  assert.ok(ev.every((e) => e.v === 1 && typeof e.type === 'string' && !Number.isNaN(Date.parse(e.at))), 'every line has v, at and type');
+  assert.equal(ev[0].type, 'run.started');
+  assert.equal(ev.at(-1).type, 'run.ended');
+  assert.equal(ev.at(-1).reason, 'backlog exhausted');
+  const back = ev.filter((e) => e.type === 'check.sent_back');
+  assert.deepEqual(back.map((e) => [e.item, e.check, e.pr, e.round, e.detail, e.jobs]), [['A1', 'ci', 1, 1, 'red', ['unit tests']]]);
+  assert.deepEqual(ev.filter((e) => e.type === 'build.round').map((e) => [e.round, e.outcome]), [[1, 'ready'], [2, 'ready']]);
+  const merged = ev.find((e) => e.type === 'item.merged');
+  assert.match(merged.sha, /^[0-9a-f]{40}$/);
+  assert.equal(merged.pr, 1);
+  const done = ev.find((e) => e.type === 'item.finished');
+  assert.deepEqual([done.item, done.milestone, done.status, done.buildRounds], ['A1', 'M1', 'done', 2]);
+  assert.ok(ev.findIndex((e) => e.type === 'item.merged') < ev.findIndex((e) => e.type === 'item.finished'));
+  assert.deepEqual(ev.filter((e) => e.type === 'milestone.packed').map((e) => e.milestone), ['M1']);
+
+  // a review that never approves: each verdict, each send-back, the LEARN item and the outcome
+  const stuck = box();
+  stuck.queue(smokeStep(), happyItem('A1')[0], changes(), fixRound('A1'), changes(), fixRound('A1'), changes());
+  assert.equal((await stuck.run(['--once'])).code, 0);
+  const sv = events(stuck);
+  const verdicts = sv.filter((e) => e.type === 'review.verdict');
+  assert.deepEqual(verdicts.map((e) => [e.round, e.verdict, e.blocking[0].category]), [[1, 'changes', 'tests'], [2, 'changes', 'tests'], [3, 'changes', 'tests']]);
+  assert.equal(sv.filter((e) => e.type === 'check.sent_back' && e.check === 'review').length, 3);
+  assert.deepEqual(sv.filter((e) => e.type === 'learn.queued').map((e) => [e.signature, e.learn]), [['review:tests:untested-branch', 'LEARN-1']]);
+  assert.equal(sv.find((e) => e.type === 'item.finished').status, 'needs_human');
+  assert.ok(!sv.some((e) => e.type === 'item.merged'));
+
+  // a dry run writes nothing
+  const dry = box();
+  await dry.run(['--dry-run']);
+  assert.equal(dry.file('.loop/events.jsonl'), null);
+});

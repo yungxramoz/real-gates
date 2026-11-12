@@ -128,11 +128,43 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | Every session in full | `.loop/logs/NNN-<item>-<phase>.jsonl` |
 | Blocked actions | `.loop/logs/guard.log` (time, item, phase, rule, reason) |
 | Time and cost per session | `.loop/ledger.jsonl` (item, phase, duration, turns, cost, outcome) |
+| What happened, for a program | `.loop/events.jsonl` (one JSON line per event, see below) |
 | **Things only you can do** | `.loop/OWNER-ACTIONS.md` |
 | **Milestone "come look"** | `.loop/reviews/<milestone>.md`, with screenshots |
 | Final summary | `.loop/REPORT.md` |
 | Stop cleanly (finishes the current step) | create `.loop/STOP` (any content); delete it to run again |
 | Phone notifications | set `notify.ntfyTopic`, subscribe in the ntfy app |
+
+### The event file
+
+`.loop/PROGRESS.md` is written for a person. `.loop/events.jsonl` says the same things as one JSON object
+per line, so a script can count them without reading sentences. Every line has `v` (the format
+version, now `1`), `at` (ISO time) and `type`. Within a version fields are only added, never renamed
+or removed. A dry run writes nothing.
+
+| `type` | Fields | Written when |
+| --- | --- | --- |
+| `run.started` | `items` | a run begins |
+| `run.ended` | `reason`, `sessions` | a run ends in order |
+| `run.stopped` | `why` | the runner stops itself and writes `.loop/STOP` |
+| `run.crashed` | `error` | the runner ends on an error |
+| `build.round` | `item`, `round`, `outcome`, `pr` | a build session ends (`outcome` is `no-result` when it left no result) |
+| `check.sent_back` | `item`, `check`, `pr`, `round`, `detail` | a check sends the PR back to a build session; `check` is `local-gate`, `pre-merge`, `ci` (with `jobs`), `review` or `merge` |
+| `review.verdict` | `item`, `pr`, `round`, `verdict`, `blocking` (`category`, `file`) | a review session returns |
+| `item.merged` | `item`, `pr`, `sha` | the script merged the PR |
+| `item.held` | `item`, `kind`, `why` | an item waits for the owner |
+| `item.released` | `item`, `kind` | the owner released a held item |
+| `item.finished` | `item`, `milestone`, `status`, `why`, `buildRounds` | an item reaches its final status |
+| `base.red` | `item`, `sha`, `background`, `fix` | CI on the base branch failed after a merge |
+| `base.no_verdict` | `item`, `sha`, `why` | CI on the base branch never reported |
+| `postmerge.step` | `item`, `adapter`, `ok`, `note` | a post-merge step ran |
+| `acceptance.round` | `milestone`, `round`, `mode`, `pass`, `failures` | a milestone acceptance session returns |
+| `milestone.packed` | `milestone`, `unverified` | a milestone is closed |
+| `learn.queued` | `item`, `signature`, `learn` | a repeated failure queued a LEARN item |
+| `followup.queued` | `item`, `followup`, `milestone` | a build session raised a follow-up item |
+| `usage.wait` | `item`, `minutes` | the usage limit was hit and the run waits |
+
+Sessions with their time and cost stay in `.loop/ledger.jsonl`; the two files join on `item`.
 
 The loop never pauses at a milestone. Read each packet when it arrives; change the plan between
 runs.

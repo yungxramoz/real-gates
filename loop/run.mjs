@@ -39,6 +39,7 @@ const paths = {
   report: path.join(RUN, 'REPORT.md'),
   result: path.join(RUN, 'result.json'),
   ledger: path.join(RUN, 'ledger.jsonl'),
+  events: path.join(RUN, 'events.jsonl'),
   task: path.join(RUN, 'current-task.md'),
   settings: path.join(RUN, 'claude-settings.json'),
   logs: path.join(RUN, 'logs'),
@@ -103,6 +104,20 @@ function progress(line) {
   if (args.dry) return;
   fs.mkdirSync(RUN, { recursive: true });
   fs.appendFileSync(paths.progress, `- ${stamp()} · ${String(line).replace(/\s*\n\s*/g, ' ')}\n`);
+}
+/**
+ * One JSON line per thing that happened, in .loop/events.jsonl: what PROGRESS.md says in words, as
+ * fields a program can read. Every line has v (the format version), at and type. Fields are only
+ * added within a version. A failed write never stops the run.
+ */
+function event(type, fields = {}) {
+  if (args.dry) return;
+  try {
+    fs.mkdirSync(RUN, { recursive: true });
+    fs.appendFileSync(paths.events, JSON.stringify({ v: 1, at: new Date().toISOString(), type, ...fields }) + '\n');
+  } catch (e) {
+    log(`⚠ could not write the event file: ${e.message}`);
+  }
 }
 function tailOf(file, n) {
   try {
@@ -204,6 +219,7 @@ const L = {
   args,
   log,
   progress,
+  event,
   progressTail: (n) => tailOf(paths.progress, n),
   ownerAction,
   ownerActionsTail: (n) => tailOf(paths.owner, n),
@@ -239,6 +255,7 @@ function stopRun(why, ask) {
 `);
   log(`!!! ${why} — wrote .loop/STOP`);
   progress(`**run stopped** — ${why}`);
+  event('run.stopped', { why });
   if (ask) ownerAction('run', ask);
 }
 function remoteHeads() {
@@ -314,6 +331,7 @@ L.session = {
     setStatus('usage-limit-wait', opts.item, { until: new Date(Date.now() + ms).toISOString() });
     log(`⏸ usage limit — sleeping ${Math.round(ms / 60000)} min and retrying the same step`);
     progress(`${opts.item?.id || '-'} · usage limit, waiting ${Math.round(ms / 60000)} min`);
+    event('usage.wait', { item: opts.item?.id || null, minutes: Math.round(ms / 60000) });
   },
 };
 
@@ -457,6 +475,7 @@ async function main() {
   await smokeTest();
   log(`loop starting — ${store.allItems().length} items, budget ${cfg.budgets.maxSessions} sessions / ${cfg.budgets.maxHours} h`);
   progress(`loop started (pid ${process.pid})`);
+  event('run.started', { items: store.allItems().length });
 
   let reason = 'backlog exhausted';
   let held = false;
@@ -535,6 +554,7 @@ async function main() {
   }
   writeReport(L, reason, runSessions);
   progress(`loop ended — ${reason}`);
+  event('run.ended', { reason, sessions: runSessions });
   setStatus('stopped', null, { reason });
   log(`loop ended — ${reason}. Report: .loop/REPORT.md`);
   await notify('loop stopped', reason);
@@ -543,6 +563,7 @@ async function main() {
 main().catch(async (e) => {
   console.error(e);
   progress(`loop crashed: ${short(String(e?.stack || e), 600)}`);
+  event('run.crashed', { error: short(String(e?.message || e), 300) });
   setStatus('crashed', null, { error: String(e?.message || e) });
   await notify('loop crashed', String(e?.message || e));
   process.exit(1);
