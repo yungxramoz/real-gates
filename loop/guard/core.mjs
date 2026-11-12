@@ -146,7 +146,7 @@ export function readPlainShell(source) {
   const s = String(source).replace(/\r\n/g, '\n');
   if (s.includes('\r')) return null;
   const commands = [];
-  let cur = { words: [], targets: [], hereDoc: false, piped: false };
+  let cur = { words: [], targets: [], reads: 0, hereDoc: false, piped: false };
   let word = null;
   let target = null; // a redirect waits for its target: { amp }
   let pending = null; // a here-document waits for its body: { delim, literal, dash, cmd }
@@ -154,7 +154,8 @@ export function readPlainShell(source) {
   const wordEnd = () => {
     if (!word) return true;
     if (target) {
-      if (!(target.amp && !word.quoted && /^(\d+|-)$/.test(word.text))) cur.targets.push(word.text);
+      if (target.input) cur.reads++;
+      else if (!(target.amp && !word.quoted && /^(\d+|-)$/.test(word.text))) cur.targets.push(word.text);
       target = null;
     } else cur.words.push(word);
     word = null;
@@ -168,7 +169,7 @@ export function readPlainShell(source) {
     if (cur.words.length || cur.targets.length) commands.push(cur);
     else if (sep === '|' || afterPipe) return false;
     afterPipe = sep === '|';
-    cur = { words: [], targets: [], hereDoc: false, piped: false };
+    cur = { words: [], targets: [], reads: 0, hereDoc: false, piped: false };
     return true;
   };
   const add = (text, quoted) => {
@@ -266,8 +267,11 @@ export function readPlainShell(source) {
       target = { amp };
     } else if (ch === '<') {
       if (next !== '<') {
-        dropDescriptor(); // reading from a file or a descriptor
+        // reading from a file or a descriptor: what follows is no argument of the command
+        dropDescriptor();
+        if (target) return null;
         if (next === '&') i++;
+        target = { input: true };
         continue;
       }
       if (s[i + 2] === '<' || pending || target) return null;
@@ -351,10 +355,11 @@ export function shellWritesProtected(cmd, ctx) {
     if (!WRITE_VERB.test(text)) continue;
     if (/\bxargs\b/i.test(text)) return mentioned;
     // `cp [options] sources… destination`: only the destination is written. Any other shape
-    // (an option after the first path, -t) is read whole.
+    // (an option after the first path, -t, a redirect to or from a file) is read whole.
     const args = c.words.slice(1).map((w) => w.text);
     const firstPath = args.findIndex((a) => !a.startsWith('-'));
-    const plainCopy = !c.words[0].quoted && c.words[0].text === 'cp' && firstPath >= 0 && !args.slice(firstPath).some((a) => a.startsWith('-')) && !args.some((a) => /^(-[A-Za-z]*t|--target-directory)/.test(a));
+    const bare = !c.reads && !c.hereDoc && c.targets.every(noFile);
+    const plainCopy = bare && !c.words[0].quoted && c.words[0].text === 'cp' && firstPath >= 0 && !args.slice(firstPath).some((a) => a.startsWith('-')) && !args.some((a) => /^(-[A-Za-z]*t|--target-directory)/.test(a));
     for (const w of plainCopy ? args.slice(-1) : text.split(FRAGMENTS)) {
       if (unreadable(w)) return mentioned;
       const hit = protectedWord(w);
