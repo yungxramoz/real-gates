@@ -28,7 +28,11 @@ Two or three sentences: the app, for whom, and the job it does.
 - **Admin**: ...
 
 ## What success looks like
-One observable result.
+One observable result with a number, in the owner's words.
+
+## Terms
+- **<thing that is counted>**: what starts and ends it, what is included, exact or estimate.
+- **<status or stage list>**: every value, and the source file it was taken from.
 
 ## Core journeys
 1. A visitor ... and gets ...

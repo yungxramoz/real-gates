@@ -25,6 +25,13 @@ with a test: a missing value, an undefined term, an unclear rule, two docs that 
 could not test, a screen with no defined content or states, a dependency that is not in the
 backlog.
 
+Two checks to make for every item, because they are the guesses that look like knowledge:
+- A number the product shows (a count, a cost, a duration): is what it counts defined in the
+  brief's Terms, including where it starts and ends? If not, that is a guess.
+- A list the docs state about something that exists in this repository or in a named source
+  (statuses, stages, types, checks): open the source and compare value for value. A value the
+  source has and the docs lack is a row; name both files.
+
 Do not write or change any file. Answer with one table and nothing else:
 
 | Item | What I would guess | Why the docs do not answer it | Which doc should answer it |
