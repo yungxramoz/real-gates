@@ -17,9 +17,17 @@ export const DEFAULTS = Object.freeze({
   ciCheck: 'ci', // the one required check-run name
   deploy: { adapter: 'vercel-preview', devUrl: '', health: '/api/health', bypassSecretEnv: 'VERCEL_BYPASS' },
   postMerge: [{ adapter: 'supabase-cli', dbUrlEnv: 'DEV_DB_URL', migrationsDir: 'supabase/migrations', holdOnUnverified: true }],
-  guard: { allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '' },
+  guard: { allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '', requireBranchProtection: true },
   review: { minDesignScore: 7, maxRounds: 2 },
-  budgets: { maxSessions: 150, maxHours: 120, maxUsdPerSession: 25 },
+  budgets: { maxSessions: 150, maxHours: 120, maxUsdPerSession: 25, maxUsdPerRun: 0 }, // maxUsdPerRun 0 = no run cap
+  // Environment variables no agent session may see, on top of every postMerge[].dbUrlEnv (always
+  // removed) and deploy.bypassSecretEnv (kept only for the steps that open the deployed site).
+  sessionEnvDeny: [],
+  // Commands the runner itself runs on the pushed branch head before it waits for CI. The agent is
+  // told to prove its work locally; this checks that it did. Empty = no local gate.
+  localGate: { commands: [], timeoutMin: 20 },
+  contractsDir: 'docs/contracts', // <dir>/<item id>.md, written by the build session
+
   notify: { ntfyTopic: '' },
   gitAuthor: { name: '', email: '' },
   // Per-item limits, unchanged from the original run.
@@ -95,6 +103,9 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!['auto', 'acceptEdits'].includes(cfg.permissionMode)) p.push(`permissionMode "${cfg.permissionMode}" is not supported: use "auto" (the loop never bypasses permissions)`);
   if (!(cfg.review?.minDesignScore >= 1 && cfg.review?.minDesignScore <= 10)) p.push('review.minDesignScore must be between 1 and 10');
   if (!(cfg.budgets?.maxUsdPerSession > 0)) p.push('budgets.maxUsdPerSession must be a positive number');
+  if (!(cfg.budgets?.maxUsdPerRun >= 0)) p.push('budgets.maxUsdPerRun must be 0 (no cap) or a positive number');
+  if (!Array.isArray(cfg.localGate?.commands) || cfg.localGate.commands.some((c) => typeof c !== 'string')) p.push('localGate.commands must be a list of shell commands (strings)');
+  if (!Array.isArray(cfg.sessionEnvDeny)) p.push('sessionEnvDeny must be a list of environment variable names');
   return p;
 }
 

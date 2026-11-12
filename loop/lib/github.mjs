@@ -19,6 +19,42 @@ export function prView(ctx, pr) {
   return ctx.proc.ghJson('pr', 'view', String(pr), '--repo', ctx.cfg.repo, '--json', 'number,state,baseRefName,headRefName,headRefOid,mergeStateStatus,statusCheckRollup,mergeCommit,url,isDraft,title');
 }
 
+/** Does GitHub protect this branch, by a classic protection rule or an active ruleset? */
+export function branchProtected(ctx, branch) {
+  const b = ctx.proc.ghTry('api', `repos/${ctx.cfg.repo}/branches/${branch}`);
+  try {
+    if (b.ok && JSON.parse(b.out).protected === true) return true;
+  } catch {}
+  const r = ctx.proc.ghTry('api', `repos/${ctx.cfg.repo}/rules/branches/${branch}`);
+  try {
+    const rules = r.ok ? JSON.parse(r.out) : [];
+    return Array.isArray(rules) && rules.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** The AC IDs a backlog item names, in its refs, title or scope. */
+export function itemAcs(item) {
+  const text = [item?.title, item?.scope, ...(Array.isArray(item?.refs) ? item.refs : [])].filter((x) => typeof x === 'string').join('\n');
+  return [...new Set(text.match(/(?<![\w.-])AC-\d+\.\d+(?!\.?\d)/g) || [])];
+}
+
+/**
+ * The item's contract on the branch must name every AC the item names. The builder writes the
+ * contract and the reviewer grades against it, so which criteria it has to hold is not the
+ * builder's call: scripts/ac-trace.mjs then demands a live test for every AC a contract names.
+ */
+function contractProblems(proc, cfg, branch, item) {
+  const acs = itemAcs(item);
+  if (!acs.length) return [];
+  const file = `${(cfg.contractsDir || 'docs/contracts').replace(/\/$/, '')}/${item.id}.md`;
+  const c = proc.gitTry('show', `${branch}:${file}`);
+  if (!c.ok) return [`\`${file}\` is missing: write the contract first, with every acceptance criterion of this item (${acs.join(', ')}) and its proof.`];
+  const missing = acs.filter((ac) => !new RegExp(`(?<![\\w.-])${ac.replace('.', '\\.')}(?!\\.?\\d)`).test(c.out));
+  return missing.length ? [`\`${file}\` leaves out ${missing.join(', ')}: the contract must name every acceptance criterion of this item with its proof. Do not drop or merge criteria.`] : [];
+}
+
 export function runIdFrom(url) {
   const m = String(url || '').match(/actions\/runs\/(\d+)/);
   return m ? m[1] : null;
@@ -192,7 +228,7 @@ function nameStatus(proc, range) {
 }
 
 /** Structural checks the reviewer should never have to catch. {ok} | {ok:false, text} */
-export function preMergeChecks(ctx, s) {
+export function preMergeChecks(ctx, s, item) {
   const { proc, cfg } = ctx;
   proc.git('fetch', 'origin', '--prune');
   const branch = `origin/${s.branch}`;
@@ -203,6 +239,7 @@ export function preMergeChecks(ctx, s) {
   const migrationDirs = (cfg.postMerge || []).map((x) => x.migrationsDir).filter(Boolean);
   const guardCtx = { cfg, isOnBase: (rel) => proc.gitTry('cat-file', '-e', `origin/${cfg.base}:${rel}`).ok };
   const problems = gateProblems(proc, cfg, branch, changes);
+  if (item) problems.push(...contractProblems(proc, cfg, branch, item));
   for (const { status, files } of changes) {
     for (const file of files) {
       if (migrationDirs.some((d) => file.startsWith(d.replace(/\/$/, '') + '/')) && /\.sql$/.test(file) && !status.startsWith('A')) problems.push(`\`${file}\` (${status}): migrations already on ${cfg.base} are frozen — revert this change and fix forward with a new file.`);

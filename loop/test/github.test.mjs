@@ -226,3 +226,33 @@ test('a PR merged by someone else is reported as merged, not closed', async () =
   sb.setGhState((s) => (s.prs[pr].state = 'MERGED'));
   assert.equal((await waitForPrCi(ctx, pr)).kind, 'merged');
 });
+
+test('pre-merge refuses a missing contract and a contract that leaves out an AC of the item', async () => {
+  const { itemAcs } = await import('../lib/github.mjs');
+  const item = { id: 'E1-1', title: 'Form', refs: ['AC-1.1', 'docs/REQUIREMENTS.md'], scope: 'Covers AC-1.2 and AC-1.10.' };
+  assert.deepEqual(itemAcs(item), ['AC-1.2', 'AC-1.10', 'AC-1.1']);
+  const { sb, ctx } = setup();
+  openPr(sb, 'feat/a', { 'src/x.ts': 'x\n' });
+  const none = preMergeChecks(ctx, { branch: 'feat/a' }, item);
+  assert.equal(none.ok, false);
+  assert.match(none.text, /docs\/contracts\/E1-1\.md` is missing/);
+  // AC-1.10 in the contract must not count as AC-1.1
+  openPr(sb, 'feat/b', { 'docs/contracts/E1-1.md': 'AC-1.2 by a unit test. AC-1.10 by a journey.\n' });
+  const partial = preMergeChecks(ctx, { branch: 'feat/b' }, item);
+  assert.equal(partial.ok, false);
+  assert.match(partial.text, /leaves out AC-1\.1:/);
+  openPr(sb, 'feat/c', { 'docs/contracts/E1-1.md': 'AC-1.1, AC-1.2 and AC-1.10, each with a test.\n' });
+  assert.deepEqual(preMergeChecks(ctx, { branch: 'feat/c' }, item), { ok: true });
+  // an item that names no AC (FIX, LEARN) is not asked for one
+  assert.deepEqual(preMergeChecks(ctx, { branch: 'feat/a' }, { id: 'FIX-1', title: 'x', refs: [], scope: 'y' }), { ok: true });
+});
+
+test('branch protection is read from the branch or from a ruleset', async () => {
+  const { branchProtected } = await import('../lib/github.mjs');
+  const { sb, ctx } = setup();
+  assert.equal(branchProtected(ctx, 'develop'), true);
+  sb.setGhState((s) => (s.unprotected = ['develop']));
+  assert.equal(branchProtected(ctx, 'develop'), false);
+  sb.setGhState((s) => (s.rulesets = { develop: [{ type: 'pull_request' }] }));
+  assert.equal(branchProtected(ctx, 'develop'), true);
+});

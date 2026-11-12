@@ -7,10 +7,13 @@ session. **The script decides when something is done, not the agent.**
 pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items first)
  └─ build session (/goal)  → contract first (docs/contracts/<id>.md: every AC + its proof),
                              then branch, code, tests, PR to the base branch, .loop/result.json
+ └─ local gate             → the script runs `localGate.commands` on the pushed head.
+                             Failing? fix session with the output, before any CI wait
  └─ script waits for CI    → red? fix session with the failing log
                              cancelled with no runner? re-run, never a fix (L-02)
  └─ pre-merge checks       → base is an ancestor (L-01), no edited migrations, no protected or
-                             runtime files, coverage thresholds did not drop
+                             runtime files, coverage thresholds did not drop, the contract names
+                             every AC of the item
  └─ review session         → independent, read-only: contract, hard rules, drives the app,
                              scores design quality / originality / craft / functionality 1–10;
                              any score < 7 blocks a UI item. Changes? fix session (max 2 rounds)
@@ -23,7 +26,9 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
                              the migration list. Not verified? HELD, and the run stops
  └─ milestone complete?    → acceptance on the deployed dev site, after /api/health reports the
                              merged commit and db ok. Failures become ACC items, max 2 rounds
-                           → review packet in .loop/reviews/<milestone>.md
+                           → review packet in .loop/reviews/<milestone>.md, once those items
+                             are settled. Fixes from the last round are not re-accepted: the
+                             packet and OWNER-ACTIONS say so
 ```
 
 Why each step is there: [../WHY.md](../WHY.md). It is deliberately **sequential**: concurrent
@@ -42,8 +47,13 @@ agents sharing one working tree are what broke the setup this loop replaced.
    author. `node loop/run.mjs --dry-run` names everything still missing.
 5. `DEV_DB_URL` (the dev database URL) in the environment that runs the loop, for the post-merge
    step. Without it, a merge with migrations is held and the step goes to `.loop/OWNER-ACTIONS.md`.
-6. `pnpm install` and `pnpm exec playwright install chromium`.
-7. Keep the machine awake while it runs.
+   Only the runner uses it: agent sessions start without it (see [Session environment](#session-environment)).
+6. **Branch protection on the base branch**: require a pull request and the CI check, no required
+   approvals, no direct or force pushes. The preflight asks GitHub and refuses to start without a
+   protection rule or ruleset. If your plan does not offer one for this repository, set
+   `guard.requireBranchProtection` to `false`.
+7. `pnpm install` and `pnpm exec playwright install chromium`.
+8. Keep the machine awake while it runs.
 
 ## Run
 
@@ -84,6 +94,7 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | History | `.loop/PROGRESS.md` |
 | Every session in full | `.loop/logs/NNN-<item>-<phase>.jsonl` |
 | Blocked actions | `.loop/logs/guard.log` (time, item, phase, rule, reason) |
+| Time and cost per session | `.loop/ledger.jsonl` (item, phase, duration, turns, cost, outcome) |
 | **Things only you can do** | `.loop/OWNER-ACTIONS.md` |
 | **Milestone "come look"** | `.loop/reviews/<milestone>.md`, with screenshots |
 | Final summary | `.loop/REPORT.md` |
@@ -121,7 +132,33 @@ stops the run (`.loop/STOP`, with an entry in `.loop/OWNER-ACTIONS.md`) if any f
 
 A PR found already merged before the runner merged it is **held** (`outside-merge`) until you
 release it; the item is then rebuilt through the gates. Branch protection on the base branch that
-requires the CI check stops such a merge at GitHub as well; `/setup-loop` lists it as an owner action.
+requires the CI check stops such a merge at GitHub as well. The preflight checks that the base
+branch has one and refuses to start without it.
+
+### Session environment
+
+An agent session does not get the runner's secrets. Removed from every session: each
+`postMerge[].dbUrlEnv` (the dev database URL) and every name in `sessionEnvDeny`. The deploy
+bypass secret (`deploy.bypassSecretEnv`) reaches only the acceptance and packet steps, which open
+the deployed site. The guard's SQL rules cover the database tool; they cannot see a shell command
+that connects on its own, so the URL must not be there to use. List any other variable only the
+runner or you need in `sessionEnvDeny`. Keep such values out of files a session can read, too.
+
+### The contract and the AC gate
+
+The build session writes `docs/contracts/<item>.md`. The pre-merge check refuses the PR unless
+that file names every AC ID the item names (in `refs`, `title` or `scope`). In CI,
+`scripts/ac-trace.mjs` then requires each AC a contract names to be in the title of a test that
+runs: `skip`, `todo`, `fixme` and expected-to-fail tests do not count. ACs of items not built
+yet are listed as pending. `pnpm ac-trace --all` checks every AC, for a release.
+
+### The local gate
+
+`localGate.commands` (the preset: `pnpm check`) are run by the runner on the pushed branch head
+after each build session, with the same reduced environment as a session. A failure goes straight
+to a fix session with the output in `.loop/logs/gate-<item>-r<round>.txt` and counts against the
+CI fix rounds. It does not replace CI: CI still decides the merge. Set `commands` to `[]` to
+switch it off.
 
 **Pre-merge, the runner also refuses** changes to CI's wiring: the `scripts` in `package.json`,
 `scripts/`, the lint, test, type and format configs, and any Vitest config change other than
@@ -139,6 +176,7 @@ bypass permissions. Generated settings turn auto memory off.
 | Sessions per run | 150 |
 | Hours per run | 120 |
 | Dollars per session | 25 |
+| Dollars per run (`budgets.maxUsdPerRun`) | 0 = no cap |
 | Failed attempts per item | 3 |
 | Build rounds per item, fixes included | 8 |
 | CI fix rounds per item | 3 |

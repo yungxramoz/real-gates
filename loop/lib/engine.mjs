@@ -1,6 +1,6 @@
 // The item engine: one backlog item from build to verified-on-base, as a resumable state machine.
 //
-//   build → ci → review → merge → landed → baseci → postmerge → done
+//   build → gate → ci → review → merge → landed → baseci → postmerge → done
 //                                    └────────┴─────────┴──→ hold (run stops, re-verified on resume)
 //
 // Every transition is saved, so a crash or reboot resumes in the same phase.
@@ -14,6 +14,7 @@ import { landedCheck, mergePr, preMergeChecks, prView, waitForCommitCi, waitForP
 import { postMergeAdapter } from '../adapters/index.mjs';
 import { recordFailure, reviewSignatures, REVIEW_CATEGORIES } from './learn.mjs';
 import { REVIEW_SCHEMA } from './schemas.mjs';
+import { runLocalGate } from './localgate.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
 const NEXT_AFTER_HOLD = { landed: 'baseci', baseci: 'postmerge', postmerge: 'finish', 'outside-merge': 'rebuild' };
@@ -129,7 +130,12 @@ async function reviewSession(L, item, s) {
     CATEGORIES: REVIEW_CATEGORIES.join(', '),
     REVIEW_ROUND: s.reviewRounds + 1,
     ITEM_JSON: JSON.stringify(item, null, 2),
-    NOTES: s.notes.length ? `Earlier sessions on this item:\n${s.notes.map((n) => `- ${n}`).join('\n')}` : '',
+    // The reviewer is not briefed by the builder: no handoff notes. It only learns what it needs to
+    // judge scope, marked as the builder's claim.
+    NOTES: [
+      s.partials > 0 ? `${s.partials} earlier slice(s) of this item are already merged into ${L.cfg.base}.` : '',
+      s.isPartial ? `The builder declared this PR a **partial** slice. What it says remains (a claim to check, not a fact): ${short(s.remaining || '(nothing listed)', 800)}` : '',
+    ].filter(Boolean).join('\n\n'),
     PREVIOUS_REVIEW: s.lastReview ? `## Your previous round's findings\n\n\`\`\`json\n${JSON.stringify(s.lastReview, null, 2)}\n\`\`\`` : '',
   }));
   L.setStatus('review', item, { pr: s.pr, round: s.reviewRounds + 1 });
@@ -272,7 +278,25 @@ export async function runItem(L, item) {
         save();
         continue;
       }
-      Object.assign(s, { pr: v.number, branch: v.headRefName, isPartial: r.outcome === 'partial', remaining: r.remaining || '', summary: r.summary || '', phase: 'ci' });
+      Object.assign(s, { pr: v.number, branch: v.headRefName, isPartial: r.outcome === 'partial', remaining: r.remaining || '', summary: r.summary || '', phase: 'gate' });
+      save();
+    }
+
+    if (s.phase === 'gate') {
+      L.setStatus('gate', item, { pr: s.pr });
+      const g = runLocalGate(L, item, s);
+      if (!g.ok) {
+        s.ciFixes++;
+        countFailure(L, `gate:${g.command}`, short(g.text, 300), item);
+        L.progress(`${item.id} · local gate failed on PR #${s.pr} (${g.command}) — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
+        if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `the local gate (${g.command}) still fails on PR #${s.pr} after ${L.cfg.maxCiFixes} fix rounds`);
+        fix = { kind: 'gate', text: g.text, pr: s.pr };
+        Object.assign(s, { pendingFix: fix, phase: 'build' });
+        save();
+        continue;
+      }
+      if (g.note) L.progress(`${item.id} · local gate: ${g.note}`);
+      s.phase = 'ci';
       save();
     }
 
@@ -299,7 +323,7 @@ export async function runItem(L, item) {
         save();
         continue;
       }
-      const pre = preMergeChecks(L, s);
+      const pre = preMergeChecks(L, s, item);
       if (!pre.ok) {
         s.ciFixes++;
         countFailure(L, 'premerge', short(pre.text, 300), item);

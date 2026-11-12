@@ -145,3 +145,13 @@ test('a tool call naming a forbidden project writes STOP', async () => {
   await runClaudeOnce(ctx, { prompt: 'x', phase: 'build', item: { id: 'A1' }, timeoutMin: 1 });
   assert.match(fs.readFileSync(ctx.paths.stop, 'utf8'), /forbidden project/);
 });
+
+test('an agent session loses the runner-only secrets; the runner keeps them', async () => {
+  const { sessionEnv } = await import('../lib/claude.mjs');
+  const cfg = { postMerge: [{ dbUrlEnv: 'DEV_DB_URL' }], deploy: { bypassSecretEnv: 'VERCEL_BYPASS' }, sessionEnvDeny: ['STRIPE_KEY'] };
+  const env = { PATH: '/bin', DEV_DB_URL: 'postgres://x', VERCEL_BYPASS: 's', STRIPE_KEY: 'k', OTHER: '1' };
+  assert.deepEqual(sessionEnv(env, cfg, 'script'), env);
+  for (const phase of ['build', 'review', 'smoke', 'gate']) assert.deepEqual(sessionEnv(env, cfg, phase), { PATH: '/bin', OTHER: '1' }, phase);
+  for (const phase of ['accept', 'packet']) assert.deepEqual(sessionEnv(env, cfg, phase), { PATH: '/bin', VERCEL_BYPASS: 's', OTHER: '1' }, phase);
+  assert.equal(env.DEV_DB_URL, 'postgres://x', 'the input is not changed');
+});

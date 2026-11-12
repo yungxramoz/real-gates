@@ -14,6 +14,28 @@ const TRANSIENT_RE = /overloaded|529|internal server error|\b50[0-4]\b|ECONNRESE
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
 
+/** The steps that open the deployed site, and so may need the deployment-protection bypass secret. */
+const DEPLOYED_SITE_PHASES = new Set(['accept', 'packet']);
+
+/**
+ * The environment for one phase. The runner's own child processes ('script') keep everything. An
+ * agent session loses what only the runner needs: every post-merge database URL, the names in
+ * `sessionEnvDeny`, and the deploy bypass secret outside the steps that open the deployed site.
+ * A session that holds the dev database URL can write to the database from a shell command, which
+ * no command pattern reliably catches.
+ */
+export function sessionEnv(env, cfg, phase) {
+  const out = { ...env };
+  if (phase === 'script') return out;
+  const deny = new Set([...(cfg.postMerge || []).map((s) => s?.dbUrlEnv), ...(cfg.sessionEnvDeny || [])].filter(Boolean));
+  const bypass = cfg.deploy?.bypassSecretEnv;
+  if (bypass && !DEPLOYED_SITE_PHASES.has(phase)) deny.add(bypass);
+  const lower = new Set([...deny].map((k) => k.toLowerCase()));
+  // Windows environment names are case-insensitive.
+  for (const k of Object.keys(out)) if (deny.has(k) || (process.platform === 'win32' && lower.has(k.toLowerCase()))) delete out[k];
+  return out;
+}
+
 /** The argv for one session. Never --bare (it skips hooks, so the guard would silently stop). */
 export function sessionArgs(cfg, { prompt, phase, model, schema, settingsFile, mcpConfig }) {
   const a = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--settings', settingsFile];
@@ -93,6 +115,7 @@ function killTree(child) {
 export function runClaudeOnce(ctx, { prompt, phase, item, timeoutMin, model, schema }) {
   return new Promise((resolve) => {
     ctx.beforeSession?.(phase, item); // fresh guard snapshot and settings for every session
+    const startedAt = Date.now();
     const n = String(ctx.nextSessionNumber()).padStart(3, '0');
     const logFile = path.join(ctx.paths.logs, `${n}-${item?.id || 'x'}-${phase}.jsonl`);
     fs.mkdirSync(ctx.paths.logs, { recursive: true });
@@ -163,7 +186,7 @@ export function runClaudeOnce(ctx, { prompt, phase, item, timeoutMin, model, sch
         fs.writeFileSync(ctx.paths.stop, `Stopped by run.mjs: ${alarm} (session ${n}).\n`);
         ctx.log(`!!! ${alarm} — wrote .loop/STOP`);
       }
-      const res = { ok: !isError, text, structured: final?.structured_output ?? null, init, isError, limited, resetAt: limited ? parseReset(errText) : null, transient, timedOut, cost: final?.total_cost_usd, turns: final?.num_turns, log: logFile, code };
+      const res = { ok: !isError, text, structured: final?.structured_output ?? null, init, isError, limited, resetAt: limited ? parseReset(errText) : null, transient, timedOut, cost: final?.total_cost_usd, turns: final?.num_turns, durationMs: Date.now() - startedAt, log: logFile, code };
       try {
         ctx.afterSession?.(res, phase, item); // integrity: harness unchanged, base and production unmoved
       } catch (e) {

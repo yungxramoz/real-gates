@@ -158,20 +158,15 @@ jobs:
           path: artifacts/playwright-report
           retention-days: 7
 
-      # Every AC in docs/REQUIREMENTS.md must be named in a test title, and in a contract once
-      # the loop has written any. Before the first loop run there are no contracts, so only the
-      # test half can be checked; the step says so instead of skipping silently.
+      # Every AC a contract names (docs/contracts/<item>.md, committed with the PR that builds
+      # it) must be named in the title of a test that runs: skipped and todo tests do not count.
+      # ACs no contract names yet are listed as pending. The runner refuses a PR whose contract
+      # leaves out one of its item's ACs, so an item cannot dodge this by writing less.
+      # Before a release, run `pnpm ac-trace --all`: every AC, contract and test.
       - name: ac-trace
         id: ac_trace
         if: ${{ !cancelled() }}
-        run: |
-          set -uo pipefail
-          if ls .loop/contracts/*.md docs/contracts/*.md >/dev/null 2>&1; then
-            pnpm ac-trace
-          else
-            echo "::notice::No contracts in .loop/contracts or docs/contracts yet; checking tests only."
-            pnpm ac-trace --no-contracts
-          fi
+        run: pnpm ac-trace
 
       # The project rule table may only grow. On a PR it is compared with the base branch; on a
       # push with the commit the push replaced.

@@ -2,19 +2,26 @@
 /**
  * ac-trace — every acceptance criterion has a contract and a test that names it.
  *
- *   node scripts/ac-trace.mjs [--no-contracts] [--root <dir>]
+ *   node scripts/ac-trace.mjs [--all] [--no-contracts] [--root <dir>]
  *
  * 1. Reads the AC IDs from `docs/REQUIREMENTS.md`: `AC-<digits>.<digits>` at the start of a list
  *    item or a heading (`- AC-1.2 …`, `1. **AC-1.2** …`, `### AC-1.2 …`). An ID elsewhere in the
  *    prose is a reference, not a definition.
- * 2. Checks each one appears in at least one contract (`.loop/contracts/*.md` or
- *    `docs/contracts/*.md`). `--no-contracts` skips this half, for a project the loop has not run
- *    on yet.
- * 3. Checks each one appears in at least one test *title* under `tests/` (`test('AC-1.2 …')`,
- *    `it(…)`, `describe(…)`). A comment that names an AC proves nothing, so comments do not count.
+ * 2. An AC is **built** once a contract names it (`docs/contracts/*.md` or `.loop/contracts/*.md`,
+ *    committed with the PR that builds it; the runner refuses a PR whose contract leaves out one of
+ *    its item's ACs). Every built AC must appear in at least one test *title* under `tests/`
+ *    (`test('AC-1.2 …')`, `it(…)`, `describe(…)`). A comment that names an AC proves nothing.
+ * 3. A test that does not run proves nothing either: `test.skip`, `.todo`, `.fixme`, `.fails`,
+ *    `xit`, `xtest` and `xdescribe` titles do not count.
+ * 4. An AC no contract names yet is **pending**: listed, not a failure. The requirements are written
+ *    before the first item is built, so a gate that demanded every test on day one could only be
+ *    passed with placeholder tests.
  *
- * Prints every AC with no test (and with no contract), and exits 1 on any gap. A requirements file
- * with no AC IDs at all is a gap too: a gate that matches nothing proves nothing.
+ * `--all` is the release check: every AC must be in a contract and in a live test title.
+ * `--no-contracts` is `--all` without the contract half (every AC needs a live test).
+ *
+ * Exits 1 on any gap. A requirements file with no AC IDs at all is a gap too: a gate that matches
+ * nothing proves nothing.
  *
  * Node built-ins only, so it runs before `pnpm install`.
  */
@@ -22,23 +29,26 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
-const USAGE = 'usage: node scripts/ac-trace.mjs [--no-contracts] [--root <dir>]';
+const USAGE = 'usage: node scripts/ac-trace.mjs [--all] [--no-contracts] [--root <dir>]';
 
 const AC_DEFINITION =
   /^\s*(?:#{1,6}\s+|(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)(?:\*\*|__|`)?(AC-\d+\.\d+)(?!\.?\d)/;
 // `AC-1.1` must not match inside `AC-1.10` or `AC-1.1.2`; a sentence-ending dot is fine.
 const AC_ANYWHERE = /(?<![\w.-])AC-\d+\.\d+(?!\.?\d)/g;
 const TEST_TITLE =
-  /\b(?:test|it|describe)(?:\.[A-Za-z]+)*\s*\(\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*)\1/g;
+  /\b(x?)(?:test|it|describe)((?:\.[A-Za-z]+)*)\s*\(\s*(['"`])((?:\\[\s\S]|(?!\3)[^\\])*)\3/g;
+// Modifiers under which the test body does not run, or is expected to fail.
+const NOT_RUN = /\.(?:skip|todo|fixme|fails)\b/;
 const TEST_FILE = /\.(?:[cm]?[jt]s|tsx|jsx)$/;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'coverage', 'artifacts']);
 const CONTRACT_DIRS = ['.loop/contracts', 'docs/contracts'];
 
 function parseArgs(argv) {
-  const options = { contracts: true, root: process.cwd() };
+  const options = { contracts: true, all: false, root: process.cwd() };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--no-contracts') options.contracts = false;
+    else if (arg === '--all') options.all = true;
     else if (arg === '--root' && argv[i + 1] !== undefined) options.root = resolve(argv[++i]);
     else throw new UsageError(`unknown argument: ${arg}`);
   }
@@ -64,13 +74,15 @@ function definedAcs(markdown) {
   return ids;
 }
 
-/** Every AC ID that appears in a test title in `source`. */
+/** AC IDs in the test titles of `source`: `live` from tests that run, `skipped` from ones that do not. */
 function acsInTestTitles(source) {
-  const ids = new Set();
+  const live = new Set();
+  const skipped = new Set();
   for (const title of source.matchAll(TEST_TITLE)) {
-    for (const id of title[2].matchAll(AC_ANYWHERE)) ids.add(id[0]);
+    const into = title[1] || NOT_RUN.test(title[2]) ? skipped : live;
+    for (const id of title[4].matchAll(AC_ANYWHERE)) into.add(id[0]);
   }
-  return ids;
+  return { live, skipped };
 }
 
 function* walk(dir) {
@@ -101,7 +113,7 @@ function contractFiles(root) {
   return files;
 }
 
-function trace({ root, contracts }) {
+function trace({ root, contracts, all }) {
   const requirementsPath = join(root, 'docs', 'REQUIREMENTS.md');
   if (!existsSync(requirementsPath)) {
     return { error: `docs/REQUIREMENTS.md not found under ${root}` };
@@ -109,9 +121,12 @@ function trace({ root, contracts }) {
   const acs = definedAcs(readFileSync(requirementsPath, 'utf8'));
 
   const tested = new Set();
+  const skipped = new Set();
   for (const file of walk(join(root, 'tests'))) {
     if (!TEST_FILE.test(file)) continue;
-    for (const id of acsInTestTitles(readFileSync(file, 'utf8'))) tested.add(id);
+    const found = acsInTestTitles(readFileSync(file, 'utf8'));
+    for (const id of found.live) tested.add(id);
+    for (const id of found.skipped) skipped.add(id);
   }
 
   const contracted = new Set();
@@ -120,11 +135,18 @@ function trace({ root, contracts }) {
     for (const id of readFileSync(file, 'utf8').matchAll(AC_ANYWHERE)) contracted.add(id[0]);
   }
 
+  // Without --all (and with contracts in play), only the ACs a contract names are due.
+  const strict = all || !contracts;
+  const due = strict ? acs : acs.filter((id) => contracted.has(id));
   return {
     acs,
-    noTest: acs.filter((id) => !tested.has(id)),
-    noContract: contracts ? acs.filter((id) => !contracted.has(id)) : [],
-    unknownInTests: [...tested].filter((id) => !acs.includes(id)).sort(),
+    due,
+    strict,
+    pending: strict ? [] : acs.filter((id) => !contracted.has(id)),
+    noTest: due.filter((id) => !tested.has(id)),
+    onlySkipped: new Set(due.filter((id) => !tested.has(id) && skipped.has(id))),
+    noContract: all && contracts ? acs.filter((id) => !contracted.has(id)) : [],
+    unknownInTests: [...new Set([...tested, ...skipped])].filter((id) => !acs.includes(id)).sort(),
     contractCount: contractPaths.length,
   };
 }
@@ -156,8 +178,13 @@ function main() {
   for (const id of result.unknownInTests) {
     console.warn(`ac-trace: warning: ${id} is named in a test title but not in REQUIREMENTS.md`);
   }
-  for (const id of result.noTest)
-    console.error(`ac-trace: ${id} has no test (no test title names it)`);
+  for (const id of result.noTest) {
+    console.error(
+      result.onlySkipped.has(id)
+        ? `ac-trace: ${id} has no test (only a skipped, todo or expected-to-fail test names it)`
+        : `ac-trace: ${id} has no test (no test title names it)`,
+    );
+  }
   for (const id of result.noContract) {
     console.error(`ac-trace: ${id} has no contract (.loop/contracts or docs/contracts)`);
   }
@@ -166,13 +193,22 @@ function main() {
   const scope = options.contracts
     ? `tests and ${result.contractCount} contract file(s)`
     : 'tests (contracts skipped)';
+  if (result.pending.length) {
+    console.log(
+      `ac-trace: ${result.pending.length} AC(s) pending (no contract names them yet): ${result.pending.join(', ')}`,
+    );
+  }
   if (gaps > 0) {
     console.error(
-      `ac-trace: FAIL — ${gaps} gap(s) across ${result.acs.length} AC(s), checked ${scope}`,
+      `ac-trace: FAIL — ${gaps} gap(s) across ${result.due.length} AC(s), checked ${scope}`,
     );
     process.exit(1);
   }
-  console.log(`ac-trace: OK — ${result.acs.length} AC(s) traced to ${scope}`);
+  console.log(
+    result.strict
+      ? `ac-trace: OK — ${result.acs.length} AC(s) traced to ${scope}`
+      : `ac-trace: OK — ${result.due.length} built AC(s) traced to ${scope}, ${result.pending.length} pending`,
+  );
 }
 
 main();

@@ -29,7 +29,7 @@ if (args.includes('--version')) {
   process.exit(0);
 }
 
-fs.appendFileSync(path.join(DIR, 'claude-calls.jsonl'), JSON.stringify({ phase: process.env.LOOP_PHASE, item: process.env.LOOP_ITEM, args }) + '\n');
+fs.appendFileSync(path.join(DIR, 'claude-calls.jsonl'), JSON.stringify({ phase: process.env.LOOP_PHASE, item: process.env.LOOP_ITEM, args, sees: Object.fromEntries((process.env.LOOP_FAKE_RECORD_ENV || '').split(',').filter(Boolean).map((k) => [k, k in process.env])) }) + '\n');
 const qFile = path.join(DIR, 'claude-queue.json');
 const queue = fs.existsSync(qFile) ? JSON.parse(fs.readFileSync(qFile, 'utf8')) : [];
 const step = queue.shift() || { text: 'nothing scripted' };

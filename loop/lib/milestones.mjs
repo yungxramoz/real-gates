@@ -78,7 +78,7 @@ async function packetSession(L, m) {
     BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || 'VERCEL_BYPASS',
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status}${L.store.st(i.id).prs?.length ? ` · PR ${L.store.st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}`).join('\n'),
     OWNER_ACTIONS: L.ownerActionsTail(60),
-    ACCEPT_JSON: JSON.stringify(readJson(path.join(L.paths.run, `accept-${m}.json`), { note: 'no acceptance run (no UI items)' }), null, 2),
+    ACCEPT_JSON: JSON.stringify({ ...readJson(path.join(L.paths.run, `accept-${m}.json`), { note: 'no acceptance run (no UI items)' }), ...(L.store.S.accept[m]?.unverified ? { fixesNotReAccepted: 'These failures are from the last acceptance round. Their fix items merged through CI and review but were not re-tested on the dev site: say so in the packet.' } : {}) }, null, 2),
   }));
   L.setStatus('packet', { id: m, title: `packet ${m}` });
   const cond = `The milestone packet described in .loop/current-task.md is returned as structured output, with its screenshots taken.`;
@@ -128,8 +128,15 @@ export async function packMilestones(L, only) {
         for (const x of res?.owner || []) L.ownerAction(m, x);
         L.progress(`${m} · acceptance round ${a.rounds} on dev: **${failures.length} failure(s)** → fix items queued first in line`);
         L.store.save();
-        if (a.rounds < L.cfg.maxAcceptRounds) return {}; // fix first, then accept again
+        // Fix first. The packet is written only once these items are settled, also after the last
+        // round: a packet written before its fixes were built would describe a site that is gone.
+        return {};
       }
+    }
+    if (inM.some((i) => i.ui) && a.rounds > 0 && !a.passed) {
+      a.unverified = true;
+      L.ownerAction(m, `Milestone ${m}: acceptance still found failures in its last round (${a.rounds} of ${L.cfg.maxAcceptRounds}). Their fix items (ACC-${m}-${a.rounds}-*) went through CI and review, but nothing re-tested them on the dev site. Check them yourself against .loop/accept-${m}.json before you rely on ${m}.`);
+      L.progress(`${m} · packed with the last acceptance round's fixes not re-accepted on dev`);
     }
     S.packed.push(m);
     L.store.save();

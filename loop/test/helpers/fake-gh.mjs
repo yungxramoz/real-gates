@@ -131,6 +131,14 @@ try {
       save(S);
       out({ jobs: [{ name: c === 'failure' ? 'unit tests' : 'ci', conclusion: c === 'starved' ? 'cancelled' : c, runner_name: c === 'starved' ? null : 'runner-1' }] });
     }
+    if ((m = p.match(/\/rules\/branches\/(.+)$/))) {
+      save(S);
+      out((S.rulesets || {})[m[1]] || []);
+    }
+    if ((m = p.match(/\/branches\/([^/]+)$/))) {
+      save(S);
+      out({ name: m[1], protected: !(S.unprotected || []).includes(m[1]) });
+    }
     fail(`fake gh: unknown api path ${p}`);
   }
 

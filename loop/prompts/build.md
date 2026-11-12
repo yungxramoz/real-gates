@@ -44,6 +44,8 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
    command. Add the screens a user will see and the states each must handle (empty, loading, error,
    full, 360 px). The reviewer grades the PR against this contract, and CI checks that every AC ID
    appears in a contract and in a test title. Commit it with the change and paste it into the PR body.
+   The runner refuses a PR whose contract leaves out an AC the item names, and CI refuses an AC
+   whose only test is skipped, `todo` or expected to fail.
 
 4. **Build only this item.** Small, coherent, mergeable. The acceptance criteria in the referenced
    docs are the definition of done: read them, don't guess them. If the item is too big for one
@@ -58,7 +60,8 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
    flagged, reversible default, keep building, and put an exact, copy-paste-ready ask in
    `owner_actions`. Return `blocked` **only** when no mergeable progress is possible without the owner.
 
-6. **Prove it locally before you push.** A red CI costs a whole round.
+6. **Prove it locally before you push.** A red CI costs a whole round, and the runner runs the
+   project's local gate itself on your pushed head before it waits for CI.
    - `pnpm check` and `pnpm build` must pass.
    - New logic gets unit tests. Never lower a coverage threshold; the ratchet only goes up and the
      runner refuses a PR that lowers it.

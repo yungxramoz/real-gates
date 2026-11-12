@@ -117,13 +117,25 @@ linked account. That is why the email has to be a verified one.
 come from a run of 49 items with no failed item. Mention them in one line. Change one only when the
 user asks, and keep `budgets.maxUsdPerSession` set: it stops a single runaway session.
 
+| Key | What it does | Default |
+|---|---|---|
+| `budgets.maxUsdPerRun` | stops the run once its sessions cost this much; `0` = no cap | `0` |
+| `localGate.commands` | shell commands the runner runs on the pushed head before waiting for CI | preset: `["pnpm check"]` |
+| `sessionEnvDeny` | extra environment variables no agent session may see | `[]` |
+| `guard.requireBranchProtection` | the preflight refuses to start when the base branch is unprotected | `true` |
+| `contractsDir` | where build sessions write `<item>.md` contracts | `docs/contracts` |
+
+Set `guard.requireBranchProtection` to `false` only when the user's GitHub plan has no branch
+protection for this repository, and say what that costs: a stray push to the base is then only
+noticed after it happened.
+
 ## Owner actions this step usually produces
 
 Append to `docs/OWNER-ACTIONS.md`, one row each, with how to verify it:
 
 | Action | Verify |
 |---|---|
-| Protect `<production>`; require `<ciCheck>` on `<base>` | GitHub → Settings → Branches shows both rules |
+| Protect `<production>`; require a pull request and `<ciCheck>` on `<base>`, no required approvals | `node loop/run.mjs --dry-run` no longer warns about branch protection |
 | Put the dev DB URL in the loop's environment as `<dbUrlEnv>` | the dry run no longer names it |
 | Create the bypass secret, set it as `<bypassSecretEnv>` | `curl` with header `x-vercel-protection-bypass` returns 200 |
 | Subscribe to the ntfy topic on the phone | a test message arrives: `curl -d hi ntfy.sh/<topic>` |

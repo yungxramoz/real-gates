@@ -306,3 +306,101 @@ test('owner commands refuse while a loop holds the lock', async () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /A loop is running/);
 });
+
+test('an unprotected base branch stops the run in the preflight, unless the config opts out', async () => {
+  const sb = box();
+  sb.setGhState((s) => (s.unprotected = ['develop']));
+  sb.queue(smokeStep(), happyItem('A1'));
+  const r = await sb.run();
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /develop has no branch protection or ruleset/);
+  assert.equal(sb.calls().length, 0, 'no session starts');
+  const dry = await sb.run(['--dry-run']);
+  assert.equal(dry.code, 0, 'a dry run only warns');
+  assert.match(dry.stdout, /no branch protection/);
+
+  const off = box({ config: { guard: { requireBranchProtection: false } } });
+  off.setGhState((s) => (s.unprotected = ['develop']));
+  off.queue(smokeStep(), happyItem('A1'));
+  assert.equal((await off.run()).code, 0);
+  assert.equal(off.state().items.A1.status, 'done');
+});
+
+test('the local gate runs on the pushed head: a failure gets a fix round before CI is waited for', async () => {
+  const gate = "import fs from 'node:fs';\nif (!fs.existsSync('src/ok.txt')) { console.log('GATE: src/ok.txt is missing'); process.exit(1); }\nfs.writeFileSync('CLAUDE.md', '# changed by the gate\\n');\n";
+  const sb = box({ config: { localGate: { commands: ['node gate.mjs'] } }, files: { 'gate.mjs': gate } });
+  const [build, review] = happyItem('A1');
+  sb.queue(smokeStep(), build, { commit: { branch: '$OPEN', files: { 'src/ok.txt': 'ok\n' }, message: 'fix' }, result: { item: 'A1', outcome: 'ready', pr: '$PR', summary: 'fixed' } }, review);
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.equal(sb.state().items.A1.status, 'done');
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'build', 'review', 'packet']);
+  const progress = sb.file('.loop/PROGRESS.md');
+  assert.match(progress, /local gate failed on PR #1 \(node gate\.mjs\)/);
+  assert.match(progress, /local gate: 1 command\(s\) passed/);
+  assert.match(sb.file('.loop/logs/gate-A1-r1.txt'), /GATE: src\/ok\.txt is missing/);
+  assert.equal(sb.git('status', '--porcelain', '--untracked-files=no'), '', 'what the gate commands changed is not left in the tree');
+  assert.equal(sb.state().learn['gate:node gate.mjs'].count, 1);
+});
+
+test('after the last acceptance round the packet waits for the fix items and says they were not re-accepted', async () => {
+  const sb = box({ backlog: { milestones: ['M1'], items: [{ id: 'U1', milestone: 'M1', title: 'screen', ui: true }] }, config: { maxAcceptRounds: 1 } });
+  const server = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ commit: sb.originGit('rev-parse', 'develop'), db: 'ok' }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const cfgFile = path.join(sb.root, 'loop', 'loop.config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+  cfg.deploy.devUrl = `http://127.0.0.1:${server.address().port}`;
+  fs.writeFileSync(cfgFile, JSON.stringify(cfg));
+  try {
+    sb.queue(
+      smokeStep(),
+      happyItem('U1', { ui: true }),
+      { structured: { pass: false, failures: [{ title: 'Save button does nothing', scope: 'No feedback after save.' }], summary: 'one failure' } },
+      happyItem('ACC-M1-1-1', { ui: true }),
+      { structured: { markdown: '# M1\n\nOne fix not re-accepted.\n', screenshots: [] } },
+    );
+    const r = await sb.run();
+    assert.equal(r.code, 0, r.stderr);
+    const st = sb.state();
+    assert.equal(st.items['ACC-M1-1-1'].status, 'done');
+    assert.equal(st.accept.M1.passed, false);
+    assert.equal(st.accept.M1.unverified, true);
+    assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'accept', 'build', 'review', 'packet'], 'the packet comes after the fix item, not before it');
+    assert.match(sb.file('.loop/OWNER-ACTIONS.md'), /nothing re-tested them on the dev site/);
+  } finally {
+    server.close();
+  }
+});
+
+test('every session is in the ledger with its cost, and a run dollar cap stops the run', async () => {
+  const sb = box();
+  sb.queue(smokeStep(), happyItem('A1'));
+  assert.equal((await sb.run()).code, 0);
+  const rows = sb.file('.loop/ledger.jsonl').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(rows.map((r) => r.phase), ['smoke', 'build', 'review', 'packet']);
+  assert.ok(rows.every((r) => r.costUsd === 0.01 && r.ok === true && r.durationMs >= 0));
+  assert.equal(sb.state().cost.totalUsd, 0.04);
+  assert.equal(sb.state().cost.byItem.A1, 0.02);
+  assert.match(sb.file('.loop/REPORT.md'), /cost so far: ~\$0\.04/);
+
+  const capped = box({ backlog: { milestones: ['M1'], items: [{ id: 'A1', milestone: 'M1', title: 'one' }, { id: 'A2', milestone: 'M1', title: 'two' }] }, config: { budgets: { maxUsdPerRun: 0.03 }, milestonePackets: false } });
+  capped.queue(smokeStep(), happyItem('A1'), happyItem('A2'));
+  await capped.run();
+  assert.equal(capped.state().items.A1.status, 'done');
+  assert.notEqual(capped.state().items.A2?.status, 'done');
+  assert.match(capped.file('.loop/REPORT.md'), /budget reached \(sessions, hours or dollars\)/);
+});
+
+test('agent sessions do not see the database URL; only the deployed-site steps see the bypass secret', async () => {
+  const sb = box({ config: { postMerge: [{ adapter: 'supabase-cli', dbUrlEnv: 'DEV_DB_URL', migrationsDir: 'supabase/migrations', holdOnUnverified: true }] } });
+  Object.assign(sb.env, { DEV_DB_URL: 'postgres://dev', VERCEL_BYPASS: 'secret', LOOP_FAKE_RECORD_ENV: 'DEV_DB_URL,VERCEL_BYPASS' });
+  sb.queue(smokeStep(), happyItem('A1'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const sees = Object.fromEntries(sb.calls().map((c) => [c.phase, c.sees]));
+  for (const phase of ['smoke', 'build', 'review']) assert.deepEqual(sees[phase], { DEV_DB_URL: false, VERCEL_BYPASS: false }, phase);
+  assert.deepEqual(sees.packet, { DEV_DB_URL: false, VERCEL_BYPASS: true });
+});

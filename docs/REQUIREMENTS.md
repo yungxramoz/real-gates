@@ -9,8 +9,10 @@
   - Stories under an epic: `### S<n>.<m> — <name>`, one sentence "who wants what, so that why".
   - Acceptance criteria: `AC-<epic>.<n>`, unique across the file, one testable sentence each,
     written so a test title can carry the ID.
-  - Gate: scripts/ac-trace.mjs fails CI unless every AC ID appears in a contract
-    (docs/contracts/<item>.md, committed with the PR) and in at least one test title.
+  - Gate: an AC is built once a contract names it (docs/contracts/<item>.md, committed with the
+    PR). scripts/ac-trace.mjs fails CI when a built AC is not in the title of a test that runs
+    (skipped and todo tests do not count). ACs not built yet are listed as pending.
+    `pnpm ac-trace --all` checks every AC, for a release.
   - Never renumber an AC. Retire one by striking it through and saying why.
 -->
 

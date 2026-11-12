@@ -125,7 +125,7 @@ describe('ac-trace', () => {
       'tests/unit/a.test.ts': spec('it', 'AC-3.1 one') + spec('it', 'AC-3.2 two'),
       '.loop/contracts/ITEM-1.md': '# Contract\n- AC-3.1 is proven by the unit test.',
     });
-    const { code, out } = run(root);
+    const { code, out } = run(root, '--all');
     expect(code).toBe(1);
     expect(out).toContain('AC-3.2 has no contract');
     expect(out).not.toContain('AC-3.1 has no contract');
@@ -138,9 +138,56 @@ describe('ac-trace', () => {
       '.loop/contracts/ITEM-1.md': 'Covers AC-3.1.',
       'docs/contracts/ITEM-2.md': 'Covers AC-3.2.',
     });
-    const { code, out } = run(root);
+    const { code, out } = run(root, '--all');
     expect(out).toContain('OK — 2 AC(s) traced to tests and 2 contract file(s)');
     expect(code).toBe(0);
+  });
+
+  it('AC-0.1 by default only the ACs a contract names are due; the rest are pending', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-3.1 One\n- AC-3.2 Two\n- AC-3.3 Three',
+      'tests/unit/a.test.ts': spec('it', 'AC-3.1 one'),
+      'docs/contracts/ITEM-1.md': 'Covers AC-3.1.',
+    });
+    const { code, out } = run(root);
+    expect(out).toContain('2 AC(s) pending (no contract names them yet): AC-3.2, AC-3.3');
+    expect(out).toContain('OK — 1 built AC(s) traced to tests and 1 contract file(s), 2 pending');
+    expect(code).toBe(0);
+  });
+
+  it('AC-0.1 by default a built AC with no test is a gap', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-3.1 One\n- AC-3.2 Two',
+      'tests/unit/a.test.ts': spec('it', 'AC-3.1 one'),
+      'docs/contracts/ITEM-1.md': 'Covers AC-3.1 and AC-3.2.',
+    });
+    const { code, out } = run(root);
+    expect(code).toBe(1);
+    expect(out).toContain('AC-3.2 has no test');
+    expect(out).toContain('FAIL — 1 gap(s) across 2 AC(s)');
+  });
+
+  it('AC-0.1 a skipped, todo, fixme, expected-to-fail or x-prefixed test is not a test', () => {
+    const titles = [
+      spec('test.skip', 'AC-5.1 skipped'),
+      spec('it.todo', 'AC-5.2 todo'),
+      spec('test.fixme', 'AC-5.3 fixme'),
+      spec('describe.skip', 'AC-5.4 group'),
+      spec('xit', 'AC-5.5 x'),
+      spec('it.fails', 'AC-5.6 fails'),
+      spec('test.only', 'AC-5.7 runs'),
+    ].join('');
+    const root = tree({
+      'docs/REQUIREMENTS.md': [1, 2, 3, 4, 5, 6, 7].map((n) => `- AC-5.${n} x`).join('\n'),
+      'tests/unit/a.test.ts': titles,
+    });
+    const { code, out } = run(root, '--no-contracts');
+    expect(code).toBe(1);
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      expect(out).toContain(`AC-5.${n} has no test (only a skipped, todo or expected-to-fail test`);
+    }
+    expect(out).not.toContain('AC-5.7 has no test');
+    expect(out).toContain('FAIL — 6 gap(s) across 7 AC(s)');
   });
 
   it('AC-0.1 warns about an AC in a test title that the requirements do not define', () => {

@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { configProblems, loadConfig, MIN_CLAUDE_VERSION, versionNumber } from './lib/config.mjs';
 import { backlogProblems, createState, HELD_PHASE, readJson, TERMINAL, writeJson } from './lib/state.mjs';
 import { binary, createProc } from './lib/proc.mjs';
-import { isolationProblems, repoMcpServers, runClaudeOnce, userSkillNames } from './lib/claude.mjs';
+import { isolationProblems, repoMcpServers, runClaudeOnce, sessionEnv, userSkillNames } from './lib/claude.mjs';
+import { branchProtected } from './lib/github.mjs';
 import { changedFiles, fingerprint, harnessFiles, snapshotGuard, writeSettings } from './lib/settings.mjs';
 import { countFailure, runItem } from './lib/engine.mjs';
 import { READ_ONLY_PHASES } from './guard/core.mjs';
@@ -37,6 +38,7 @@ const paths = {
   owner: path.join(RUN, 'OWNER-ACTIONS.md'),
   report: path.join(RUN, 'REPORT.md'),
   result: path.join(RUN, 'result.json'),
+  ledger: path.join(RUN, 'ledger.jsonl'),
   task: path.join(RUN, 'current-task.md'),
   settings: path.join(RUN, 'claude-settings.json'),
   logs: path.join(RUN, 'logs'),
@@ -71,9 +73,10 @@ const store = createState(paths.state, backlog, { dry: args.dry });
 const proc = createProc({ root: ROOT, env: () => childEnv('script') });
 const runStartedAt = Date.now();
 let runSessions = 0;
+let runCostUsd = 0;
 
 function childEnv(phase, item) {
-  const env = { ...process.env };
+  const env = sessionEnv(process.env, cfg, phase); // agent sessions never see the runner's secrets
   if (!cfg.allowApiKey) delete env.ANTHROPIC_API_KEY; // run on the subscription, never bill the API by accident
   Object.assign(env, {
     GIT_AUTHOR_NAME: cfg.gitAuthor.name,
@@ -126,7 +129,7 @@ function setStatus(phase, item, extra = {}) {
   writeJson(paths.status, { pid: process.pid, phase, item: item?.id || null, title: item?.title || null, since: new Date().toISOString(), runSessions, ...extra });
 }
 const stopRequested = () => fs.existsSync(paths.stop);
-const budgetExceeded = () => runSessions >= cfg.budgets.maxSessions || Date.now() - runStartedAt > cfg.budgets.maxHours * 3600_000;
+const budgetExceeded = () => runSessions >= cfg.budgets.maxSessions || Date.now() - runStartedAt > cfg.budgets.maxHours * 3600_000 || (cfg.budgets.maxUsdPerRun > 0 && runCostUsd >= cfg.budgets.maxUsdPerRun);
 async function sleepUnlessStopped(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -224,7 +227,24 @@ function remoteHeads() {
   const at = (b) => proc.gitTry('rev-parse', '--verify', `origin/${b}`).out || null;
   return { base: at(cfg.base), production: at(cfg.production) };
 }
+/** One line per session in .loop/ledger.jsonl, and the running cost in the state. */
+function recordSession(res, phase, item) {
+  const cost = Number(res.cost) || 0;
+  const id = item?.id || '-';
+  const cents = (n) => Math.round(n * 100) / 100;
+  runCostUsd += cost;
+  const c = (store.S.cost ||= { totalUsd: 0, byItem: {} });
+  c.totalUsd = cents(c.totalUsd + cost);
+  c.byItem[id] = cents((c.byItem[id] || 0) + cost);
+  store.save();
+  fs.appendFileSync(paths.ledger, JSON.stringify({ at: new Date().toISOString(), session: path.basename(res.log || ''), item: id, phase, ok: !!res.ok, limited: !!res.limited, timedOut: !!res.timedOut, turns: res.turns ?? null, durationMs: res.durationMs ?? null, costUsd: cost }) + '\n');
+}
 function afterSession(res, phase, item) {
+  try {
+    recordSession(res, phase, item);
+  } catch (e) {
+    log(`⚠ could not write the session ledger: ${e.message}`);
+  }
   if (harness) {
     const changed = changedFiles(harness.prints, fingerprint(harness.files));
     if (changed.length) stopRun(`session ${path.basename(res.log)} changed the guard snapshot or the session settings (${changed.map((f) => path.relative(ROOT, f)).join(', ')})`, `A loop session (${item?.id || '-'}, ${phase}) changed harness files it may not touch. Read ${path.relative(ROOT, res.log)}, then re-run: the runner rebuilds them from ${cfg.base}.`);
@@ -324,7 +344,13 @@ function preflight() {
   for (const s of cfg.postMerge || []) if (s.dbUrlEnv && !process.env[s.dbUrlEnv]) warn.push(`${s.dbUrlEnv} is not set: the first merge with a migration will hold until it is.`);
   if (!proc.sh('git', ['--version'], { allowFail: true }).ok) problems.push('git is not on PATH');
   else if (!proc.gitTry('rev-parse', '--verify', `origin/${cfg.base}`).ok) (args.dry ? warn : problems).push(`origin/${cfg.base} does not exist: create and push the ${cfg.base} branch (/setup-loop does)`);
-  if (!proc.ghTry('auth', 'status').ok) (args.dry ? warn : problems).push('gh is not logged in (`gh auth login`)');
+  const ghOk = proc.ghTry('auth', 'status').ok;
+  if (!ghOk) (args.dry ? warn : problems).push('gh is not logged in (`gh auth login`)');
+  // Nobody reviews the loop's PRs, so GitHub itself has to refuse a push to the base. The runner's
+  // after-session check only notices one once it has happened.
+  if (ghOk && cfg.repo && cfg.guard?.requireBranchProtection !== false && !branchProtected({ proc, cfg }, cfg.base)) {
+    (args.dry ? warn : problems).push(`${cfg.base} has no branch protection or ruleset on GitHub. Protect it: require a pull request and the "${cfg.ciCheck}" status check, no required approvals, no direct or force pushes (docs/OWNER-ACTIONS.md). If your GitHub plan does not offer protection for this repository, set guard.requireBranchProtection to false in loop/loop.config.json and accept that a stray push is only noticed afterwards.`);
+  }
   if (process.env.ANTHROPIC_API_KEY && !cfg.allowApiKey) warn.push('ANTHROPIC_API_KEY is set: the loop removes it from its sessions so they run on your subscription.');
   const claude = binary('claude', process.env);
   const v = proc.sh(claude.cmd, [...claude.pre, '--version'], { allowFail: true, timeoutMs: 60_000 });
@@ -425,7 +451,7 @@ async function main() {
       break;
     }
     if (budgetExceeded()) {
-      reason = 'budget reached (sessions or hours)';
+      reason = 'budget reached (sessions, hours or dollars)';
       break;
     }
     syncBase();
