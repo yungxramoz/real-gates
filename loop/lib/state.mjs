@@ -26,7 +26,7 @@ export function writeJson(p, v) {
 }
 
 export function freshState() {
-  return { startedAt: new Date().toISOString(), iterations: 0, items: {}, extra: [], noProgress: 0, packed: [], accept: {}, learn: {} };
+  return { startedAt: new Date().toISOString(), iterations: 0, items: {}, extra: [], noProgress: 0, packed: [], accept: {}, learn: {}, pendingBaseCi: [] };
 }
 
 /**
@@ -78,6 +78,11 @@ export function createState(file, backlog, { dry = false } = {}) {
       if (only && it.milestone !== only && it.kind !== 'fix' && it.kind !== 'learn') continue;
       const s = st(it.id);
       if (TERMINAL.has(s.status)) continue;
+      // Merged, but the base went red: its post-merge steps wait for the fix item (postMergeOnRedBase).
+      if (s.redBase && !TERMINAL.has(st(s.redBase.fix).status)) {
+        waiting.push(`${it.id} ← ${s.redBase.fix}:${st(s.redBase.fix).status} (base is red)`);
+        continue;
+      }
       const bad = (it.dependsOn || []).map((d) => [d, st(d).status]).filter(([, ds]) => ds !== 'done');
       if (bad.length === 0) return it;
       waiting.push(`${it.id} ← ${bad.map(([d, ds]) => `${d}:${ds}`).join(', ')}`);

@@ -16,12 +16,13 @@ import { fileURLToPath } from 'node:url';
 import { configProblems, loadConfig, MIN_CLAUDE_VERSION, versionNumber } from './lib/config.mjs';
 import { backlogProblems, createState, HELD_PHASE, readJson, TERMINAL, writeJson } from './lib/state.mjs';
 import { binary, createProc } from './lib/proc.mjs';
-import { isolationProblems, repoMcpServers, runClaudeOnce, userSkillNames } from './lib/claude.mjs';
+import { isolationProblems, repoMcpServers, runClaudeOnce, sessionEnv, userSkillNames } from './lib/claude.mjs';
 import { changedFiles, fingerprint, harnessFiles, snapshotGuard, writeSettings } from './lib/settings.mjs';
-import { countFailure, runItem } from './lib/engine.mjs';
+import { countFailure, runItem, settleBaseCi } from './lib/engine.mjs';
 import { READ_ONLY_PHASES } from './guard/core.mjs';
 import { packMilestones } from './lib/milestones.mjs';
-import { POST_MERGE } from './adapters/index.mjs';
+import { workTypeProblems } from './lib/worktypes.mjs';
+import { adapterProblems, forgeAdapter, notifyAdapter } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
 
 // ------------------------------------------------------------------------------------------ setup
@@ -37,6 +38,7 @@ const paths = {
   owner: path.join(RUN, 'OWNER-ACTIONS.md'),
   report: path.join(RUN, 'REPORT.md'),
   result: path.join(RUN, 'result.json'),
+  ledger: path.join(RUN, 'ledger.jsonl'),
   task: path.join(RUN, 'current-task.md'),
   settings: path.join(RUN, 'claude-settings.json'),
   logs: path.join(RUN, 'logs'),
@@ -71,9 +73,10 @@ const store = createState(paths.state, backlog, { dry: args.dry });
 const proc = createProc({ root: ROOT, env: () => childEnv('script') });
 const runStartedAt = Date.now();
 let runSessions = 0;
+let runCostUsd = 0;
 
 function childEnv(phase, item) {
-  const env = { ...process.env };
+  const env = sessionEnv(process.env, cfg, phase); // agent sessions never see the runner's secrets
   if (!cfg.allowApiKey) delete env.ANTHROPIC_API_KEY; // run on the subscription, never bill the API by accident
   Object.assign(env, {
     GIT_AUTHOR_NAME: cfg.gitAuthor.name,
@@ -116,9 +119,8 @@ function ownerAction(itemId, text) {
   fs.writeFileSync(paths.owner, existing + `- [ ] **${itemId}** — ${t}  _(${stamp()})_\n`);
 }
 async function notify(title, body) {
-  if (!cfg.notify?.ntfyTopic) return;
   try {
-    await fetch(`https://ntfy.sh/${cfg.notify.ntfyTopic}`, { method: 'POST', headers: { Title: title }, body });
+    await notifyAdapter(cfg.notify?.adapter).send(cfg.notify, title, body);
   } catch {}
 }
 function setStatus(phase, item, extra = {}) {
@@ -126,7 +128,7 @@ function setStatus(phase, item, extra = {}) {
   writeJson(paths.status, { pid: process.pid, phase, item: item?.id || null, title: item?.title || null, since: new Date().toISOString(), runSessions, ...extra });
 }
 const stopRequested = () => fs.existsSync(paths.stop);
-const budgetExceeded = () => runSessions >= cfg.budgets.maxSessions || Date.now() - runStartedAt > cfg.budgets.maxHours * 3600_000;
+const budgetExceeded = () => runSessions >= cfg.budgets.maxSessions || Date.now() - runStartedAt > cfg.budgets.maxHours * 3600_000 || (cfg.budgets.maxUsdPerRun > 0 && runCostUsd >= cfg.budgets.maxUsdPerRun);
 async function sleepUnlessStopped(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -134,8 +136,28 @@ async function sleepUnlessStopped(ms) {
     await new Promise((r) => setTimeout(r, Math.min(30_000, end - Date.now())));
   }
 }
-function render(name, vars) {
-  const tpl = fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8');
+/** `{{>name}}` in a core prompt pulls in loop/profiles/<profile>/prompts/<name>.md: the stack's own words for that step. */
+const INCLUDE = /\{\{>([\w-]+)\}\}/g;
+const fragmentFile = (frag) => path.join(ROOT, 'loop', 'profiles', cfg.profile || '(no profile)', 'prompts', `${frag}.md`);
+const fragmentPath = (frag) => `loop/profiles/${cfg.profile || '<profile>'}/prompts/${frag}.md`;
+/** A profile with several work types may word a step per type or per acceptance mode: `<name>.<variant>.md` wins over `<name>.md`. */
+const fragmentFor = (frag, variant) => (variant && fs.existsSync(fragmentFile(`${frag}.${variant}`)) ? fragmentFile(`${frag}.${variant}`) : fragmentFile(frag));
+function promptProblems() {
+  const p = [];
+  const dir = path.join(ROOT, 'loop', 'prompts');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
+    for (const m of fs.readFileSync(path.join(dir, f), 'utf8').matchAll(INCLUDE)) {
+      if (!fs.existsSync(fragmentFile(m[1]))) p.push(`loop/prompts/${f} includes {{>${m[1]}}}, but ${cfg.profile ? 'the profile has no' : 'loop.config.json names no profile, so there is no'} ${fragmentPath(m[1])}`);
+    }
+  }
+  return p;
+}
+function render(name, vars, { variant } = {}) {
+  const tpl = fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8').replace(INCLUDE, (_, frag) => {
+    const file = fragmentFor(frag, variant);
+    if (!fs.existsSync(file)) throw new Error(`loop/prompts/${name} includes {{>${frag}}}, but the profile has no ${fragmentPath(frag)}`);
+    return fs.readFileSync(file, 'utf8').trim();
+  });
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => {
     if (vars[k] === undefined) throw new Error(`loop/prompts/${name} uses {{${k}}}, but the runner supplies no value for it`);
     return String(vars[k] ?? '');
@@ -208,7 +230,7 @@ function beforeSession() {
     warnedTree = true;
     log(`⚠ the guard is not on origin/${cfg.base} yet: sessions use the working-tree copy until it is.`);
   }
-  writeSettings(paths.settings, snap.entry);
+  writeSettings(paths.settings, snap.entry, cfg);
   const files = harnessFiles(snap, paths.settings);
   harness = { files, prints: fingerprint(files) };
 }
@@ -224,7 +246,24 @@ function remoteHeads() {
   const at = (b) => proc.gitTry('rev-parse', '--verify', `origin/${b}`).out || null;
   return { base: at(cfg.base), production: at(cfg.production) };
 }
+/** One line per session in .loop/ledger.jsonl, and the running cost in the state. */
+function recordSession(res, phase, item) {
+  const cost = Number(res.cost) || 0;
+  const id = item?.id || '-';
+  const cents = (n) => Math.round(n * 100) / 100;
+  runCostUsd += cost;
+  const c = (store.S.cost ||= { totalUsd: 0, byItem: {} });
+  c.totalUsd = cents(c.totalUsd + cost);
+  c.byItem[id] = cents((c.byItem[id] || 0) + cost);
+  store.save();
+  fs.appendFileSync(paths.ledger, JSON.stringify({ at: new Date().toISOString(), session: path.basename(res.log || ''), item: id, phase, ok: !!res.ok, limited: !!res.limited, timedOut: !!res.timedOut, turns: res.turns ?? null, durationMs: res.durationMs ?? null, costUsd: cost }) + '\n');
+}
 function afterSession(res, phase, item) {
+  try {
+    recordSession(res, phase, item);
+  } catch (e) {
+    log(`⚠ could not write the session ledger: ${e.message}`);
+  }
   if (harness) {
     const changed = changedFiles(harness.prints, fingerprint(harness.files));
     if (changed.length) stopRun(`session ${path.basename(res.log)} changed the guard snapshot or the session settings (${changed.map((f) => path.relative(ROOT, f)).join(', ')})`, `A loop session (${item?.id || '-'}, ${phase}) changed harness files it may not touch. Read ${path.relative(ROOT, res.log)}, then re-run: the runner rebuilds them from ${cfg.base}.`);
@@ -320,11 +359,13 @@ function preflight() {
   if (!fs.existsSync(path.join(ROOT, 'CLAUDE.md'))) problems.push('CLAUDE.md not found: run from the repository');
   problems.push(...configProblems(cfg, { backlog }).map((p) => `loop/loop.config.json → ${p} (/setup-loop sets it)`));
   problems.push(...backlogProblems(backlog));
-  for (const s of cfg.postMerge || []) if (!POST_MERGE[s.adapter]) problems.push(`postMerge adapter "${s.adapter}" is unknown (known: ${Object.keys(POST_MERGE).join(', ')})`);
+  const badAdapters = adapterProblems(cfg);
+  problems.push(...badAdapters, ...promptProblems(), ...workTypeProblems(cfg, backlog));
   for (const s of cfg.postMerge || []) if (s.dbUrlEnv && !process.env[s.dbUrlEnv]) warn.push(`${s.dbUrlEnv} is not set: the first merge with a migration will hold until it is.`);
   if (!proc.sh('git', ['--version'], { allowFail: true }).ok) problems.push('git is not on PATH');
   else if (!proc.gitTry('rev-parse', '--verify', `origin/${cfg.base}`).ok) (args.dry ? warn : problems).push(`origin/${cfg.base} does not exist: create and push the ${cfg.base} branch (/setup-loop does)`);
-  if (!proc.ghTry('auth', 'status').ok) (args.dry ? warn : problems).push('gh is not logged in (`gh auth login`)');
+  // The forge's own preconditions: logged in, and the base branch protected there.
+  if (!badAdapters.length) (args.dry ? warn : problems).push(...forgeAdapter(cfg.forge?.adapter).preflightProblems({ proc, cfg }));
   if (process.env.ANTHROPIC_API_KEY && !cfg.allowApiKey) warn.push('ANTHROPIC_API_KEY is set: the loop removes it from its sessions so they run on your subscription.');
   const claude = binary('claude', process.env);
   const v = proc.sh(claude.cmd, [...claude.pre, '--version'], { allowFail: true, timeoutMs: 60_000 });
@@ -425,12 +466,24 @@ async function main() {
       break;
     }
     if (budgetExceeded()) {
-      reason = 'budget reached (sessions or hours)';
+      reason = 'budget reached (sessions, hours or dollars)';
+      break;
+    }
+    // Base CI that earlier merges did not wait for: a red one puts its FIX item first in line.
+    const bg = await settleBaseCi(L);
+    if (bg.stop) {
+      reason = bg.stop;
       break;
     }
     syncBase();
     const next = store.pickNext({ item: args.item, only: args.only });
     if (next.none) {
+      const last = await settleBaseCi(L, { wait: true });
+      if (last.stop) {
+        reason = last.stop;
+        break;
+      }
+      if (last.queued) continue;
       const pm = await packMilestones(L);
       if (pm.stop) {
         reason = pm.stop;
@@ -442,7 +495,7 @@ async function main() {
     }
     log(`━━━ ${next.id} · ${next.milestone} · ${next.title}`);
     const outcome = await runItem(L, next);
-    if (outcome === 'stopped' || outcome === 'budget') continue;
+    if (outcome === 'stopped' || outcome === 'budget' || outcome === 'waiting') continue;
     if (outcome === 'held') {
       held = true;
       reason = `${next.id} is held — ${store.st(next.id).lastError}`;
@@ -466,6 +519,12 @@ async function main() {
       reason = '--once';
       break;
     }
+  }
+  // Nothing is reported as finished while a merge still waits for its base CI verdict.
+  if (!stopRequested()) {
+    const end = await settleBaseCi(L, { wait: true });
+    if (end.stop) reason = `${reason}; ${end.stop}`;
+    else if (end.queued) reason = `${reason}; ${cfg.base} CI turned red on an earlier merge: its fix item is first in line for the next run`;
   }
   try {
     syncBase();

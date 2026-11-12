@@ -16,6 +16,9 @@ export default defineConfig({
     // `tests/e2e` is Playwright's; collecting it here would run browser specs in Node.
     include: ['src/**/*.test.ts', 'tests/unit/**/*.test.ts'],
     environment: 'node',
+    // The JUnit report is the evidence `pnpm ac-trace --results artifacts/junit` reads in CI: an
+    // AC counts only when a test case naming it ran and passed.
+    reporters: ['default', ['junit', { outputFile: 'artifacts/junit/unit.xml' }]],
     env: { TZ: 'UTC' },
     coverage: {
       provider: 'v8',

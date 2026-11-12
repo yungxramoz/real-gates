@@ -14,5 +14,8 @@ loop
 .loop
 .claude
 
+# Another stack's skeleton: it follows its own conventions, and scripts/apply-preset.mjs copies it as it is.
+presets
+
 # Plans and specs are history that later decisions cite; they stay as they were agreed.
 docs/superpowers

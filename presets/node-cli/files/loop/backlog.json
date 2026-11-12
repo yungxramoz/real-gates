@@ -1,0 +1,15 @@
+{
+  "$comment": "Written by /shape-project; edited only by the owner, between runs (loop sessions cannot change it). Items point at docs instead of copying acceptance criteria. An item that adds or changes what a user types has \"type\": \"command\": the reviewer then scores it on the CLI rubric and its milestone is accepted on the installed package. LOOP-0 proves the pipeline end to end before any real work.",
+  "milestones": ["M0"],
+  "items": [
+    {
+      "id": "LOOP-0",
+      "milestone": "M0",
+      "title": "Prove the pipeline end to end on a harmless change",
+      "refs": ["loop/README.md", "docs/REQUIREMENTS.md#e0--platform", "docs/DECISIONS.md"],
+      "scope": "A harmless change that exercises every gate once: record the next free decision ID in docs/DECISIONS.md (row and log bullet: the pipeline was proven end to end by LOOP-0), and make sure AC-0.1 has a passing test whose title carries the ID. Open a PR to the base branch, let the local gate, CI, review, merge, landed check and base CI run. Change nothing under loop/, .github/ or .claude/.",
+      "type": "default",
+      "dependsOn": []
+    }
+  ]
+}

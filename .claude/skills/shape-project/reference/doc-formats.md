@@ -96,7 +96,8 @@ list', ...)`), and CI fails when an AC has no test.
 | `title` | what a user would notice, in under ten words |
 | `refs` | AC IDs and doc paths (with `#heading` anchors); a note may follow in parentheses |
 | `scope` | one to three sentences: what is in, what is explicitly not; no copied ACs |
-| `ui` | `true` when a user sees a change; the reviewer then scores the design |
+| `ui` | `true` when a user sees a change; the reviewer then scores the design. The web profile's way to name the work type |
+| `type` | instead of `ui`, in a profile with its own work types (`loop/profiles/<name>/profile.json`, `workTypes`): for the CLI profile, `"command"` for anything a user types, `"default"` for the rest. The reviewer scores that type's rubric and the milestone is accepted the way the type says |
 | `dependsOn` | only real build order; never an item in a later milestone |
 
 `M0` holds `LOOP-0` and setup items (stubs, health route, auth skeleton).

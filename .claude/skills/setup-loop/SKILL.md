@@ -124,8 +124,10 @@ asked.
 4. Append owner actions (accounts, secrets, branch protection, host env vars) to
    `docs/OWNER-ACTIONS.md`, one row each: what, where, why, and how to verify. Always include
    branch protection on `base`: require a pull request and the `ciCheck` status check, no direct
-   pushes, no force-pushes. Nobody reviews the loop's PRs, so this is what stops a session's
-   stray push at GitHub; the runner's after-session check only notices it afterwards.
+   pushes, no force-pushes, no required approvals (nobody approves the loop's PRs). Nobody
+   reviews them either, so this is what stops a session's stray push at GitHub; the runner's
+   after-session check only notices it afterwards. The preflight asks GitHub and refuses a real
+   run while the base branch is unprotected (the dry run warns).
 
 ### 8. Validate
 

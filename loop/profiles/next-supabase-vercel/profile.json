@@ -1,0 +1,30 @@
+{
+  "$comment": "A stack profile: everything the core loop needs to know about what a project is built with. The core (loop/run.mjs, loop/lib, loop/guard/core.mjs) names no framework, host or database; it reads the profile that \"profile\" in loop/loop.config.json names. Order of precedence: defaults in loop/lib/config.mjs, then this file, then loop/loop.config.json. The contract is described in loop/profiles/README.md.",
+  "forge": { "adapter": "github" },
+  "guard": { "packs": ["github", "supabase", "vercel"] },
+  "localGate": { "commands": ["pnpm check"] },
+  "gates": {
+    "files": ["scripts/**", "playwright.config.*", "eslint.config.*", "tsconfig.json", ".prettierrc*", ".prettierignore"],
+    "frozenJsonKeys": [{ "file": "package.json", "key": "scripts" }],
+    "ratchets": [
+      {
+        "name": "coverage",
+        "files": ["vitest.config.mts", "vitest.config.ts", "vitest.config.mjs", "vitest.config.js"],
+        "comments": "js",
+        "within": "thresholds\\s*:\\s*\\{([\\s\\S]*?)\\}",
+        "number": "\\b(lines|functions|branches|statements)\\s*:\\s*(\\d+(?:\\.\\d+)?)",
+        "hint": "Add tests instead."
+      }
+    ]
+  },
+  "deploy": {
+    "adapter": "http-health",
+    "health": "/api/health",
+    "commitField": "commit",
+    "expect": { "db": ["ok", "stub"] },
+    "bypassSecretEnv": "VERCEL_BYPASS",
+    "bypassHeader": "x-vercel-protection-bypass"
+  },
+  "postMerge": [{ "adapter": "supabase-cli", "dbUrlEnv": "DEV_DB_URL", "migrationsDir": "supabase/migrations", "holdOnUnverified": true }],
+  "notify": { "adapter": "ntfy" }
+}

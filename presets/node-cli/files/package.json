@@ -1,0 +1,28 @@
+{
+  "name": "app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "",
+  "type": "module",
+  "bin": {
+    "app": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test:e2e": "node scripts/check.mjs --e2e",
+    "test:loop": "node --test \"loop/test/**/*.test.mjs\"",
+    "test:scripts": "node --test \"scripts/*.test.mjs\"",
+    "ac-trace": "node scripts/ac-trace.mjs",
+    "check:rules": "node loop/scripts/check-rules.mjs",
+    "check:skills": "node scripts/check-skills.mjs",
+    "sanitize": "node scripts/sanitize-scan.mjs",
+    "loop": "node loop/run.mjs"
+  }
+}

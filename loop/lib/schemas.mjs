@@ -5,9 +5,11 @@
 import { REVIEW_CATEGORIES } from './learn.mjs';
 
 const score = { type: 'integer', minimum: 0, maximum: 10 };
-const scores = { type: 'object', properties: { design_quality: score, originality: score, craft: score, functionality: score }, additionalProperties: false };
+/** The scores object for a work type's rubric: exactly those keys. No rubric: any object (it is left out). */
+const scoresFor = (rubric) => (rubric?.length ? { type: 'object', properties: Object.fromEntries(rubric.map((r) => [r, score])), additionalProperties: false } : { type: 'object' });
 
-export const REVIEW_SCHEMA = {
+/** The review verdict schema for an item whose work type has this rubric. */
+export const reviewSchema = (rubric) => ({
   type: 'object',
   properties: {
     verdict: { type: 'string', enum: ['approve', 'changes'] },
@@ -15,18 +17,18 @@ export const REVIEW_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { file: { type: 'string' }, line: { type: 'integer' }, issue: { type: 'string' }, fix: { type: 'string' }, category: { type: 'string', enum: REVIEW_CATEGORIES } },
+        properties: { file: { type: 'string' }, line: { type: 'integer' }, issue: { type: 'string' }, fix: { type: 'string' }, category: { type: 'string', enum: REVIEW_CATEGORIES }, cause: { type: 'string' } },
         required: ['file', 'issue', 'fix', 'category'],
       },
     },
     non_blocking: { type: 'array', items: { type: 'string' } },
     acceptance: { type: 'array', items: { type: 'object', properties: { ac: { type: 'string' }, status: { type: 'string', enum: ['met', 'not_met', 'owner'] }, evidence: { type: 'string' } }, required: ['ac', 'status'] } },
-    scores,
+    scores: scoresFor(rubric),
     design: { type: 'string' },
     summary: { type: 'string' },
   },
   required: ['verdict', 'blocking', 'summary'],
-};
+});
 
 export const ACCEPT_SCHEMA = {
   type: 'object',
@@ -34,7 +36,8 @@ export const ACCEPT_SCHEMA = {
     milestone: { type: 'string' },
     pass: { type: 'boolean' },
     deployedCommit: { type: 'string' },
-    scores: { type: 'array', items: { type: 'object', properties: { screen: { type: 'string' }, ...scores.properties }, required: ['screen'] } },
+    // one entry per thing that was scored (a screen, a command): its name and the rubric scores
+    scores: { type: 'array', items: { type: 'object', properties: { subject: { type: 'string' }, screen: { type: 'string' } } } },
     failures: {
       type: 'array',
       items: { type: 'object', properties: { title: { type: 'string' }, scope: { type: 'string' }, evidence: { type: 'string' }, relatedItem: { type: 'string' } }, required: ['title', 'scope'] },

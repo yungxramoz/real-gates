@@ -4,12 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { isolationProblems, runClaude, runClaudeOnce, sessionArgs } from '../lib/claude.mjs';
-import { REVIEW_SCHEMA } from '../lib/schemas.mjs';
+import { reviewSchema } from '../lib/schemas.mjs';
+
+const REVIEW_SCHEMA = reviewSchema(['design_quality', 'craft']);
 import { sessionSettings } from '../lib/settings.mjs';
 import { DEFAULTS, deepMerge } from '../lib/config.mjs';
+import { PRESET } from './helpers/preset.mjs';
 import { makeSandbox } from './helpers/sandbox.mjs';
 
-const cfg = deepMerge(DEFAULTS, { budgets: { maxUsdPerSession: 7 } });
+const cfg = deepMerge(PRESET, { budgets: { maxUsdPerSession: 7 } });
 const args = (o) => sessionArgs(cfg, { prompt: 'p', settingsFile: 's.json', ...o });
 const val = (a, flag) => a[a.indexOf(flag) + 1];
 
@@ -144,4 +147,32 @@ test('a tool call naming a forbidden project writes STOP', async () => {
   ctx.envBase = { ...sb.env, LOOP_CLAUDE_BIN: fake };
   await runClaudeOnce(ctx, { prompt: 'x', phase: 'build', item: { id: 'A1' }, timeoutMin: 1 });
   assert.match(fs.readFileSync(ctx.paths.stop, 'utf8'), /forbidden project/);
+});
+
+test('an agent session loses the runner-only secrets; the runner keeps them', async () => {
+  const { sessionEnv } = await import('../lib/claude.mjs');
+  const cfg = { postMerge: [{ dbUrlEnv: 'DEV_DB_URL' }], deploy: { bypassSecretEnv: 'VERCEL_BYPASS' }, sessionEnvDeny: ['STRIPE_KEY'] };
+  const env = { PATH: '/bin', DEV_DB_URL: 'postgres://x', VERCEL_BYPASS: 's', STRIPE_KEY: 'k', OTHER: '1' };
+  assert.deepEqual(sessionEnv(env, cfg, 'script'), env);
+  for (const phase of ['build', 'review', 'smoke', 'gate']) assert.deepEqual(sessionEnv(env, cfg, phase), { PATH: '/bin', OTHER: '1' }, phase);
+  for (const phase of ['accept', 'packet']) assert.deepEqual(sessionEnv(env, cfg, phase), { PATH: '/bin', VERCEL_BYPASS: 's', OTHER: '1' }, phase);
+  assert.equal(env.DEV_DB_URL, 'postgres://x', 'the input is not changed');
+});
+
+test('session settings deny what the guard packs in use deny, and nothing of packs that are off', () => {
+  const deny = (packs) => sessionSettings('/r/.loop/guard/loop/guard.mjs', { guard: { packs } }).permissions.deny;
+  assert.deepEqual(deny([]), ['Bash(git push --force:*)', 'Bash(git push -f:*)']);
+  assert.ok(deny(['github']).includes('Bash(gh pr merge:*)'));
+  assert.ok(!deny(['github']).some((d) => /supabase/.test(d)));
+  assert.deepEqual(deny(PRESET.guard.packs).sort(), ['Bash(gh pr merge:*)', 'Bash(git push --force:*)', 'Bash(git push -f:*)', 'Bash(supabase db push:*)', 'Bash(supabase db reset:*)', 'mcp__supabase__apply_migration'].sort());
+});
+
+test('every guard file the runner snapshots exists, and every pack is in the snapshot', async () => {
+  const { GUARD_FILES } = await import('../lib/settings.mjs');
+  const { PACKS } = await import('../guard/packs/index.mjs');
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..', '..');
+  for (const f of GUARD_FILES) assert.ok(fs.existsSync(path.join(repo, f)), f);
+  for (const name of Object.keys(PACKS)) assert.ok(GUARD_FILES.includes(`loop/guard/packs/${name}.mjs`), `pack ${name} must be in GUARD_FILES, or a session could edit its rules unnoticed`);
 });

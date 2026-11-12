@@ -1,6 +1,6 @@
 // The item engine: one backlog item from build to verified-on-base, as a resumable state machine.
 //
-//   build → ci → review → merge → landed → baseci → postmerge → done
+//   build → gate → ci → review → merge → landed → baseci → postmerge → done
 //                                    └────────┴─────────┴──→ hold (run stops, re-verified on resume)
 //
 // Every transition is saved, so a crash or reboot resumes in the same phase.
@@ -8,16 +8,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { HELD_PHASE, readJson } from './state.mjs';
+import { HELD_PHASE, readJson, TERMINAL } from './state.mjs';
 import { runClaude } from './claude.mjs';
-import { landedCheck, mergePr, preMergeChecks, prView, waitForCommitCi, waitForPrCi } from './github.mjs';
-import { postMergeAdapter } from '../adapters/index.mjs';
-import { recordFailure, reviewSignatures, REVIEW_CATEGORIES } from './learn.mjs';
-import { REVIEW_SCHEMA } from './schemas.mjs';
+import { landedCheck, preMergeChecks } from './gates.mjs';
+import { forgeAdapter, postMergeAdapter } from '../adapters/index.mjs';
+import { knownCauses, recordFailure, reviewFailures, REVIEW_CATEGORIES } from './learn.mjs';
+import { reviewSchema } from './schemas.mjs';
+import { workType, workTypeName } from './worktypes.mjs';
+import { runLocalGate } from './localgate.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
 const NEXT_AFTER_HOLD = { landed: 'baseci', baseci: 'postmerge', postmerge: 'finish', 'outside-merge': 'rebuild' };
 const RECHECKABLE = new Set(['landed', 'baseci', 'postmerge']);
+/** Pull requests, CI and the merge go through the forge adapter the config names. */
+const forge = (L) => forgeAdapter(L.cfg.forge?.adapter);
 
 export function goalPrompt(L, condition) {
   return L.cfg.useGoal ? `/goal ${condition} Stop after ${L.cfg.goalMaxTurns} turns.` : condition;
@@ -25,9 +29,22 @@ export function goalPrompt(L, condition) {
 
 // ------------------------------------------------------------------------------------- failures
 /** Count a failure; queue the LEARN item it produces, first in line. */
-export function countFailure(L, signature, detail, item) {
-  const learn = recordFailure(L.store.S, { signature, detail, item, threshold: L.cfg.learnThreshold });
-  if (learn && L.store.addExtra(learn)) L.progress(`${item?.id || '-'} · "${signature}" keeps recurring → ${learn.id} queued first in line`);
+export function countFailure(L, signature, detail, item, threshold = L.cfg.learnThreshold) {
+  const learn = recordFailure(L.store.S, { signature, detail, item, threshold });
+  const queued = !!learn && L.store.addExtra(learn);
+  if (queued) L.progress(`${item?.id || '-'} · "${signature}" keeps recurring → ${learn.id} queued first in line`);
+  L.store.save();
+  return queued;
+}
+
+/** Count a review verdict's blocking findings: by cause at learnThreshold, by bare category at the higher one. */
+function countReviewFailures(L, rv, item) {
+  for (const f of reviewFailures(rv)) {
+    const queued = countFailure(L, f.signature, f.issues.join('; '), item, f.level === 'cause' ? L.cfg.learnThreshold : L.cfg.learnCategoryThreshold);
+    // The cause now has its LEARN item: the category must not queue a second one for the same findings.
+    const cat = L.store.S.learn[f.signature.split(':').slice(0, 2).join(':')];
+    if (queued && f.level === 'cause' && cat) cat.sinceLearn = 0;
+  }
   L.store.save();
 }
 
@@ -65,6 +82,8 @@ function readResult(L, item) {
 function fixContextText(L, fix) {
   if (!fix) return '';
   const head = '## Fix round — read this first\n\nThe PR for this item already exists. Do **not** open a new one: check out its branch, fix what is described below, re-run the local gates, push to the same branch, and return `ready` with the same PR number.\n\n';
+  // CI and the reviewer run at the same time, so one round can carry both results.
+  if (fix.kind === 'multi') return head + 'Fix **all** of the following in this one round.\n\n' + fix.parts.map((p) => fixContextText(L, p).slice(head.length)).join('\n\n');
   if (fix.kind === 'red') return head + `**CI is red** on PR #${fix.pr}. Failed jobs: ${(fix.jobs || []).join(', ') || 'see log'}. The failing log (tail) is in \`${path.relative(L.root, fix.file || '').replace(/\\/g, '/')}\`. Read it, find the root cause and fix it properly. Never weaken a test or a gate to get green.`;
   if (fix.kind === 'conflict') return head + `PR #${fix.pr} has **merge conflicts** with \`${L.cfg.base}\`. Merge \`origin/${L.cfg.base}\` into the branch (no rebase, no force-push), resolve, re-run the gates, push.`;
   if (fix.kind === 'review') return head + `The **independent reviewer requested changes** (round ${fix.round}). Fix every blocking finding; non-blocking ones only if trivial.\n\n\`\`\`json\n${JSON.stringify(fix.review, null, 2)}\n\`\`\``;
@@ -118,40 +137,50 @@ function reviewBody(v) {
   return lines.join('\n');
 }
 
-async function reviewSession(L, item, s) {
+async function reviewSession(L, item, s, headSha) {
+  const rubric = workType(L.cfg, item).rubric || [];
   fs.writeFileSync(L.paths.task, L.render('review.md', {
+    RUBRIC: rubric.length ? rubric.map((r) => `\`${r}\``).join(', ') : '(none: this work type has no rubric, so leave `scores` out)',
     ITEM_ID: item.id,
     PR: s.pr,
     BRANCH: s.branch,
-    HEAD_SHA: s.ciSha,
+    HEAD_SHA: headSha,
+    KNOWN_CAUSES: knownCauses(L.store.S).slice(0, 30).join(', ') || '(none yet)',
     BASE: L.cfg.base,
     MIN_SCORE: L.cfg.review.minDesignScore,
     CATEGORIES: REVIEW_CATEGORIES.join(', '),
     REVIEW_ROUND: s.reviewRounds + 1,
     ITEM_JSON: JSON.stringify(item, null, 2),
-    NOTES: s.notes.length ? `Earlier sessions on this item:\n${s.notes.map((n) => `- ${n}`).join('\n')}` : '',
+    // The reviewer is not briefed by the builder: no handoff notes. It only learns what it needs to
+    // judge scope, marked as the builder's claim.
+    NOTES: [
+      s.partials > 0 ? `${s.partials} earlier slice(s) of this item are already merged into ${L.cfg.base}.` : '',
+      s.isPartial ? `The builder declared this PR a **partial** slice. What it says remains (a claim to check, not a fact): ${short(s.remaining || '(nothing listed)', 800)}` : '',
+    ].filter(Boolean).join('\n\n'),
     PREVIOUS_REVIEW: s.lastReview ? `## Your previous round's findings\n\n\`\`\`json\n${JSON.stringify(s.lastReview, null, 2)}\n\`\`\`` : '',
-  }));
+  }, { variant: workTypeName(item) }));
   L.setStatus('review', item, { pr: s.pr, round: s.reviewRounds + 1 });
   for (let tryNo = 0; tryNo < 2; tryNo++) {
     const off = guardOffset(L);
-    const r = await runClaude(L.session, { prompt: 'Review the pull request described in .loop/current-task.md (read it fully first) and return your verdict as the structured output.', phase: 'review', item, timeoutMin: L.cfg.timeouts.reviewMin, model: L.cfg.reviewModel || L.cfg.model, schema: REVIEW_SCHEMA });
+    const r = await runClaude(L.session, { prompt: 'Review the pull request described in .loop/current-task.md (read it fully first) and return your verdict as the structured output.', phase: 'review', item, timeoutMin: L.cfg.timeouts.reviewMin, model: L.cfg.reviewModel || L.cfg.model, schema: reviewSchema(rubric) });
     L.checkIsolation(r);
     countGuardBlocks(L, item, off);
     if (r.gaveUp) return null;
     const v = r.structured;
     if (v && (v.verdict === 'approve' || v.verdict === 'changes')) {
       v.blocking = Array.isArray(v.blocking) ? v.blocking : [];
-      const low = Object.entries(v.scores || {}).filter(([, n]) => typeof n === 'number' && n < L.cfg.review.minDesignScore);
-      if (item.ui && low.length) {
-        for (const [k, n] of low) if (!v.blocking.some((b) => String(b.issue || '').includes(k))) v.blocking.push({ file: '(design)', issue: `${k} scored ${n} < ${L.cfg.review.minDesignScore}`, fix: v.design || 'raise it to the DESIGN.md bar', category: 'design' });
+      // The rubric is the work type's: every score must be there, and none below the bar.
+      const scored = (k) => typeof v.scores?.[k] === 'number';
+      for (const k of rubric.filter((r) => scored(r) && v.scores[r] < L.cfg.review.minDesignScore)) {
+        if (!v.blocking.some((b) => String(b.issue || '').includes(k))) v.blocking.push({ file: '(rubric)', issue: `${k} scored ${v.scores[k]} < ${L.cfg.review.minDesignScore}`, fix: v.design || 'raise it to the bar the rubric describes', category: 'design' });
       }
-      if (item.ui && !Object.keys(v.scores || {}).length) v.blocking.push({ file: '(design)', issue: 'a UI item was reviewed without design scores', fix: 'score design quality, originality, craft and functionality', category: 'design' });
+      const unscored = rubric.filter((r) => !scored(r));
+      if (unscored.length) v.blocking.push({ file: '(rubric)', issue: `the item was reviewed without a score for: ${unscored.join(', ')}`, fix: 'score every rubric dimension from 1 to 10', category: 'design' });
       if (v.blocking.length) v.verdict = 'changes';
       try {
         const body = path.join(path.dirname(L.paths.result), 'review-body.md');
         fs.writeFileSync(body, reviewBody(v));
-        L.proc.ghTry('pr', 'review', String(s.pr), '--repo', L.cfg.repo, '--comment', '--body-file', body);
+        forge(L).postReview(L, s.pr, body);
       } catch {}
       return v;
     }
@@ -167,14 +196,15 @@ export function addFollowup(L, item, f) {
   if (count >= L.cfg.maxFollowups || !f?.title) return;
   const id = `FUP-${count + 1}`;
   const milestone = L.backlog.milestones.includes(f.milestone) ? f.milestone : item.milestone;
-  L.store.addExtra({ kind: 'followup', id, milestone, title: short(f.title, 120), scope: short(f.scope || f.title, 800), refs: [`raised by ${item.id}`], ui: true, dependsOn: [item.id] });
+  L.store.addExtra({ kind: 'followup', id, milestone, title: short(f.title, 120), scope: short(f.scope || f.title, 800), refs: [`raised by ${item.id}`], type: L.cfg.workTypes?.[f.type] ? f.type : workTypeName(item), dependsOn: [item.id] });
   L.progress(`${item.id} · follow-up ${id} queued (${milestone}): ${short(f.title, 120)}`);
 }
 
 function addFixItem(L, item, sha, dev) {
+  const id = `FIX-${sha.slice(0, 7)}`;
   L.store.addExtra({
     kind: 'fix',
-    id: `FIX-${sha.slice(0, 7)}`,
+    id,
     milestone: item.milestone,
     title: `Make ${L.cfg.base} green again after ${item.id}`,
     scope: `CI on ${L.cfg.base} failed on ${sha} after merging ${item.id}. Failed jobs: ${(dev.jobs || []).join(', ')}. Log tail: ${dev.file ? path.relative(L.root, dev.file).replace(/\\/g, '/') : dev.text}. Fix forward in a PR; never weaken a gate.`,
@@ -182,6 +212,66 @@ function addFixItem(L, item, sha, dev) {
     ui: false,
     dependsOn: [],
   });
+  return id;
+}
+
+/**
+ * Base CI that was not waited for (baseCiWait: 'unless-tree-equal'). Without `wait`, one look at
+ * each pending commit; with it, block until each has a verdict. Red queues the FIX item first in
+ * line. No verdict is never a pass: one re-run, then the run stops with an owner action.
+ * Returns { queued: number of FIX items added, stop?: reason }.
+ */
+export async function settleBaseCi(L, { wait = false } = {}) {
+  const S = L.store.S;
+  S.pendingBaseCi ||= [];
+  let queued = 0;
+  const { base } = L.cfg;
+  // Once this run stopped for a missing verdict it does not ask again: a second wait would re-run
+  // CI behind the owner's back and could clear the stop it just reported. The next run checks first.
+  if (L.baseCiGaveUp) return { queued };
+  for (const p of [...S.pendingBaseCi]) {
+    const sha7 = p.sha.slice(0, 7);
+    const drop = () => {
+      S.pendingBaseCi = S.pendingBaseCi.filter((x) => x.sha !== p.sha);
+      L.store.save();
+    };
+    const red = (dev) => {
+      addFixItem(L, { id: p.item, milestone: p.milestone }, p.sha, dev);
+      L.progress(`${p.item} · ${base} CI is RED on ${sha7} (checked in the background) — queued a fix item first in line`);
+      queued++;
+      drop();
+    };
+    const noVerdict = (why) => {
+      L.ownerAction(p.item, `${p.item}: CI on ${base} gave no verdict for ${sha7} (${why}). Check GitHub Actions (quota, runners, a stuck job), then re-run the loop: it checks again before anything else.`);
+      L.progress(`${p.item} · ${base} CI on ${sha7} gave no verdict — the run stops`);
+      L.baseCiGaveUp = true;
+      return { queued, stop: `${base} CI gave no verdict for ${sha7} (merged with ${p.item}): ${why}` };
+    };
+    if (wait) {
+      L.setStatus('baseci', { id: p.item }, { sha: p.sha });
+      const dev = await forge(L).waitForCommitCi(L, p.sha);
+      if (dev.kind === 'stopped') return { queued };
+      if (dev.ok) drop();
+      else if (dev.kind === 'timeout') return noVerdict(dev.text);
+      else red(dev);
+      continue;
+    }
+    const c = forge(L).checkCommitCi(L, p.sha);
+    if (c.state === 'ok') drop();
+    else if (c.state === 'red') red(c);
+    else {
+      const late = Date.now() - p.since > L.cfg.timeouts.ciMin * 60_000;
+      if (c.state === 'starved' || (late && !p.rerun && c.runId)) {
+        if ((p.reruns || 0) >= 3) return noVerdict('the run was cancelled with no runner, four times');
+        p.reruns = (p.reruns || 0) + 1;
+        if (late) p.rerun = true;
+        p.since = Date.now();
+        forge(L).rerunCi(L, c.runId);
+        L.store.save();
+      } else if (late) return noVerdict(`no result within ${L.cfg.timeouts.ciMin} min${p.rerun ? ', also after a re-run' : ''}`);
+    }
+  }
+  return { queued };
 }
 
 // --------------------------------------------------------------------------------- the engine
@@ -209,12 +299,24 @@ export async function runItem(L, item) {
     return 'held';
   };
 
+  /** Record a verdict. {} on approve, { fix } for another round, { end } when the item is over. */
+  const judgeReview = (rv) => {
+    s.lastReview = rv;
+    L.progress(`${item.id} · review round ${s.reviewRounds + 1} on PR #${s.pr}: **${rv.verdict}**${rv.blocking?.length ? ` (${rv.blocking.length} blocking)` : ''} — ${short(rv.summary || '', 250)}`);
+    if (rv.verdict === 'approve') return {};
+    countReviewFailures(L, rv, item);
+    s.reviewRounds++;
+    if (s.reviewRounds > L.cfg.review.maxRounds) return { end: finish('needs_human', `review did not converge on PR #${s.pr}: ${short(JSON.stringify(rv.blocking), 600)}`) };
+    return { fix: { kind: 'review', review: rv, round: s.reviewRounds, pr: s.pr } };
+  };
+
   for (;;) {
     if (L.stopRequested()) return 'stopped';
     if (L.budgetExceeded()) return 'budget';
 
     if (s.phase === HELD_PHASE) {
       if (s.released) {
+        delete s.redBase; // the owner vouches for the base
         L.progress(`${item.id} · released by the owner (${s.released}) from hold: ${s.hold?.kind}`);
         s.phase = NEXT_AFTER_HOLD[s.hold?.kind] || 'finish';
         delete s.released;
@@ -238,7 +340,7 @@ export async function runItem(L, item) {
         s.lastError = `The session ended without a valid .loop/result.json${run?.timedOut ? ' (it timed out)' : ''}. Log: ${run ? path.relative(L.root, run.log) : '?'}`;
         L.progress(`${item.id} · build round ${s.rounds} produced no result (attempt ${s.attempts}/${L.cfg.maxAttemptsPerItem})`);
         if (s.attempts >= L.cfg.maxAttemptsPerItem) return finish('failed', s.lastError);
-        if (s.pr && prView(L, s.pr).state === 'OPEN') s.phase = 'ci';
+        if (s.pr && forge(L).prView(L, s.pr).state === 'OPEN') s.phase = 'ci';
         save();
         continue;
       }
@@ -257,7 +359,7 @@ export async function runItem(L, item) {
       // ready | partial: check the PR really is what the agent says it is
       let v = null;
       try {
-        v = r.pr ? prView(L, r.pr) : null;
+        v = r.pr ? forge(L).prView(L, r.pr) : null;
       } catch {}
       if (v && v.state === 'MERGED' && v.baseRefName === L.cfg.base) {
         // Merged during the build session itself: the change is on the base unreviewed. Never retry on top of it.
@@ -272,67 +374,111 @@ export async function runItem(L, item) {
         save();
         continue;
       }
-      Object.assign(s, { pr: v.number, branch: v.headRefName, isPartial: r.outcome === 'partial', remaining: r.remaining || '', summary: r.summary || '', phase: 'ci' });
+      Object.assign(s, { pr: v.number, branch: v.headRefName, isPartial: r.outcome === 'partial', remaining: r.remaining || '', summary: r.summary || '', phase: 'gate' });
+      save();
+    }
+
+    if (s.phase === 'gate') {
+      L.setStatus('gate', item, { pr: s.pr });
+      const g = runLocalGate(L, item, s);
+      if (!g.ok) {
+        s.ciFixes++;
+        countFailure(L, `gate:${g.command}`, short(g.text, 300), item);
+        L.progress(`${item.id} · local gate failed on PR #${s.pr} (${g.command}) — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
+        if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `the local gate (${g.command}) still fails on PR #${s.pr} after ${L.cfg.maxCiFixes} fix rounds`);
+        fix = { kind: 'gate', text: g.text, pr: s.pr };
+        Object.assign(s, { pendingFix: fix, phase: 'build' });
+        save();
+        continue;
+      }
+      if (g.note) L.progress(`${item.id} · local gate: ${g.note}`);
+      s.phase = 'ci';
       save();
     }
 
     if (s.phase === 'ci') {
-      L.log(`… waiting for CI on PR #${s.pr}`);
-      L.setStatus('ci', item, { pr: s.pr });
-      const ci = await waitForPrCi(L, s.pr);
-      if (ci.kind === 'stopped') return 'stopped';
-      if (!ci.ok) {
-        if (ci.kind === 'merged') {
-          return hold('outside-merge', ci.text, outsideMergeAsk(item, s.pr));
-        }
-        if (ci.kind === 'closed') {
-          Object.assign(s, { pr: null, phase: 'build', lastError: ci.text });
+      let view = null;
+      try {
+        view = forge(L).prView(L, s.pr);
+      } catch {}
+      const open = view?.state === 'OPEN';
+      // Structural checks first: they need neither CI nor a reviewer, so a PR that fails them
+      // costs neither.
+      if (open) {
+        const pre = preMergeChecks(L, s, item);
+        if (!pre.ok) {
+          s.ciFixes++;
+          countFailure(L, 'premerge', short(pre.text, 300), item);
+          L.progress(`${item.id} · pre-merge checks failed on PR #${s.pr} — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
+          if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', pre.text);
+          fix = { kind: 'premerge', text: pre.text, pr: s.pr };
+          Object.assign(s, { pendingFix: fix, phase: 'build' });
           save();
           continue;
         }
+      }
+      // The reviewer starts while CI runs (review.parallelWithCi): it is read-only and pinned to this
+      // head, and the merge still needs both CI green on that commit and the approval.
+      const head = open ? view.headRefOid : null;
+      const parallel = !!L.cfg.review?.parallelWithCi && !!head;
+      L.log(`… waiting for CI on PR #${s.pr}${parallel ? ', reviewing meanwhile' : ''}`);
+      L.setStatus('ci', item, { pr: s.pr });
+      const [ciR, rvR] = await Promise.allSettled([forge(L).waitForPrCi(L, s.pr), parallel ? reviewSession(L, item, s, head) : null]);
+      if (ciR.status === 'rejected') throw ciR.reason;
+      if (rvR.status === 'rejected') throw rvR.reason;
+      const ci = ciR.value;
+      if (ci.kind === 'stopped') return 'stopped';
+      if (!ci.ok && ci.kind === 'merged') return hold('outside-merge', ci.text, outsideMergeAsk(item, s.pr));
+      if (!ci.ok && ci.kind === 'closed') {
+        Object.assign(s, { pr: null, phase: 'build', lastError: ci.text });
+        save();
+        continue;
+      }
+      // A verdict counts only for the commit CI judged. With CI red there is no such commit yet, and
+      // the findings still belong to the head the fix round starts from.
+      const rv = rvR.value && (!ci.ok || ci.sha === head) ? rvR.value : null;
+      const fixes = [];
+      if (!ci.ok) {
         s.ciFixes++;
         for (const j of ci.jobs || []) countFailure(L, `ci:${j}`, `PR #${s.pr}`, item);
         L.progress(`${item.id} · CI on PR #${s.pr}: ${ci.kind}${ci.jobs ? ` (${ci.jobs.join(', ')})` : ''} — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
         if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `CI still not green on PR #${s.pr} after ${L.cfg.maxCiFixes} fix rounds`);
-        fix = { ...ci, pr: s.pr };
+        fixes.push({ ...ci, pr: s.pr });
+      }
+      let approved = false;
+      if (rv) {
+        const j = judgeReview(rv);
+        if (j.end) return j.end;
+        if (j.fix) fixes.push(j.fix);
+        else approved = true;
+      }
+      if (fixes.length) {
+        fix = fixes.length === 1 ? fixes[0] : { kind: 'multi', parts: fixes, pr: s.pr };
         Object.assign(s, { pendingFix: fix, phase: 'build' });
         save();
         continue;
       }
-      const pre = preMergeChecks(L, s);
-      if (!pre.ok) {
-        s.ciFixes++;
-        countFailure(L, 'premerge', short(pre.text, 300), item);
-        L.progress(`${item.id} · pre-merge checks failed on PR #${s.pr} — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
-        if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', pre.text);
-        fix = { kind: 'premerge', text: pre.text, pr: s.pr };
-        Object.assign(s, { pendingFix: fix, phase: 'build' });
-        save();
-        continue;
-      }
-      Object.assign(s, { ciSha: ci.sha, phase: 'review' });
+      if (approved) Object.assign(s, { ciSha: ci.sha, reviewedSha: ci.sha, phase: 'merge' });
+      else Object.assign(s, { ciSha: ci.sha, phase: 'review' }); // no verdict yet: review now, on the green head
       save();
     }
 
     if (s.phase === 'review') {
-      const rv = await reviewSession(L, item, s);
+      const rv = await reviewSession(L, item, s, s.ciSha);
       if (!rv) {
         if (L.stopRequested() || L.budgetExceeded()) return 'stopped';
         return finish('needs_human', `the reviewer gave no verdict on PR #${s.pr}`);
       }
-      s.lastReview = rv;
-      L.progress(`${item.id} · review round ${s.reviewRounds + 1} on PR #${s.pr}: **${rv.verdict}**${rv.blocking?.length ? ` (${rv.blocking.length} blocking)` : ''} — ${short(rv.summary || '', 250)}`);
-      if (rv.verdict !== 'approve') {
-        for (const sig of reviewSignatures(rv)) countFailure(L, sig, rv.blocking.filter((b) => `review:${b.category}` === sig || sig === 'review:other').map((b) => b.issue).join('; '), item);
-        s.reviewRounds++;
-        if (s.reviewRounds > L.cfg.review.maxRounds) return finish('needs_human', `review did not converge on PR #${s.pr}: ${short(JSON.stringify(rv.blocking), 600)}`);
-        fix = { kind: 'review', review: rv, round: s.reviewRounds, pr: s.pr };
+      const j = judgeReview(rv);
+      if (j.end) return j.end;
+      if (j.fix) {
+        fix = j.fix;
         Object.assign(s, { pendingFix: fix, phase: 'build' });
         save();
         continue;
       }
       // the reviewer reviewed s.ciSha; make sure nothing moved underneath it
-      if (prView(L, s.pr).headRefOid !== s.ciSha) {
+      if (forge(L).prView(L, s.pr).headRefOid !== s.ciSha) {
         s.phase = 'ci';
         save();
         continue;
@@ -345,7 +491,7 @@ export async function runItem(L, item) {
 
     if (s.phase === 'merge') {
       L.setStatus('merge', item, { pr: s.pr });
-      const m = mergePr(L, s);
+      const m = forge(L).mergePr(L, s);
       if (!m.ok) {
         L.progress(`${item.id} · merge of PR #${s.pr} refused: ${m.kind} ${m.text || ''}`);
         if (m.kind === 'behind') {
@@ -380,18 +526,31 @@ export async function runItem(L, item) {
       const lc = landedCheck(L, { baseBefore: s.baseBefore, reviewedSha: s.reviewedSha, mergeSha: s.mergeSha });
       if (!lc.ok) return hold('landed', `PR #${s.pr}: ${lc.why}`, `${item.id}: what landed on ${L.cfg.base} with PR #${s.pr} (${String(s.mergeSha).slice(0, 7)}) is not what the reviewer approved (${lc.why}). Inspect it with git show ${String(s.mergeSha).slice(0, 7)}. Revert or fix it on ${L.cfg.base}, then release the item: node loop/run.mjs --release ${item.id}`);
       L.syncBase();
+      s.treeEqual = !!lc.treeEqual;
       s.phase = 'baseci';
       save();
     }
 
     if (s.phase === 'baseci') {
       L.setStatus('baseci', item, { sha: s.mergeSha });
-      const dev = await waitForCommitCi(L, s.mergeSha);
-      if (dev.kind === 'stopped') return 'stopped';
-      if (!dev.ok && dev.kind === 'timeout') return hold('baseci', dev.text, `${item.id}: CI on ${L.cfg.base} never finished for ${String(s.mergeSha).slice(0, 7)} (${dev.text}). Check GitHub Actions (quota, runners, a stuck job). Re-run the loop once CI reports; it checks again. To accept the commit without a CI verdict: node loop/run.mjs --release ${item.id}`);
-      if (!dev.ok) {
-        addFixItem(L, item, s.mergeSha, dev);
-        L.progress(`${item.id} · ${L.cfg.base} CI is RED after merging PR #${s.pr} — queued a fix item first in line`);
+      const sha7 = String(s.mergeSha).slice(0, 7);
+      const waitOnRed = L.cfg.postMergeOnRedBase === 'wait' && (L.cfg.postMerge || []).length > 0;
+      if (L.cfg.baseCiWait === 'unless-tree-equal' && s.treeEqual && !waitOnRed) {
+        // The landed check proved this commit has exactly the tree PR CI passed on. Base CI still
+        // runs and still counts; the next item just does not wait for it (settleBaseCi).
+        const S = L.store.S;
+        S.pendingBaseCi ||= [];
+        if (!S.pendingBaseCi.some((p) => p.sha === s.mergeSha)) S.pendingBaseCi.push({ sha: s.mergeSha, item: item.id, milestone: item.milestone, since: Date.now() });
+        L.progress(`${item.id} · ${sha7} has the tree CI passed on; ${L.cfg.base} CI is checked in the background`);
+      } else {
+        const dev = await forge(L).waitForCommitCi(L, s.mergeSha);
+        if (dev.kind === 'stopped') return 'stopped';
+        if (!dev.ok && dev.kind === 'timeout') return hold('baseci', dev.text, `${item.id}: CI on ${L.cfg.base} never finished for ${sha7} (${dev.text}). Check GitHub Actions (quota, runners, a stuck job). Re-run the loop once CI reports; it checks again. To accept the commit without a CI verdict: node loop/run.mjs --release ${item.id}`);
+        if (!dev.ok) {
+          const fixId = addFixItem(L, item, s.mergeSha, dev);
+          L.progress(`${item.id} · ${L.cfg.base} CI is RED after merging PR #${s.pr} — queued a fix item first in line`);
+          if (waitOnRed) s.redBase = { fix: fixId };
+        }
       }
       s.phase = 'postmerge';
       save();
@@ -399,6 +558,18 @@ export async function runItem(L, item) {
 
     if (s.phase === 'postmerge') {
       if (L.args.dry) return 'dry';
+      if (s.redBase) {
+        // postMergeOnRedBase: 'wait'. The steps run once the fix item made the base green again.
+        const fixStatus = L.store.st(s.redBase.fix).status;
+        if (!TERMINAL.has(fixStatus)) {
+          L.progress(`${item.id} · post-merge steps wait for ${s.redBase.fix}: ${L.cfg.base} is red`);
+          return 'waiting';
+        }
+        if (fixStatus !== 'done') return hold('baseci', `${L.cfg.base} went red after this merge and ${s.redBase.fix} ended ${fixStatus}`, `${item.id}: ${L.cfg.base} is red since its merge and the fix item ${s.redBase.fix} ended ${fixStatus}, so its post-merge steps did not run. Make ${L.cfg.base} green, then release the item: node loop/run.mjs --release ${item.id}`);
+        L.progress(`${item.id} · ${s.redBase.fix} is done: running the post-merge steps now`);
+        s.redBase = null;
+        save();
+      }
       L.setStatus('postmerge', item, { sha: s.mergeSha });
       L.syncBase();
       for (const step of L.cfg.postMerge || []) {
@@ -419,7 +590,7 @@ export async function runItem(L, item) {
 
     if (s.phase === 'finish') {
       const wasPartial = s.isPartial;
-      Object.assign(s, { pr: null, branch: null, ciSha: null, reviewedSha: null, lastReview: null, ciFixes: 0, reviewRounds: 0, pendingFix: null, hold: null, mergeSha: null, baseBefore: null, phase: 'build' });
+      Object.assign(s, { pr: null, branch: null, ciSha: null, reviewedSha: null, lastReview: null, ciFixes: 0, reviewRounds: 0, pendingFix: null, hold: null, mergeSha: null, baseBefore: null, treeEqual: null, redBase: null, phase: 'build' });
       if (wasPartial) {
         s.partials++;
         s.notes.push(`merged slice: ${short(s.summary, 300)} — remaining: ${short(s.remaining, 800)}`);

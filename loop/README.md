@@ -7,27 +7,65 @@ session. **The script decides when something is done, not the agent.**
 pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items first)
  └─ build session (/goal)  → contract first (docs/contracts/<id>.md: every AC + its proof),
                              then branch, code, tests, PR to the base branch, .loop/result.json
- └─ script waits for CI    → red? fix session with the failing log
-                             cancelled with no runner? re-run, never a fix (L-02)
+ └─ local gate             → the script runs `localGate.commands` on the pushed head.
+                             Failing? fix session with the output, before any CI wait
  └─ pre-merge checks       → base is an ancestor (L-01), no edited migrations, no protected or
-                             runtime files, coverage thresholds did not drop
- └─ review session         → independent, read-only: contract, hard rules, drives the app,
+                             runtime files, coverage thresholds did not drop, the contract names
+                             every AC of the item. They need neither CI nor a reviewer, so they
+                             come first
+ └─ CI and review together → the script waits for CI while the review session runs on the same
+                             head (`review.parallelWithCi`). Red CI and review findings go into
+                             one fix round. Cancelled with no runner? re-run, never a fix (L-02)
+    review session         → independent, read-only: contract, hard rules, drives the app,
                              scores design quality / originality / craft / functionality 1–10;
-                             any score < 7 blocks a UI item. Changes? fix session (max 2 rounds)
+                             any score < 7 blocks a UI item. Changes? fix session (max 2 rounds).
+                             The merge needs CI green **and** the approval, on one commit
  └─ script merges          → squash, --match-head-commit, into the base branch only
  └─ landed check           → merge commit is on origin/<base> and its patch-id equals the
                              reviewed diff. No? HELD
  └─ base CI                → on the merge commit. Red? a FIX item goes first in line.
-                             No result? one re-run, then HELD (a timeout is not a pass)
+                             No result? one re-run, then the run stops (a timeout is not a pass).
+                             When the landed check proved the merge commit has exactly the tree
+                             PR CI passed on, the next item starts meanwhile (`baseCiWait`)
  └─ post-merge steps       → the script applies new migrations with the Supabase CLI and checks
                              the migration list. Not verified? HELD, and the run stops
  └─ milestone complete?    → acceptance on the deployed dev site, after /api/health reports the
                              merged commit and db ok. Failures become ACC items, max 2 rounds
-                           → review packet in .loop/reviews/<milestone>.md
+                           → review packet in .loop/reviews/<milestone>.md, once those items
+                             are settled. Fixes from the last round are not re-accepted: the
+                             packet and OWNER-ACTIONS say so
 ```
 
 Why each step is there: [../WHY.md](../WHY.md). It is deliberately **sequential**: concurrent
 agents sharing one working tree are what broke the setup this loop replaced.
+
+## Core, profile, project
+
+The loop is three things, kept apart:
+
+| | Where | Knows |
+| --- | --- | --- |
+| **Core** | `loop/run.mjs`, `loop/lib/`, `loop/guard/core.mjs`, `loop/prompts/` | The method: the item engine, the gates, git, the read-only steps. No framework, host or database |
+| **Stack profile** | `loop/profiles/<name>/`, named by `profile` in the project config | What this stack is: the check commands, the files CI runs through, the ratchets, the work types, which guard packs and adapters to use, and the stack's words for each step |
+| **Project config** | `loop/loop.config.json` | Which profile, and this project's own values: repo, branches, the dev URL, the git author |
+
+Behind the profile's choices sit **adapters** (`loop/adapters/`: the forge, the deploy probe, the
+post-merge steps, notifications) and **guard packs** (`loop/guard/packs/`: the rules for one tool
+or service). The core only calls their interfaces. Another stack is another profile and app
+skeleton; another forge or host is another adapter. The contract: [profiles/README.md](profiles/README.md).
+
+Two profiles ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
+(`node scripts/apply-preset.mjs node-cli`). This page describes the web preset where it has to
+name a tool; where the two differ, the profile decides:
+
+| | Web app | Node CLI |
+| --- | --- | --- |
+| Local gate | `pnpm check` | `npm run check` |
+| Work types | `ui` (four design scores), `default` | `command` (help and errors, ergonomics, output, robustness), `default` |
+| Milestone acceptance | on the deployed dev site | on the merged base: packed, installed under `.loop/`, used from there |
+| Post-merge steps | migrations to the dev database | none |
+| Guard packs | `github`, `supabase`, `vercel` | `github`, `npm` |
+| Ratchet | coverage thresholds in the Vitest config | `coverage.thresholds.json` |
 
 ## Prerequisites (once)
 
@@ -42,8 +80,13 @@ agents sharing one working tree are what broke the setup this loop replaced.
    author. `node loop/run.mjs --dry-run` names everything still missing.
 5. `DEV_DB_URL` (the dev database URL) in the environment that runs the loop, for the post-merge
    step. Without it, a merge with migrations is held and the step goes to `.loop/OWNER-ACTIONS.md`.
-6. `pnpm install` and `pnpm exec playwright install chromium`.
-7. Keep the machine awake while it runs.
+   Only the runner uses it: agent sessions start without it (see [Session environment](#session-environment)).
+6. **Branch protection on the base branch**: require a pull request and the CI check, no required
+   approvals, no direct or force pushes. The preflight asks GitHub and refuses to start without a
+   protection rule or ruleset. If your plan does not offer one for this repository, set
+   `guard.requireBranchProtection` to `false`.
+7. `pnpm install` and `pnpm exec playwright install chromium`.
+8. Keep the machine awake while it runs.
 
 ## Run
 
@@ -84,6 +127,7 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | History | `.loop/PROGRESS.md` |
 | Every session in full | `.loop/logs/NNN-<item>-<phase>.jsonl` |
 | Blocked actions | `.loop/logs/guard.log` (time, item, phase, rule, reason) |
+| Time and cost per session | `.loop/ledger.jsonl` (item, phase, duration, turns, cost, outcome) |
 | **Things only you can do** | `.loop/OWNER-ACTIONS.md` |
 | **Milestone "come look"** | `.loop/reviews/<milestone>.md`, with screenshots |
 | Final summary | `.loop/REPORT.md` |
@@ -97,8 +141,11 @@ runs.
 
 **The guard** (`loop/guard.mjs`) is a fail-closed PreToolUse hook on every loop session: if it
 cannot run, the action is refused. The runner starts sessions with a copy of the guard from the
-base branch, so a change in the working tree cannot switch a rule off. Its locked core
-(`loop/guard/core.mjs`) blocks:
+base branch, so a change in the working tree cannot switch a rule off. Its locked
+core (`loop/guard/core.mjs`) holds the git, file and read-only rules. The rules for a tool or
+service are in guard packs (`loop/guard/packs/`), switched on by `guard.packs` in the profile
+(the web preset: `github`, `supabase`, `vercel`; the CLI preset: `github`, `npm`). A pack can only block, an unknown pack name refuses
+every call, and the packs are part of the snapshot. Together they block:
 
 | Area | Blocked |
 | --- | --- |
@@ -121,7 +168,59 @@ stops the run (`.loop/STOP`, with an entry in `.loop/OWNER-ACTIONS.md`) if any f
 
 A PR found already merged before the runner merged it is **held** (`outside-merge`) until you
 release it; the item is then rebuilt through the gates. Branch protection on the base branch that
-requires the CI check stops such a merge at GitHub as well; `/setup-loop` lists it as an owner action.
+requires the CI check stops such a merge at GitHub as well. The preflight checks that the base
+branch has one and refuses to start without it.
+
+### Session environment
+
+An agent session does not get the runner's secrets. Removed from every session: each
+`postMerge[].dbUrlEnv` (the dev database URL) and every name in `sessionEnvDeny`. The deploy
+bypass secret (`deploy.bypassSecretEnv`) reaches only the acceptance and packet steps, which open
+the deployed site. The guard's SQL rules cover the database tool; they cannot see a shell command
+that connects on its own, so the URL must not be there to use. List any other variable only the
+runner or you need in `sessionEnvDeny`. Keep such values out of files a session can read, too.
+
+### The contract and the AC gate
+
+The build session writes `docs/contracts/<item>.md`. The pre-merge check refuses the PR unless
+that file names every AC ID the item names (in `refs`, `title` or `scope`). In CI,
+`scripts/ac-trace.mjs` then requires each AC a contract names to be in the title of a test that
+runs: `skip`, `todo`, `fixme` and expected-to-fail tests do not count. ACs of items not built
+yet are listed as pending. `pnpm ac-trace --all` checks every AC, for a release.
+
+### Evidence, not titles
+
+In CI the AC gate reads the JUnit reports the test steps write to `artifacts/junit/`
+(`pnpm ac-trace --results artifacts/junit`). An AC a contract names must be named by a test case
+that **ran and passed**. A test inside a skipped group, a conditional skip or a file the runner
+never collected has a title and no passing case, so it does not count. A missing report fails the
+check. Any test runner that writes JUnit can feed it.
+
+### Base CI in the background
+
+`baseCiWait: "unless-tree-equal"` (the default): the landed check compares the merge commit's tree
+with the reviewed head. When they are identical, PR CI already passed on exactly that tree, so the
+next item starts while base CI runs. Nothing is waived: the runner looks at every pending commit
+before each item, a red result queues its FIX item first in line, and a commit without a verdict
+(after one re-run) stops the run with an owner action. Before a milestone is accepted and before a
+run reports its result, the runner waits for every pending verdict. `"always"` waits after every
+merge.
+
+### A red base and the post-merge steps
+
+`postMergeOnRedBase: "apply"` (the default) runs the post-merge steps even when base CI is red
+after a merge. That is deliberate: the host deploys the base branch whether CI is green or not, and
+merged code without its migration is the outage the hold gate exists for. `"wait"` is for steps
+that must never act on a red base (a release, a publish): the item stays open, its FIX item runs
+first, and the steps run once that item is done. If the FIX item does not finish, the item is held.
+
+### The local gate
+
+`localGate.commands` (the preset: `pnpm check`) are run by the runner on the pushed branch head
+after each build session, with the same reduced environment as a session. A failure goes straight
+to a fix session with the output in `.loop/logs/gate-<item>-r<round>.txt` and counts against the
+CI fix rounds. It does not replace CI: CI still decides the merge. Set `commands` to `[]` to
+switch it off.
 
 **Pre-merge, the runner also refuses** changes to CI's wiring: the `scripts` in `package.json`,
 `scripts/`, the lint, test, type and format configs, and any Vitest config change other than
@@ -139,6 +238,7 @@ bypass permissions. Generated settings turn auto memory off.
 | Sessions per run | 150 |
 | Hours per run | 120 |
 | Dollars per session | 25 |
+| Dollars per run (`budgets.maxUsdPerRun`) | 0 = no cap |
 | Failed attempts per item | 3 |
 | Build rounds per item, fixes included | 8 |
 | CI fix rounds per item | 3 |
@@ -168,9 +268,15 @@ Delete `.loop/STOP` if there is one before you re-run.
 
 ## Learning and the tighten-only rule table
 
-The script counts repeated failures by signature: the same kind of review finding
-(`review:<category>`), the same guard rule (`guard:<rule id>`), the same CI job
-(`ci:<job name>`). The second time, it queues a `LEARN-n` item first in line. That item fixes the
+The script counts repeated failures by signature: the same review finding
+(`review:<category>:<cause>`), the same guard rule (`guard:<rule id>`), the same CI job
+(`ci:<job name>`), the same local gate command (`gate:<command>`). The second time
+(`learnThreshold`), it queues a `LEARN-n` item first in line.
+
+The reviewer gives each blocking finding a category and a short cause key, and is shown the keys the
+run already uses so the same cause gets the same key. Findings that share only the category
+(`review:<category>`, different causes) need `learnCategoryThreshold` (4) before they count as a
+pattern: two unrelated bugs in fifty items are not one, and a LEARN item costs a whole build cycle. That item fixes the
 cause, one step up this ladder:
 
 ```mermaid

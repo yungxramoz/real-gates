@@ -1,8 +1,14 @@
 # Config fields
 
 Every key of `loop/loop.config.json`: the question to ask, the recommended answer, and where the
-value comes from. Defaults live in `loop/lib/config.mjs` (`DEFAULTS`); a key left out of the file
-keeps its default.
+value comes from. `profile` names the stack profile (a folder under `loop/profiles/`); it is
+already set by the template or by `scripts/apply-preset.mjs`, so read it, do not ask. A key left
+out of the file keeps the value from that profile, and what the profile does not set keeps its
+default from `loop/lib/config.mjs` (`DEFAULTS`). Ask only for this project's own values. What
+belongs to the stack (check commands, gate files, work types, guard packs, adapters, the health
+contract) is the profile's and is described in `loop/profiles/README.md`; do not copy it into the
+project config. A profile with `deploy.adapter` `none` and no `postMerge` steps (the CLI
+profile) has no database and no deploy step: skip those questions.
 
 ## Contents
 
@@ -117,13 +123,29 @@ linked account. That is why the email has to be a verified one.
 come from a run of 49 items with no failed item. Mention them in one line. Change one only when the
 user asks, and keep `budgets.maxUsdPerSession` set: it stops a single runaway session.
 
+| Key | What it does | Default |
+|---|---|---|
+| `budgets.maxUsdPerRun` | stops the run once its sessions cost this much; `0` = no cap | `0` |
+| `localGate.commands` | shell commands the runner runs on the pushed head before waiting for CI | preset: `["pnpm check"]` |
+| `sessionEnvDeny` | extra environment variables no agent session may see | `[]` |
+| `guard.requireBranchProtection` | the preflight refuses to start when the base branch is unprotected | `true` |
+| `contractsDir` | where build sessions write `<item>.md` contracts | `docs/contracts` |
+| `review.parallelWithCi` | the reviewer starts while CI runs; the merge still needs both on one commit | `true` |
+| `baseCiWait` | `unless-tree-equal`: the next item starts while base CI runs on a commit whose tree PR CI already passed; `always`: wait after every merge | `unless-tree-equal` |
+| `postMergeOnRedBase` | `apply`: run post-merge steps even when base CI is red (the host deploys the code anyway); `wait`: only after the FIX item is done | `apply` |
+| `learnCategoryThreshold` | review findings that share a category but not a cause count as a pattern after this many | `4` |
+
+Set `guard.requireBranchProtection` to `false` only when the user's GitHub plan has no branch
+protection for this repository, and say what that costs: a stray push to the base is then only
+noticed after it happened.
+
 ## Owner actions this step usually produces
 
 Append to `docs/OWNER-ACTIONS.md`, one row each, with how to verify it:
 
 | Action | Verify |
 |---|---|
-| Protect `<production>`; require `<ciCheck>` on `<base>` | GitHub → Settings → Branches shows both rules |
+| Protect `<production>`; require a pull request and `<ciCheck>` on `<base>`, no required approvals | `node loop/run.mjs --dry-run` no longer warns about branch protection |
 | Put the dev DB URL in the loop's environment as `<dbUrlEnv>` | the dry run no longer names it |
 | Create the bypass secret, set it as `<bypassSecretEnv>` | `curl` with header `x-vercel-protection-bypass` returns 200 |
 | Subscribe to the ntfy topic on the phone | a test message arrives: `curl -d hi ntfy.sh/<topic>` |

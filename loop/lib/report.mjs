@@ -13,7 +13,7 @@ export function writeReport(L, reason, runSessions) {
   const line = (i) => `- **${i.id}** ${i.title}${st(i.id).prs?.length ? ` — PR ${st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}${st(i.id).lastError && st(i.id).status !== 'done' ? `\n  - ${st(i.id).lastError}` : ''}`;
   const learn = Object.entries(L.store.S.learn || {}).sort((a, b) => b[1].count - a[1].count);
   const sections = [
-    `# Loop report\n\n${new Date().toISOString()} — stopped because: **${reason}**\n\nSessions this run: ${runSessions} · total: ${L.store.S.iterations}`,
+    `# Loop report\n\n${new Date().toISOString()} — stopped because: **${reason}**\n\nSessions this run: ${runSessions} · total: ${L.store.S.iterations} · cost so far: ~$${(L.store.S.cost?.totalUsd || 0).toFixed(2)} (per session: .loop/ledger.jsonl)`,
     `## Held — merged, not verified (${items.filter((i) => isHeld(L, i)).length})\n\n${items.filter((i) => isHeld(L, i)).map((i) => `${line(i)}\n  - hold: ${st(i.id).hold?.kind} — ${st(i.id).hold?.why}`).join('\n') || '—'}`,
     `## Done (${by('done').length})\n\n${by('done').map(line).join('\n') || '—'}`,
     `## Needs you (${by('needs_human').length + by('blocked').length})\n\n${[...by('needs_human'), ...by('blocked')].map(line).join('\n') || '—'}`,
@@ -32,7 +32,7 @@ export function printStatus(L) {
   const counts = {};
   for (const it of items) counts[st(it.id).status] = (counts[st(it.id).status] || 0) + 1;
   console.log(`\nloop — ${items.length} items · ${Object.entries(counts).map(([k, v]) => `${k}: ${v}`).join(' · ')}`);
-  console.log(`sessions so far: ${L.store.S.iterations} · started ${L.store.S.startedAt}\n`);
+  console.log(`sessions so far: ${L.store.S.iterations} · cost so far: ~$${(L.store.S.cost?.totalUsd || 0).toFixed(2)} · started ${L.store.S.startedAt}\n`);
   let m = '';
   for (const it of items) {
     if (it.milestone !== m) console.log(`\n${(m = it.milestone)}`);

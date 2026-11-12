@@ -19,8 +19,11 @@ on:
   push:
     branches: [develop, main]
 
+# A newer push to a pull request replaces the run of the older one. A push to the base or the
+# production branch never does: every merge commit keeps its own run, because the loop reads the
+# verdict of each one, also when the next merge lands before the run has finished.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -53,6 +56,36 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      # Did this change touch the template's own code (the runner, the skills, the repo scripts,
+      # the workflows)? The runner refuses a loop PR that edits those paths, so on almost every PR
+      # their suites would re-test code that cannot have changed. They run when the paths changed,
+      # and whenever that cannot be told (no commit to compare with, a failed fetch).
+      - name: changes
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          known=0
+          files=''
+          if [ "$EVENT" = "pull_request" ]; then
+            if git fetch --no-tags --depth=1 origin "$BASE_REF" && files=$(git diff --name-only "origin/${BASE_REF}" HEAD); then
+              known=1
+            fi
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            if git fetch --no-tags --depth=1 origin "$BEFORE" && files=$(git diff --name-only "$BEFORE" HEAD); then
+              known=1
+            fi
+          fi
+          harness=true
+          if [ "$known" = "1" ] && ! printf '%s\n' "$files" | grep -Eq '^(loop/|scripts/|\.claude/|\.github/|package\.json$)'; then
+            harness=false
+          fi
+          echo "harness=${harness}" >> "$GITHUB_OUTPUT"
+          echo "Template-owned paths changed: ${harness}"
 
       # A missing scaffold is a loud, named red rather than a silent skip.
       - name: preflight
@@ -140,14 +173,29 @@ jobs:
           [ -z "$leaked" ] || exit 1
           echo "OK: no server-only key value in .next/static."
 
+      # The browser download is cached per lockfile; its system packages are installed either way.
+      - name: cache playwright browsers
+        id: pw_cache
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       # Playwright + axe against `next start` on this job's build, in stub mode (the config
       # starts the server). Chromium only: the projects are a 360 px phone and a desktop.
       - name: e2e
         id: e2e
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          BROWSERS_CACHED: ${{ steps.pw_cache.outputs.cache-hit }}
         run: |
           set -euo pipefail
-          pnpm exec playwright install --with-deps chromium
+          if [ "$BROWSERS_CACHED" = "true" ]; then
+            pnpm exec playwright install-deps chromium
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
           pnpm test:e2e
 
       - name: upload e2e report
@@ -158,20 +206,17 @@ jobs:
           path: artifacts/playwright-report
           retention-days: 7
 
-      # Every AC in docs/REQUIREMENTS.md must be named in a test title, and in a contract once
-      # the loop has written any. Before the first loop run there are no contracts, so only the
-      # test half can be checked; the step says so instead of skipping silently.
+      # Every AC a contract names (docs/contracts/<item>.md, committed with the PR that builds
+      # it) must be named in the title of a test that runs: skipped and todo tests do not count.
+      # ACs no contract names yet are listed as pending. The runner refuses a PR whose contract
+      # leaves out one of its item's ACs, so an item cannot dodge this by writing less.
+      # A title is not enough here: the AC must be named by a test case that ran and passed in
+      # the JUnit reports the unit and e2e steps wrote (artifacts/junit). No report is a failure.
+      # Before a release, run `pnpm ac-trace --all`: every AC, contract and test.
       - name: ac-trace
         id: ac_trace
         if: ${{ !cancelled() }}
-        run: |
-          set -uo pipefail
-          if ls .loop/contracts/*.md docs/contracts/*.md >/dev/null 2>&1; then
-            pnpm ac-trace
-          else
-            echo "::notice::No contracts in .loop/contracts or docs/contracts yet; checking tests only."
-            pnpm ac-trace --no-contracts
-          fi
+        run: pnpm ac-trace --results artifacts/junit
 
       # The project rule table may only grow. On a PR it is compared with the base branch; on a
       # push with the commit the push replaced.
@@ -198,7 +243,15 @@ jobs:
       - name: check:skills
         id: check_skills
         if: ${{ !cancelled() }}
-        run: pnpm check:skills
+        env:
+          HARNESS: ${{ steps.changes.outputs.harness }}
+        run: |
+          set -euo pipefail
+          if [ "$HARNESS" = "false" ]; then
+            echo "::notice::No template-owned path changed; check:skills has nothing new to check."
+            exit 0
+          fi
+          pnpm check:skills
 
       # No identifiers from another project, no personal data, no secrets in the tree.
       - name: sanitize
@@ -211,8 +264,14 @@ jobs:
       - name: test:loop
         id: test_loop
         if: ${{ !cancelled() }}
+        env:
+          HARNESS: ${{ steps.changes.outputs.harness }}
         run: |
           set -euo pipefail
+          if [ "$HARNESS" = "false" ]; then
+            echo "::notice::No template-owned path changed; the runner suite has nothing new to test."
+            exit 0
+          fi
           # The suite creates real git repos; a runner without an identity cannot commit in them.
           git config --global user.name "loop-runner CI"
           git config --global user.email "loop-runner@example.com"
@@ -222,7 +281,15 @@ jobs:
       - name: test:scripts
         id: test_scripts
         if: ${{ !cancelled() }}
-        run: pnpm test:scripts
+        env:
+          HARNESS: ${{ steps.changes.outputs.harness }}
+        run: |
+          set -euo pipefail
+          if [ "$HARNESS" = "false" ]; then
+            echo "::notice::No template-owned path changed; the script suites have nothing new to test."
+            exit 0
+          fi
+          pnpm test:scripts
 
       # Allow-list, not a deny-list: only `success` passes. A skipped check has not passed.
       - name: Every check must have run and passed

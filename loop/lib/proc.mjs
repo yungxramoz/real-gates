@@ -1,7 +1,8 @@
-// Child processes: git, gh, supabase and claude, with the loop's environment.
+// Child processes: git, the forge's CLI, the agent's CLI and any tool an adapter needs, with the
+// loop's environment.
 //
-// LOOP_GH_BIN, LOOP_SUPABASE_BIN and LOOP_CLAUDE_BIN override the binaries (the test suite points
-// them at fakes). A value ending in .mjs or .js runs through this Node.
+// LOOP_<NAME>_BIN overrides a binary (LOOP_GH_BIN, LOOP_CLAUDE_BIN, LOOP_SUPABASE_BIN, …): the test
+// suite points them at fakes. A value ending in .mjs or .js runs through this Node.
 
 import { spawnSync } from 'node:child_process';
 
@@ -25,7 +26,6 @@ export function createProc({ root, env = () => process.env }) {
     return sh(b.cmd, [...b.pre, ...args], opts);
   };
   const ghRun = run('gh');
-  const sbRun = run('supabase');
   return {
     sh,
     git: (...a) => sh('git', a).out,
@@ -33,6 +33,7 @@ export function createProc({ root, env = () => process.env }) {
     gh: (...a) => ghRun(a).out,
     ghTry: (...a) => ghRun(a, { allowFail: true }),
     ghJson: (...a) => JSON.parse(ghRun(a).out || 'null'),
-    supabase: (args, opts = {}) => sbRun(args, { allowFail: true, ...opts }),
+    /** Any other command-line tool an adapter drives. Never throws: the adapter judges the result. */
+    tool: (name, args, opts = {}) => run(name)(args, { allowFail: true, ...opts }),
   };
 }

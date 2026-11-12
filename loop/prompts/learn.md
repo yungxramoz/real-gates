@@ -9,8 +9,7 @@ that will actually hold**, and say in the PR why that rung:
    rule needs judgement.
 2. **A test** that fails when the mistake comes back, in the existing test suites (`tests/`), so CI
    runs it without any config change. Use it when the mistake can be detected mechanically in the
-   code. You cannot change CI's own wiring (`package.json` scripts, `scripts/`, the lint, test and
-   type configs): if the check needs that, ship it as a patch (below).
+   code. You cannot change CI's own wiring (the files step 8 above names): if the check needs that, ship it as a patch (below).
 3. **A stricter guard rule**: add a row to `loop/rules/project-rules.json` with an `id` (`P-<n>`),
    `target` (shell, path, sql or mcp), `pattern`, `reason` (what the agent should do instead) and
    `examples.block` / `examples.allow`. Run `node loop/scripts/check-rules.mjs`. Use it when an
