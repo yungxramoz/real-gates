@@ -33,6 +33,7 @@ export function countFailure(L, signature, detail, item, threshold = L.cfg.learn
   const learn = recordFailure(L.store.S, { signature, detail, item, threshold });
   const queued = !!learn && L.store.addExtra(learn);
   if (queued) L.progress(`${item?.id || '-'} · "${signature}" keeps recurring → ${learn.id} queued first in line`);
+  if (queued) L.event('learn.queued', { item: item?.id || null, signature, learn: learn.id });
   L.store.save();
   return queued;
 }
@@ -198,6 +199,7 @@ export function addFollowup(L, item, f) {
   const milestone = L.backlog.milestones.includes(f.milestone) ? f.milestone : item.milestone;
   L.store.addExtra({ kind: 'followup', id, milestone, title: short(f.title, 120), scope: short(f.scope || f.title, 800), refs: [`raised by ${item.id}`], type: L.cfg.workTypes?.[f.type] ? f.type : workTypeName(item), dependsOn: [item.id] });
   L.progress(`${item.id} · follow-up ${id} queued (${milestone}): ${short(f.title, 120)}`);
+  L.event('followup.queued', { item: item.id, followup: id, milestone });
 }
 
 function addFixItem(L, item, sha, dev) {
@@ -238,12 +240,14 @@ export async function settleBaseCi(L, { wait = false } = {}) {
     const red = (dev) => {
       addFixItem(L, { id: p.item, milestone: p.milestone }, p.sha, dev);
       L.progress(`${p.item} · ${base} CI is RED on ${sha7} (checked in the background) — queued a fix item first in line`);
+      L.event('base.red', { item: p.item, sha: p.sha, background: true });
       queued++;
       drop();
     };
     const noVerdict = (why) => {
       L.ownerAction(p.item, `${p.item}: CI on ${base} gave no verdict for ${sha7} (${why}). Check GitHub Actions (quota, runners, a stuck job), then re-run the loop: it checks again before anything else.`);
       L.progress(`${p.item} · ${base} CI on ${sha7} gave no verdict — the run stops`);
+      L.event('base.no_verdict', { item: p.item, sha: p.sha, why });
       L.baseCiGaveUp = true;
       return { queued, stop: `${base} CI gave no verdict for ${sha7} (merged with ${p.item}): ${why}` };
     };
@@ -287,6 +291,7 @@ export async function runItem(L, item) {
     if (why) s.lastError = why;
     save();
     L.progress(`${item.id} · **${status}**${why ? ` — ${why}` : ''}`);
+    L.event('item.finished', { item: item.id, milestone: item.milestone, status, why: why || null, buildRounds: s.rounds });
     return status;
   };
   const outsideMergeAsk = (it, pr) =>
@@ -296,6 +301,7 @@ export async function runItem(L, item) {
     save();
     L.ownerAction(item.id, ownerAction || `${item.id} is held (${kind}): ${why}. Fix it, then re-run the loop; it verifies again before it moves on. Where it cannot verify, release it with: node loop/run.mjs --release ${item.id}`);
     L.progress(`${item.id} · **held** (${kind}) — ${why}`);
+    L.event('item.held', { item: item.id, kind, why });
     return 'held';
   };
 
@@ -303,7 +309,9 @@ export async function runItem(L, item) {
   const judgeReview = (rv) => {
     s.lastReview = rv;
     L.progress(`${item.id} · review round ${s.reviewRounds + 1} on PR #${s.pr}: **${rv.verdict}**${rv.blocking?.length ? ` (${rv.blocking.length} blocking)` : ''} — ${short(rv.summary || '', 250)}`);
+    L.event('review.verdict', { item: item.id, pr: s.pr, round: s.reviewRounds + 1, verdict: rv.verdict, blocking: (rv.blocking || []).map((b) => ({ category: b.category || null, file: b.file || null })) });
     if (rv.verdict === 'approve') return {};
+    L.event('check.sent_back', { item: item.id, check: 'review', pr: s.pr, round: s.reviewRounds + 1, detail: short(rv.summary || '', 300) });
     countReviewFailures(L, rv, item);
     s.reviewRounds++;
     if (s.reviewRounds > L.cfg.review.maxRounds) return { end: finish('needs_human', `review did not converge on PR #${s.pr}: ${short(JSON.stringify(rv.blocking), 600)}`) };
@@ -318,6 +326,7 @@ export async function runItem(L, item) {
       if (s.released) {
         delete s.redBase; // the owner vouches for the base
         L.progress(`${item.id} · released by the owner (${s.released}) from hold: ${s.hold?.kind}`);
+        L.event('item.released', { item: item.id, kind: s.hold?.kind || null });
         s.phase = NEXT_AFTER_HOLD[s.hold?.kind] || 'finish';
         delete s.released;
       } else if (RECHECKABLE.has(s.hold?.kind)) s.phase = s.hold.kind; // verify again
@@ -339,6 +348,7 @@ export async function runItem(L, item) {
         s.attempts++;
         s.lastError = `The session ended without a valid .loop/result.json${run?.timedOut ? ' (it timed out)' : ''}. Log: ${run ? path.relative(L.root, run.log) : '?'}`;
         L.progress(`${item.id} · build round ${s.rounds} produced no result (attempt ${s.attempts}/${L.cfg.maxAttemptsPerItem})`);
+        L.event('build.round', { item: item.id, round: s.rounds, outcome: 'no-result', pr: s.pr || null, timedOut: !!run?.timedOut });
         if (s.attempts >= L.cfg.maxAttemptsPerItem) return finish('failed', s.lastError);
         if (s.pr && forge(L).prView(L, s.pr).state === 'OPEN') s.phase = 'ci';
         save();
@@ -347,6 +357,7 @@ export async function runItem(L, item) {
       if (r.handoff) s.notes.push(`round ${s.rounds}: ${short(r.handoff, 600)}`);
       for (const a of r.owner_actions || []) L.ownerAction(item.id, a);
       L.progress(`${item.id} · build round ${s.rounds} → ${r.outcome}${r.pr ? ` PR #${r.pr}` : ''} — ${short(r.summary || '', 300)}`);
+      L.event('build.round', { item: item.id, round: s.rounds, outcome: r.outcome, pr: r.pr || null });
       for (const f of (r.followups || []).slice(0, 3)) addFollowup(L, item, f);
       if (r.outcome === 'blocked') return finish('blocked', short(r.summary || 'blocked on the owner', 400));
       if (r.outcome === 'failed') {
@@ -385,6 +396,7 @@ export async function runItem(L, item) {
         s.ciFixes++;
         countFailure(L, `gate:${g.command}`, short(g.text, 300), item);
         L.progress(`${item.id} · local gate failed on PR #${s.pr} (${g.command}) — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
+        L.event('check.sent_back', { item: item.id, check: 'local-gate', pr: s.pr, round: s.ciFixes, detail: g.command });
         if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `the local gate (${g.command}) still fails on PR #${s.pr} after ${L.cfg.maxCiFixes} fix rounds`);
         fix = { kind: 'gate', text: g.text, pr: s.pr };
         Object.assign(s, { pendingFix: fix, phase: 'build' });
@@ -410,6 +422,7 @@ export async function runItem(L, item) {
           s.ciFixes++;
           countFailure(L, 'premerge', short(pre.text, 300), item);
           L.progress(`${item.id} · pre-merge checks failed on PR #${s.pr} — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
+          L.event('check.sent_back', { item: item.id, check: 'pre-merge', pr: s.pr, round: s.ciFixes, detail: short(pre.text, 300) });
           if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', pre.text);
           fix = { kind: 'premerge', text: pre.text, pr: s.pr };
           Object.assign(s, { pendingFix: fix, phase: 'build' });
@@ -442,6 +455,7 @@ export async function runItem(L, item) {
         s.ciFixes++;
         for (const j of ci.jobs || []) countFailure(L, `ci:${j}`, `PR #${s.pr}`, item);
         L.progress(`${item.id} · CI on PR #${s.pr}: ${ci.kind}${ci.jobs ? ` (${ci.jobs.join(', ')})` : ''} — fix ${s.ciFixes}/${L.cfg.maxCiFixes}`);
+        L.event('check.sent_back', { item: item.id, check: 'ci', pr: s.pr, round: s.ciFixes, detail: ci.kind, jobs: ci.jobs || [] });
         if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `CI still not green on PR #${s.pr} after ${L.cfg.maxCiFixes} fix rounds`);
         fixes.push({ ...ci, pr: s.pr });
       }
@@ -494,6 +508,7 @@ export async function runItem(L, item) {
       const m = forge(L).mergePr(L, s);
       if (!m.ok) {
         L.progress(`${item.id} · merge of PR #${s.pr} refused: ${m.kind} ${m.text || ''}`);
+        L.event('check.sent_back', { item: item.id, check: 'merge', pr: s.pr, round: s.ciFixes + 1, detail: m.kind });
         if (m.kind === 'behind') {
           s.ciFixes++;
           if (s.ciFixes > L.cfg.maxCiFixes) return finish('needs_human', `could not merge PR #${s.pr}: ${L.cfg.base} kept moving`);
@@ -518,6 +533,7 @@ export async function runItem(L, item) {
       s.prs.push(s.pr);
       L.store.S.baseHead = m.sha; // the only way the base may move during a run
       L.progress(`${item.id} · merged PR #${s.pr} → ${L.cfg.base} ${String(m.sha).slice(0, 7)}`);
+      L.event('item.merged', { item: item.id, pr: s.pr, sha: m.sha });
       save();
     }
 
@@ -549,6 +565,7 @@ export async function runItem(L, item) {
         if (!dev.ok) {
           const fixId = addFixItem(L, item, s.mergeSha, dev);
           L.progress(`${item.id} · ${L.cfg.base} CI is RED after merging PR #${s.pr} — queued a fix item first in line`);
+          L.event('base.red', { item: item.id, sha: s.mergeSha, fix: fixId, background: false });
           if (waitOnRed) s.redBase = { fix: fixId };
         }
       }
@@ -578,11 +595,13 @@ export async function runItem(L, item) {
           if (step.holdOnUnverified === false) {
             L.ownerAction(item.id, res.ownerAction || res.why);
             L.progress(`${item.id} · post-merge ${step.adapter} not verified (not holding, holdOnUnverified is off): ${res.why}`);
+            L.event('postmerge.step', { item: item.id, adapter: step.adapter, ok: false, note: res.why });
             continue;
           }
           return hold('postmerge', `${step.adapter}: ${res.why}`, res.ownerAction);
         }
         L.progress(`${item.id} · post-merge ${step.adapter}: ${res.note || 'ok'}`);
+        L.event('postmerge.step', { item: item.id, adapter: step.adapter, ok: true, note: res.note || null });
       }
       s.phase = 'finish';
       save();
