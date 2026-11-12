@@ -15,7 +15,9 @@
 // ctx is the runner's L: { cfg, proc, paths, log, stopRequested }.
 //
 // Lessons behind the CI functions (docs/LESSONS.md, WHY.md):
-//   L-02  A run cancelled with no runner assigned was starved, not red: re-run it.
+//   L-02  A run cancelled with no runner assigned was starved, not red: re-run it. The same holds
+//         for any run that was cancelled without a failed job (a newer push in the same
+//         concurrency group, a person): it has no verdict, so it is asked for again.
 //   A CI that never finishes is not a pass.
 //   L-01  again at merge time: the branch must still contain the base.
 
@@ -76,8 +78,10 @@ export function runIdFrom(url) {
 export function diagnoseRun(ctx, runId, tag) {
   const jobs = ctx.proc.ghJson('api', `repos/${ctx.cfg.repo}/actions/runs/${runId}/jobs?per_page=100`)?.jobs || [];
   const failed = jobs.filter((j) => j.conclusion === 'failure' || j.conclusion === 'timed_out');
-  const starved = jobs.filter((j) => j.conclusion === 'cancelled' && !j.runner_name);
-  if (failed.length === 0 && starved.length > 0) return { kind: 'starved', runId };
+  // Cancelled and nothing failed: no check ran to a verdict, with or without a runner. Calling
+  // that red would send a fix session (or queue a FIX item) after a failure that never happened.
+  const cancelled = jobs.filter((j) => j.conclusion === 'cancelled');
+  if (failed.length === 0 && cancelled.length > 0) return { kind: 'starved', runId };
   const logs = ctx.proc.ghTry('run', 'view', String(runId), '--repo', ctx.cfg.repo, '--log-failed');
   const text = (logs.out || logs.err || '').split('\n').slice(-500).join('\n');
   const file = path.join(ctx.paths.logs, `ci-${tag}-${runId}.txt`);

@@ -532,3 +532,18 @@ test('the build task carries the profile\'s own words for proving a change', asy
   assert.match(other.file('.loop/current-task.md'), /`make check` must pass\. Item A1\./);
   assert.doesNotMatch(other.file('.loop/current-task.md'), /pnpm check/);
 });
+
+test('base CI in the background: a run a later merge cancelled is re-run, and no FIX item is queued', async () => {
+  const sb = box({ config: { baseCiWait: 'unless-tree-equal', milestonePackets: false }, backlog: { milestones: ['M1'], items: [{ id: 'A1', milestone: 'M1', title: 'a' }, { id: 'A2', milestone: 'M1', title: 'b' }] } });
+  sb.setGhState((s) => (s.baseCiQueue = ['cancelled']));
+  sb.queue(smokeStep(), happyItem('A1'), happyItem('A2'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const st = sb.state();
+  assert.equal(st.items.A1.status, 'done');
+  assert.equal(st.items.A2.status, 'done');
+  assert.deepEqual(st.extra.filter((e) => e.kind === 'fix'), [], 'nothing failed, so there is nothing to fix');
+  assert.deepEqual(st.pendingBaseCi, []);
+  assert.deepEqual(sb.calls().map((c) => c.item), ['preflight', 'A1', 'A1', 'A2', 'A2']);
+  assert.ok(sb.ghState().calls.some((c) => c.startsWith('run rerun')));
+});

@@ -246,6 +246,31 @@ describe('ac-trace', () => {
     expect(ok.code).toBe(0);
   });
 
+  it('AC-0.1 with --results, an AC in the title of a group counts for the tests that passed inside it', () => {
+    // `node --test` writes one <testsuite> per describe and leaves the group title off the cases
+    const xml = [
+      '<?xml version="1.0"?><testsuites>',
+      '<testsuite name="AC-7.1 outer group"><testsuite name="inner &amp; AC-7.2">',
+      '<testcase name="works" classname="test"/>',
+      '</testsuite><testcase name="also works" classname="test"/></testsuite>',
+      '<testsuite name="AC-7.3 skipped group"><testcase name="never ran" classname="test"><skipped/></testcase></testsuite>',
+      '<testsuite name="AC-7.4 empty group"/>',
+      '<testcase name="outside every group" classname="test"/>',
+      '</testsuites>',
+    ].join('');
+    const root = tree({
+      'docs/REQUIREMENTS.md': [1, 2, 3, 4].map((n) => `- AC-7.${n} x`).join('\n'),
+      'tests/unit/a.test.ts': [1, 2, 3, 4].map((n) => spec('describe', `AC-7.${n} group`)).join(''),
+      'artifacts/junit/unit.xml': xml,
+    });
+    const { code, out } = run(root, '--no-contracts', '--results', 'artifacts/junit');
+    expect(out).not.toMatch(/AC-7\.[12] has no/);
+    expect(out).toContain('AC-7.3 has no passing test');
+    expect(out).toContain('AC-7.4 has no passing test');
+    expect(out).toContain('FAIL — 2 gap(s) across 4 AC(s)');
+    expect(code).toBe(1);
+  });
+
   it('AC-0.1 with --results, no report is a failure, not a pass', () => {
     const root = tree({
       'docs/REQUIREMENTS.md': '- AC-6.1 x',

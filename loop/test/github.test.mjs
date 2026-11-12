@@ -313,3 +313,17 @@ test('adapters are picked by name, and an unknown name is a preflight problem', 
   assert.equal(p.length, 4);
   assert.match(p.join('|'), /deploy adapter "vercel-preview" is unknown \(known: http-health, none\)/);
 });
+
+test('a base run cancelled with a runner and no failed job has no verdict: it is re-run, not called red', async () => {
+  const { checkCommitCi } = await import('../adapters/forge-github.mjs');
+  const { sb, ctx } = setup();
+  const sha = sb.originGit('rev-parse', 'develop');
+  // a newer push in the same concurrency group cancelled this run while it was running
+  sb.setGhState((s) => (s.baseCiQueue = ['cancelled']));
+  assert.equal(checkCommitCi(ctx, sha).state, 'starved');
+  assert.deepEqual(await waitForCommitCi(ctx, sha), { ok: true }, 'the re-run gave the verdict');
+  assert.ok(sb.ghState().calls.some((c) => c.startsWith('run rerun')));
+  // a run with a failed job stays red, whatever else was cancelled around it
+  sb.setGhState((s) => (s.ci[sha] = 'failure'));
+  assert.equal(checkCommitCi(ctx, sha).state, 'red');
+});

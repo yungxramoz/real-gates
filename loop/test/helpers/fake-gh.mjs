@@ -2,7 +2,7 @@
 // A fake `gh` for the runner suite. State lives in $LOOP_FAKE_DIR/gh-state.json; merges are real
 // squash merges into the sandbox's bare origin, so the landed check runs against real git.
 //
-// State: { repo, origin, base, nextPr, prs: {n: {...}}, ci: {sha: conclusion|'pending'|'starved'},
+// State: { repo, origin, base, nextPr, prs: {n: {...}}, ci: {sha: conclusion|'pending'|'starved'|'cancelled'},
 //          ciQueue: [...], baseCiQueue: [...], dirty: [prNumbers], tamperMerge: bool, calls: [] }
 // A PR head the fake has not seen takes its CI result from ciQueue (default "success"); a base
 // commit takes it from baseCiQueue (default "success"). "pending" never completes.
@@ -66,7 +66,7 @@ try {
     pr.headRefOid = head;
     const { conclusion, runId } = ciFor(head, 'ciQueue');
     const done = conclusion !== 'pending';
-    const mapped = { success: 'SUCCESS', failure: 'FAILURE', starved: 'CANCELLED' }[conclusion] || 'FAILURE';
+    const mapped = { success: 'SUCCESS', failure: 'FAILURE', starved: 'CANCELLED', cancelled: 'CANCELLED' }[conclusion] || 'FAILURE';
     const rollup = [{ __typename: 'CheckRun', name: S.ciCheck || 'ci', status: done ? 'COMPLETED' : 'IN_PROGRESS', conclusion: done ? mapped : null, detailsUrl: url(runId) }];
     save(S);
     out({ ...pr, mergeStateStatus: (S.dirty || []).includes(pr.number) ? 'DIRTY' : 'CLEAN', statusCheckRollup: rollup, url: `https://github.com/${S.repo}/pull/${pr.number}` });

@@ -120,22 +120,34 @@ const unescapeXml = (text) =>
 
 /**
  * AC IDs by outcome in one JUnit report. A test case passed when it has no `<failure>`, `<error>`
- * or `<skipped>` child. Its name and its class name both count: runners put the group titles in
- * either.
+ * or `<skipped>` child. Runners put the titles of the groups around a test in different places:
+ * in the test case's own name (Vitest, Playwright), in its class name, or on the enclosing
+ * `<testsuite>` elements (`node --test` writes one per `describe`). All of them count, the same
+ * way a `describe(…)` title counts in the source scan.
  */
 function acsInJunit(xml) {
   const passed = new Set();
   const other = new Set();
+  const suites = []; // names of the open <testsuite> elements, outermost first
   let cases = 0;
-  for (const match of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
-    cases += 1;
-    const attrs = match[1];
-    const names = [...attrs.matchAll(/\b(?:name|classname)="([^"]*)"/g)].map((m) =>
-      unescapeXml(m[1]),
-    );
-    const ok = !/<(?:failure|error|skipped)\b/.test(match[2] ?? '');
-    for (const name of names) {
-      for (const id of name.matchAll(AC_ANYWHERE)) (ok ? passed : other).add(id[0]);
+  const attr = (attrs, key) => {
+    const m = new RegExp(`\\b${key}="([^"]*)"`).exec(attrs);
+    return m ? unescapeXml(m[1]) : '';
+  };
+  const TAGS =
+    /<testsuite\b([^>]*?)(\/?)>|<\/testsuite>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
+  for (const match of xml.matchAll(TAGS)) {
+    if (match[0].startsWith('</testsuite')) {
+      suites.pop();
+    } else if (match[0].startsWith('<testsuite')) {
+      if (!match[2]) suites.push(attr(match[1], 'name')); // a self-closing suite holds no cases
+    } else {
+      cases += 1;
+      const names = [attr(match[3], 'name'), attr(match[3], 'classname'), ...suites];
+      const ok = !/<(?:failure|error|skipped)\b/.test(match[4] ?? '');
+      for (const name of names) {
+        for (const id of name.matchAll(AC_ANYWHERE)) (ok ? passed : other).add(id[0]);
+      }
     }
   }
   return { passed, other, cases };

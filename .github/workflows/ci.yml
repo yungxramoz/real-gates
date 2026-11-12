@@ -19,8 +19,11 @@ on:
   push:
     branches: [develop, main]
 
+# A newer push to a pull request replaces the run of the older one. A push to the base or the
+# production branch never does: every merge commit keeps its own run, because the loop reads the
+# verdict of each one, also when the next merge lands before the run has finished.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 permissions:
