@@ -58,9 +58,16 @@ export function countGuardBlocks(L, item, offset) {
   } catch {
     return;
   }
+  // A LEARN item studies a failure, often the guard itself, and trips it while doing so: its
+  // blocks are not counted. In any other session a rule counts once, however often it fired: the
+  // session was told no and went another way, which is the guard working.
+  if (item.kind === 'learn') return;
+  const seen = new Set();
   for (const line of text.split('\n')) {
     const f = line.split('\t');
-    if (f.length >= 5 && f[1] === item.id) countFailure(L, `guard:${f[3]}`, f[4], item);
+    if (f.length < 5 || f[1] !== item.id || seen.has(f[3])) continue;
+    seen.add(f[3]);
+    countFailure(L, `guard:${f[3]}`, f[4], item);
   }
 }
 const guardOffset = (L) => {

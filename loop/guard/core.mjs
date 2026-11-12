@@ -94,13 +94,112 @@ function decideShell(cmd, ctx) {
     if (/(^|[^0-9&>])>{1,2}\s*(?!&|\/dev\/null|\$null|NUL\b|\/tmp\/|\$TMPDIR|\$env:TEMP|%TEMP%|\.loop\/|\S*[\\/]\.loop[\\/])\S/i.test(c) || /\b(sed\s+-i|perl\s+-p?i|Set-Content|Add-Content|Out-File)\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: redirect output only into .loop/.`);
   }
   // Shell writes into protected files. The pre-merge check is the hard stop; this catches the obvious ones early.
-  const protectedHit = protectedPathMentioned(c, ctx);
-  if (protectedHit && /(>|\btee\b|\bsed\s+-i|\bperl\s+-p?i|\bcp\b|\bmv\b|\brm\b|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bgit\s+(checkout|restore|apply|rm)\b)/i.test(c)) {
-    return no('core:protected-path', `${protectedHit} is part of the harness or the owner's; the loop cannot change it.`);
-  }
+  const protectedHit = shellWritesProtected(cmd, ctx);
+  if (protectedHit) return no('core:protected-path', `${protectedHit} is part of the harness or the owner's; the loop cannot change it. Reading it is fine; a runner change ships as a new file in loop/patches/.`);
   const hit = matchRules(ctx.projectRules || [], 'shell', c, ctx.phase);
   if (hit) return no(hit.id, hit.reason);
   return ok;
+}
+
+const WRITE_VERB = /(\btee\b|\bsed\s+-i|\bperl\s+-p?i|\bcp\b|\bmv\b|\brm\b|\btouch\b|\btruncate\b|\binstall\b|\bln\b|\bdd\b|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bgit\s+(checkout|restore|apply|rm|mv)\b)/i;
+/** Commands whose last argument is what they write; the ones before it are only read. */
+const COPY_VERB = /^(?:\S+=\S*\s+)*(cp|Copy-Item|install|ln)\b/i;
+const REDIRECT = /(?:&>>?|>>?|>\|)\s*([^\s<>|;&]+)/g;
+
+/**
+ * A here-document's body is data, not a command: a pull request text that says "loop/" and "rm"
+ * writes nothing. Bodies are dropped, except where a shell reads them (bash <<EOF) and where the
+ * line that opens one has a quote before the `<<`, which may be text rather than a here-document.
+ */
+export function dropHereDocBodies(cmd) {
+  const out = [];
+  let end = null;
+  let body = [];
+  let quoted = false;
+  // With an unquoted delimiter the shell still runs $(…) and `…` inside the body: such a body stays.
+  const close = () => {
+    if (!quoted && /\$\(|`/.test(body.join('\n'))) out.push(...body);
+    body = [];
+  };
+  for (const line of String(cmd).split(/\r?\n/)) {
+    if (end !== null) {
+      if (line.trim() === end) {
+        end = null;
+        close();
+      } else body.push(line);
+      continue;
+    }
+    out.push(line);
+    const m = line.match(/^([^"'`]*?)<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\2/);
+    if (m && !/\b(?:ba|z|da|k)?sh\b|\b(?:eval|source|pwsh|powershell)\b/i.test(line)) {
+      end = m[3];
+      quoted = !!m[2];
+    }
+  }
+  if (end !== null) out.push(...body); // never closed: not a here-document we understand
+  return out.join('\n');
+}
+
+/**
+ * Does a shell line write into a protected path? Returns the path, or null. A line that only
+ * names such a path (cat, grep, running the runner's tests with 2>&1) reads it and passes. Looked
+ * at per simple command:
+ *  - a redirect whose target is protected; a target with a variable cannot be read here, so it
+ *    counts when the line names a protected path anywhere;
+ *  - a write verb with a protected path in the same simple command (for cp and its kind only the
+ *    last argument, the one written);
+ *  - after a cd into a protected folder relative paths cannot be read here, so any redirect to a
+ *    file or write verb on the line counts.
+ * An early warning: the runner's own checks after every session are the hard stop.
+ */
+export function shellWritesProtected(cmd, ctx) {
+  // A line break ends a command as a `;` does. normalizeShell folds all white space, so the breaks
+  // are made visible first (a backslash at the end of a line continues it).
+  const c = normalizeShell(
+    dropHereDocBodies(cmd)
+      .replace(/\\\r?\n/g, ' ')
+      .replace(/\r?\n/g, ' ; '),
+  );
+  // A folder counts when what is inside it is protected: `loop` as much as `loop/run.mjs`.
+  const protectedWord = (w) => {
+    const rel = w ? ctx.rel(w.replace(/[(){}]/g, '')) : null;
+    if (!rel) return null;
+    if (isProtected(rel, ctx)) return rel;
+    // inside a protected folder but let through by name (a new patch, .env.example): not a folder
+    if (matchesAny(rel, ctx.cfg.guard?.protectedPaths || []) || /^\.loop(\/|$)/.test(rel)) return null;
+    return isProtected(`${rel.replace(/\/$/, '')}/x`, ctx) ? rel : null;
+  };
+  const mentioned = c.split(/[\s"'`;|&()<>=]+/).map(protectedWord).find(Boolean) || null;
+  if (!mentioned) return null;
+  const scratch = (t) => /^(\/dev\/null|\$null|NUL)$/i.test(t);
+  const targets = (s) => [...s.matchAll(REDIRECT)].map((m) => m[1]).filter((t) => !/^\(/.test(t) && !scratch(t));
+  const segments = c
+    .split(/&&|\|\||;|(?<!>)\|(?!&)|(?<![>&|])&(?![>&])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const seg of segments) {
+    const cd = seg.match(/^(?:cd|pushd|Set-Location|sl)\s+(\S+)/i);
+    const into = cd && protectedWord(cd[1]);
+    if (into && (targets(c).length || WRITE_VERB.test(c))) return into;
+  }
+  for (const seg of segments) {
+    for (const target of targets(seg)) {
+      if (/[$`]/.test(target)) return mentioned;
+      const hit = protectedWord(target);
+      if (hit) return hit;
+    }
+    if (!WRITE_VERB.test(seg)) continue;
+    const words = seg
+      .replace(/(?:&>>?|[0-9]*>>?|>\|)\s*[^\s<>|;&]+/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+    const copies = COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
+    for (const w of copies ? words.slice(-1) : words) {
+      const hit = protectedWord(w);
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 function protectedPathMentioned(c, ctx) {

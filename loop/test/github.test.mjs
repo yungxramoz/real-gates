@@ -121,7 +121,7 @@ test('pre-merge rejects harness edits, runtime files and a lowered coverage ratc
 
 test('pre-merge allows a new runner patch and a new rule row', async () => {
   const { sb, ctx } = setup();
-  openPr(sb, 'feat/a', { 'loop/patches/LEARN-1.patch': 'diff\n', 'loop/rules/project-rules.json': '{"rules":[]}\n', 'src/x.ts': 'x\n' });
+  openPr(sb, 'feat/a', { 'loop/patches/TEST-new-runner-patch.patch': 'diff\n', 'loop/rules/project-rules.json': '{"rules":[]}\n', 'src/x.ts': 'x\n' });
   assert.deepEqual(preMergeChecks(ctx, { branch: 'feat/a' }), { ok: true });
 });
 

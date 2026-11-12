@@ -266,3 +266,59 @@ describe('guard packs', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('a shell line that only names a harness path reads it', () => {
+  // Every line here was refused in a real run, and each refusal counted towards a LEARN item.
+  const reads = [
+    'grep -nE "run:|name:" .github/workflows/*.yml | head -40; npm run check >/tmp/check.log 2>&1; echo "check=$?"',
+    'node --test loop/test/guard-core.test.mjs 2>&1 | tail -12',
+    'cat loop/prompts/learn.md && ls loop/patches 2>/dev/null',
+    'git apply --check .loop/tmp/x.patch; grep -n "patch" loop/README.md > .loop/tmp/hits.txt',
+    'cp loop/guard/core.mjs .loop/tmp/core-copy.mjs',
+    'git log --format="%H %ae>" -3 -- loop/run.mjs',
+    'mkdir -p loop/patches && git diff > loop/patches/LEARN-9-new.patch',
+    "mkdir -p .loop/tmp && cat <<'EOF' > .loop/tmp/body.md\n## What\nThe guard read `loop/` and refused; rm nothing, mv nothing.\n- `.github/workflows/ci.yml` -> unchanged\nEOF\necho done",
+    'cat docs/LESSONS.md | grep -c "loop/" > .loop/tmp/n.txt',
+  ];
+  for (const line of reads) test(`allows: ${line.split('\n')[0].slice(0, 80)}`, () => allowed(sh(line)));
+
+  const writes = [
+    'echo x > loop/run.mjs',
+    'echo x >> .github/workflows/ci.yml',
+    'echo x >loop/run.mjs',
+    'echo x 1> loop/run.mjs',
+    'node build.mjs &> loop/run.mjs',
+    'echo x >| loop/run.mjs',
+    'echo x > "loop/run.mjs"',
+    'cat a.txt | tee loop/run.mjs',
+    'cp a.txt loop/run.mjs',
+    'cp -t loop/lib a.mjs',
+    'mv loop/run.mjs loop/run.old',
+    'rm loop/guard/core.mjs',
+    'touch .claude/settings.json',
+    'sed -i s/a/b/ loop/run.mjs',
+    'git checkout -- loop/run.mjs',
+    'rm -rf loop',
+    'pwd\ncd loop/lib; echo x > engine.mjs',
+    'cp /tmp/replacement loop/run.mjs\necho done',
+    'cat <<EOF > /tmp/body\n$(rm loop/run.mjs)\nEOF',
+    'cat <<EOF > /tmp/body\n`rm loop/run.mjs`\nEOF',
+    "cat <<'EOF' > /tmp/body\ntext\nNOT-THE-END\nrm loop/run.mjs",
+    'cp a.txt \\\n  loop/run.mjs',
+    'echo x > .claude/skills/a/SKILL.md',
+    'cd loop && echo x > run.mjs',
+    'cd loop; sed -i s/a/b/ run.mjs',
+    'D=loop; echo x > "$D/run.mjs"',
+    'ls docs; echo ok && echo x > loop/run.mjs',
+    "cat <<'EOF' > loop/run.mjs\nexport {}\nEOF",
+    "bash <<'EOF'\necho x > loop/run.mjs\nEOF",
+    "echo 'a << EOF'\nrm loop/run.mjs\necho EOF",
+    "cat <<'EOF' > .loop/tmp/a.txt\ntext\nEOF\nrm loop/run.mjs",
+  ];
+  for (const line of writes) test(`blocks: ${line.replace(/\n/g, ' ⏎ ').slice(0, 80)}`, () => blocked(sh(line), 'core:protected-path'));
+
+  test('a patch that is already on the base branch is not rewritten by a redirect', () => {
+    blocked(sh('git diff > loop/patches/LEARN-1.patch', { onBase: ['loop/patches/LEARN-1.patch'] }), 'core:protected-path');
+    blocked(sh('git apply loop/patches/LEARN-1.patch', { onBase: ['loop/patches/LEARN-1.patch'] }), 'core:protected-path');
+  });
+});

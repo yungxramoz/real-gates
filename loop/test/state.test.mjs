@@ -86,6 +86,10 @@ test('third repeat does not queue a second LEARN, a further pair does', () => {
   const hit = () => recordFailure(S, { signature: 'guard:core:add-all', detail: 'git add -A', item: { id: 'A' } });
   hit();
   assert.ok(hit());
+  // while LEARN-1 is open, more of the same queues nothing, however many
+  for (let i = 0; i < 6; i++) assert.equal(hit(), null);
+  // once it has ended, a first repeat is not yet a pattern; the second is
+  S.items = { 'LEARN-1': { status: 'done' } };
   assert.equal(hit(), null);
   const again = hit();
   assert.equal(again.id, 'LEARN-2');
@@ -97,7 +101,9 @@ test('at most three LEARN items per signature', () => {
   const ids = [];
   for (let i = 0; i < 12; i++) {
     const l = recordFailure(S, { signature: 'ci:lint', item: { id: 'A' } });
-    if (l) ids.push(l.id);
+    if (!l) continue;
+    ids.push(l.id);
+    (S.items ||= {})[l.id] = { status: 'needs_human' }; // each one ends without stopping it
   }
   assert.deepEqual(ids, ['LEARN-1', 'LEARN-2', 'LEARN-3']);
 });
