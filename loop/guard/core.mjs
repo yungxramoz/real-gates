@@ -109,14 +109,20 @@ const REDIRECT = /(?:&>>?|>>?|>\|)\s*([^\s<>|;&]+)/g;
 /**
  * A here-document's body is data, not a command: a pull request text that says "loop/" and "rm"
  * writes nothing. Bodies are dropped, except where a shell reads them (bash <<EOF) and where the
- * line that opens one has a quote before the `<<`, which may be text rather than a here-document.
+ * shell still runs something inside (an unquoted delimiter with $(…) or backticks in the body).
+ *
+ * Whether a `<<` opens one is read the way the shell reads the whole command, with the quotes that
+ * are open carried from line to line: inside quotes or a comment it is text, `<<<` is a
+ * here-string. Inside "$( … )" the shell starts over, so `--body "$(cat <<'EOF'` opens one. From
+ * the first thing this does not follow (backticks, `((`), nothing more is taken for a
+ * here-document, and every line after it is read as a command.
  */
 export function dropHereDocBodies(cmd) {
   const out = [];
+  const state = { stack: [null], lost: false }; // the quote open at each level of $( … )
   let end = null;
   let body = [];
   let quoted = false;
-  // With an unquoted delimiter the shell still runs $(…) and `…` inside the body: such a body stays.
   const close = () => {
     if (!quoted && /\$\(|`/.test(body.join('\n'))) out.push(...body);
     body = [];
@@ -130,7 +136,7 @@ export function dropHereDocBodies(cmd) {
       continue;
     }
     out.push(line);
-    const open = hereDocOpening(line);
+    const open = hereDocOpening(line, state);
     if (open && !/\b(?:ba|z|da|k)?sh\b|\b(?:eval|source|pwsh|powershell)\b/i.test(line)) {
       end = open.word;
       quoted = open.quoted;
@@ -140,28 +146,37 @@ export function dropHereDocBodies(cmd) {
   return out.join('\n');
 }
 
-/**
- * The here-document a line opens, read the way the shell reads the line: a `<<` inside quotes or
- * in a comment is text, `<<<` is a here-string, and inside `((` it is a shift. Inside "$( … )" the
- * shell starts over, so `--body "$(cat <<'EOF'` opens one. Where this cannot tell (backticks), it
- * says no, and the lines that follow are read as commands.
- */
-function hereDocOpening(line) {
-  if (line.includes('((')) return null;
-  const stack = [null]; // the quote that is open at each level of $( … )
+/** The first here-document `line` opens, or null. `state` is carried from line to line. */
+function hereDocOpening(line, state) {
+  const { stack } = state;
   const top = () => stack[stack.length - 1];
   const set = (q) => (stack[stack.length - 1] = q);
-  for (let i = 0; i < line.length; i++) {
+  let found = null;
+  for (let i = 0; i < line.length && !state.lost; i++) {
     const ch = line[i];
+    const next = line[i + 1];
     if (top() === "'") {
       if (ch === "'") set(null);
+      continue;
+    }
+    if (top() === "$'") {
+      if (ch === '\\') i++;
+      else if (ch === "'") set(null);
       continue;
     }
     if (ch === '\\') {
       i++;
       continue;
     }
-    if (ch === '$' && line[i + 1] === '(') {
+    if (ch === '`' || (ch === '(' && next === '(')) {
+      state.lost = true;
+      break;
+    }
+    if (ch === '$' && next === '(') {
+      if (line[i + 2] === '(') {
+        state.lost = true;
+        break;
+      }
       stack.push(null);
       i++;
       continue;
@@ -171,20 +186,24 @@ function hereDocOpening(line) {
       continue;
     }
     if (ch === ')' && stack.length > 1) stack.pop();
-    else if (ch === '"' || ch === "'") set(ch);
-    else if (ch === '`') return null;
-    else if (ch === '#' && (i === 0 || /[\s;&|(]/.test(line[i - 1]))) return null;
-    else if (ch === '<' && line[i + 1] === '<') {
+    else if (ch === '$' && next === "'") {
+      set("$'");
+      i++;
+    } else if (ch === '"' || ch === "'") set(ch);
+    else if (ch === '#' && (i === 0 || /[\s;&|(]/.test(line[i - 1]))) break; // a comment, to the end of the line
+    else if (ch === '<' && next === '<') {
       if (line[i + 2] === '<') {
         i += 2;
         continue;
       }
       const m = line.slice(i).match(/^<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1/);
-      if (m) return { word: m[2], quoted: !!m[1] };
-      i++;
+      if (m) {
+        found ||= { word: m[2], quoted: !!m[1] };
+        i += m[0].length - 1;
+      } else i++;
     }
   }
-  return null;
+  return state.lost ? null : found;
 }
 
 /**
@@ -219,23 +238,25 @@ export function splitCommands(cmd) {
       continue;
     }
     // A substitution runs commands of its own inside one argument: `cp "$(rm x; echo a)" b`.
-    if (quote !== "'" && (ch === '`' || (/[$<>]/.test(ch) && s[i + 1] === '('))) unsure = true;
+    const literal = quote === "'" || quote === "$'";
+    if (!literal && (ch === '`' || (/[$<>]/.test(ch) && s[i + 1] === '('))) unsure = true;
     if (quote) {
       text += ch;
-      if (ch === '\\' && quote === '"' && i + 1 < s.length) text += s[++i];
-      else if (ch === quote) quote = null;
+      // a backslash keeps the next character in "…" and in $'…', not in '…'
+      if (ch === '\\' && quote !== "'" && i + 1 < s.length) text += s[++i];
+      else if (ch === (quote === "$'" ? "'" : quote)) quote = null;
       continue;
     }
     if (ch === '\\' && i + 1 < s.length) {
       text += ch + s[++i];
       continue;
     }
+    const prev = s[i - 1];
     if (ch === "'" || ch === '"') {
-      quote = ch;
+      quote = ch === "'" && prev === '$' ? "$'" : ch;
       text += ch;
       continue;
     }
-    const prev = s[i - 1];
     if (ch === '#' && (i === 0 || /[\s;&|(]/.test(prev))) {
       comment = true;
       unsure = true;
