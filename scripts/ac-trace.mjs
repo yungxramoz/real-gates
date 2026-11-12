@@ -2,7 +2,7 @@
 /**
  * ac-trace — every acceptance criterion has a contract and a test that names it.
  *
- *   node scripts/ac-trace.mjs [--all] [--no-contracts] [--root <dir>]
+ *   node scripts/ac-trace.mjs [--all] [--no-contracts] [--results <dir>] [--root <dir>]
  *
  * 1. Reads the AC IDs from `docs/REQUIREMENTS.md`: `AC-<digits>.<digits>` at the start of a list
  *    item or a heading (`- AC-1.2 …`, `1. **AC-1.2** …`, `### AC-1.2 …`). An ID elsewhere in the
@@ -17,6 +17,11 @@
  *    before the first item is built, so a gate that demanded every test on day one could only be
  *    passed with placeholder tests.
  *
+ * 5. With `--results <dir>` (CI), a title is not enough: every built AC must also be named by a
+ *    test case that **ran and passed** in the JUnit reports under that folder (`*.xml`, any
+ *    runner that writes JUnit). That also catches what a title scan cannot see: a test inside a
+ *    skipped group, a conditional skip, a file the runner never collected. No report is a failure.
+ *
  * `--all` is the release check: every AC must be in a contract and in a live test title.
  * `--no-contracts` is `--all` without the contract half (every AC needs a live test).
  *
@@ -29,7 +34,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
-const USAGE = 'usage: node scripts/ac-trace.mjs [--all] [--no-contracts] [--root <dir>]';
+const USAGE =
+  'usage: node scripts/ac-trace.mjs [--all] [--no-contracts] [--results <dir>] [--root <dir>]';
 
 const AC_DEFINITION =
   /^\s*(?:#{1,6}\s+|(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)(?:\*\*|__|`)?(AC-\d+\.\d+)(?!\.?\d)/;
@@ -44,12 +50,13 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'coverage', 'artifac
 const CONTRACT_DIRS = ['.loop/contracts', 'docs/contracts'];
 
 function parseArgs(argv) {
-  const options = { contracts: true, all: false, root: process.cwd() };
+  const options = { contracts: true, all: false, results: null, root: process.cwd() };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--no-contracts') options.contracts = false;
     else if (arg === '--all') options.all = true;
     else if (arg === '--root' && argv[i + 1] !== undefined) options.root = resolve(argv[++i]);
+    else if (arg === '--results' && argv[i + 1] !== undefined) options.results = argv[++i];
     else throw new UsageError(`unknown argument: ${arg}`);
   }
   return options;
@@ -101,6 +108,54 @@ function* walk(dir) {
   }
 }
 
+const XML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const unescapeXml = (text) =>
+  text.replace(/&(?:#(\d+)|#x([0-9a-fA-F]+)|(\w+));/g, (whole, dec, hex, name) =>
+    dec
+      ? String.fromCodePoint(Number(dec))
+      : hex
+        ? String.fromCodePoint(parseInt(hex, 16))
+        : (XML_ENTITIES[name] ?? whole),
+  );
+
+/**
+ * AC IDs by outcome in one JUnit report. A test case passed when it has no `<failure>`, `<error>`
+ * or `<skipped>` child. Its name and its class name both count: runners put the group titles in
+ * either.
+ */
+function acsInJunit(xml) {
+  const passed = new Set();
+  const other = new Set();
+  let cases = 0;
+  for (const match of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+    cases += 1;
+    const attrs = match[1];
+    const names = [...attrs.matchAll(/\b(?:name|classname)="([^"]*)"/g)].map((m) =>
+      unescapeXml(m[1]),
+    );
+    const ok = !/<(?:failure|error|skipped)\b/.test(match[2] ?? '');
+    for (const name of names) {
+      for (const id of name.matchAll(AC_ANYWHERE)) (ok ? passed : other).add(id[0]);
+    }
+  }
+  return { passed, other, cases };
+}
+
+/** Every JUnit report under `dir`: the ACs that passed, and how many reports and cases were read. */
+function readResults(dir) {
+  const passed = new Set();
+  let files = 0;
+  let cases = 0;
+  for (const file of walk(dir)) {
+    if (!file.endsWith('.xml')) continue;
+    const found = acsInJunit(readFileSync(file, 'utf8'));
+    files += 1;
+    cases += found.cases;
+    for (const id of found.passed) passed.add(id);
+  }
+  return { passed, files, cases };
+}
+
 function contractFiles(root) {
   const files = [];
   for (const dir of CONTRACT_DIRS) {
@@ -113,7 +168,7 @@ function contractFiles(root) {
   return files;
 }
 
-function trace({ root, contracts, all }) {
+function trace({ root, contracts, all, results }) {
   const requirementsPath = join(root, 'docs', 'REQUIREMENTS.md');
   if (!existsSync(requirementsPath)) {
     return { error: `docs/REQUIREMENTS.md not found under ${root}` };
@@ -138,7 +193,15 @@ function trace({ root, contracts, all }) {
   // Without --all (and with contracts in play), only the ACs a contract names are due.
   const strict = all || !contracts;
   const due = strict ? acs : acs.filter((id) => contracted.has(id));
+  const ran = results ? readResults(resolve(root, results)) : null;
+  if (ran && ran.cases === 0) {
+    return {
+      error: `no test case found in the JUnit reports under ${results} (${ran.files} file(s)): the tests must run before this check`,
+    };
+  }
   return {
+    ran,
+    notPassed: ran ? due.filter((id) => tested.has(id) && !ran.passed.has(id)) : [],
     acs,
     due,
     strict,
@@ -185,14 +248,21 @@ function main() {
         : `ac-trace: ${id} has no test (no test title names it)`,
     );
   }
+  for (const id of result.notPassed) {
+    console.error(
+      `ac-trace: ${id} has no passing test (a test title names it, but no test case that ran and passed in the reports does)`,
+    );
+  }
   for (const id of result.noContract) {
     console.error(`ac-trace: ${id} has no contract (.loop/contracts or docs/contracts)`);
   }
 
-  const gaps = result.noTest.length + result.noContract.length;
-  const scope = options.contracts
-    ? `tests and ${result.contractCount} contract file(s)`
-    : 'tests (contracts skipped)';
+  const gaps = result.noTest.length + result.noContract.length + result.notPassed.length;
+  const scope =
+    (options.contracts
+      ? `tests and ${result.contractCount} contract file(s)`
+      : 'tests (contracts skipped)') +
+    (result.ran ? `, ${result.ran.cases} test case(s) in ${result.ran.files} report(s)` : '');
   if (result.pending.length) {
     console.log(
       `ac-trace: ${result.pending.length} AC(s) pending (no contract names them yet): ${result.pending.join(', ')}`,

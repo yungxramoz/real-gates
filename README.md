@@ -14,17 +14,21 @@ item, 60 times a gate said no. [WHY.md](WHY.md) tells the story behind each gate
 ```mermaid
 flowchart TD
   pick["Pick the next item<br/>(dependencies done, held item first)"] --> build["Build session with /goal<br/>contract, code, tests, PR"]
-  build --> ci{"CI green?"}
-  ci -- "red" --> fixci["Fix session with the failing log"] --> ci
+  build --> gate{"Local gate and pre-merge checks<br/>run by the script"}
+  gate -- "fail" --> fixgate["Fix session with the output"] --> gate
+  gate -- "pass" --> ci{"CI green?"}
+  gate -- "pass" --> review{"Independent review<br/>read-only, every score ≥ 7"}
+  ci -- "red" --> fixci["One fix session<br/>failing log and findings"] --> gate
   ci -- "cancelled, no runner" --> rerun["Re-run, never 'fix'"] --> ci
-  ci -- "green" --> review{"Independent review<br/>read-only, every score ≥ 7"}
-  review -- "changes" --> fixrv["Fix session with the findings"] --> ci
-  review -- "approve" --> merge["Script merges<br/>squash, match head commit"]
+  review -- "changes" --> fixci
+  ci -- "green" --> both{"Green and approved<br/>on the same commit?"}
+  review -- "approve" --> both
+  both -- "yes" --> merge["Script merges<br/>squash, match head commit"]
   merge --> landed{"Landed check<br/>merge = reviewed diff?"}
   landed -- "no" --> hold[["HELD: run stops"]]
-  landed -- "yes" --> baseci{"Base CI on the merge commit"}
+  landed -- "yes" --> baseci{"Base CI on the merge commit<br/>in the background when the tree is the one CI passed"}
   baseci -- "red" --> fixitem["FIX item, first in line"] --> pick
-  baseci -- "timeout twice" --> hold
+  baseci -- "no verdict twice" --> hold
   baseci -- "green" --> post{"Post-merge steps<br/>migrations applied and verified?"}
   post -- "no" --> hold
   post -- "yes" --> ms{"Milestone complete?"}
@@ -35,7 +39,7 @@ flowchart TD
 
   build -. "same guard block twice" .-> count[("Failure counter")]
   ci -. "same CI fix twice" .-> count
-  review -. "same finding twice" .-> count
+  review -. "same cause twice" .-> count
   accept -. "any failure" .-> count
   count -. "threshold" .-> learn["LEARN item, first in line<br/>lesson, test or stricter rule"] -.-> pick
 ```

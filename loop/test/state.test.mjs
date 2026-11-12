@@ -107,3 +107,34 @@ test('signatures from a verdict and the guard log', () => {
   const log = '2026-01-01T00:00:00Z\tA\tbuild\tcore:add-all\tadd explicit paths\n2026-01-01T00:00:01Z\tB\tbuild\tcore:merge\tonly the runner merges\n';
   assert.deepEqual(guardSignatures(log, 'A'), [{ signature: 'guard:core:add-all', detail: 'add explicit paths' }]);
 });
+
+test('a review finding counts by category and by category with its cause', async () => {
+  const { causeKey, knownCauses, reviewFailures } = await import('../lib/learn.mjs');
+  assert.equal(causeKey('  Untested Branch!! '), 'untested-branch');
+  assert.equal(causeKey(undefined), '');
+  const f = reviewFailures({ blocking: [{ category: 'tests', cause: 'Untested branch', issue: 'a' }, { category: 'tests', cause: 'untested-branch', issue: 'b' }, { category: 'bug', issue: 'c' }, { category: 'made-up', cause: 'x y', issue: 'd' }] });
+  assert.deepEqual(f.map((x) => [x.signature, x.level, x.issues.length]), [['review:tests', 'category', 2], ['review:tests:untested-branch', 'cause', 2], ['review:bug', 'category', 1], ['review:other', 'category', 1], ['review:other:x-y', 'cause', 1]]);
+  assert.deepEqual(knownCauses({ learn: { 'review:tests': { count: 9 }, 'review:tests:untested-branch': { count: 1 }, 'review:bug:off-by-one': { count: 3 }, 'guard:core:add-all': { count: 5 } } }), ['bug/off-by-one', 'tests/untested-branch']);
+});
+
+test('two findings that share only a category are not a pattern; four are', () => {
+  const S = {};
+  const hit = () => recordFailure(S, { signature: 'review:bug', item: { id: 'A' }, threshold: 4 });
+  assert.equal(hit(), null);
+  assert.equal(hit(), null);
+  assert.equal(hit(), null);
+  assert.equal(hit().id, 'LEARN-1');
+});
+
+test('an item whose post-merge steps wait for a fix item is not picked until that item is settled', () => {
+  const store = createState(path.join(os.tmpdir(), `rg-state-${process.pid}-wait.json`), { milestones: ['M1'], items: [{ id: 'A', milestone: 'M1', title: 'a' }, { id: 'B', milestone: 'M1', title: 'b' }] }, { dry: true });
+  store.S.extra.push({ kind: 'fix', id: 'FIX-1', milestone: 'M1', title: 'fix' });
+  Object.assign(store.st('A'), { status: 'in_progress', phase: 'postmerge', redBase: { fix: 'FIX-1' } });
+  assert.equal(store.pickNext().id, 'FIX-1');
+  // with the fix item filtered out, A is waiting, not eligible
+  const only = store.pickNext({ item: 'A' });
+  assert.equal(only.none, true);
+  assert.match(only.waiting[0], /A ← FIX-1:todo \(base is red\)/);
+  store.st('FIX-1').status = 'done';
+  assert.equal(store.pickNext().id, 'A');
+});

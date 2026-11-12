@@ -207,6 +207,55 @@ describe('ac-trace', () => {
     expect(empty.out).toContain('no AC IDs found');
   });
 
+  it('AC-0.1 with --results, a built AC needs a test case that ran and passed', () => {
+    const testcase = (name: string, body = '') =>
+      `<testcase classname="tests/unit/a.test.ts" name="${name}" time="0.01">${body}</testcase>`;
+    const report = (...cases: string[]) =>
+      `<?xml version="1.0"?><testsuites><testsuite name="a">${cases.join('')}</testsuite></testsuites>`;
+    const files = {
+      'docs/REQUIREMENTS.md': [1, 2, 3, 4].map((n) => `- AC-6.${n} x`).join('\n'),
+      'docs/contracts/ITEM-1.md': 'Covers AC-6.1, AC-6.2, AC-6.3 and AC-6.4.',
+      // every title is live in the source: only the reports show what really ran
+      'tests/unit/a.test.ts': [1, 2, 3, 4].map((n) => spec('it', `AC-6.${n} t`)).join(''),
+    };
+    const root = tree({
+      ...files,
+      'artifacts/junit/unit.xml': report(
+        testcase('group &gt; AC-6.1 t'),
+        testcase('AC-6.2 t', '<skipped/>'),
+        testcase('AC-6.3 t', '<failure message="boom">x</failure>'),
+      ),
+    });
+    const { code, out } = run(root, '--results', 'artifacts/junit');
+    expect(code).toBe(1);
+    for (const n of [2, 3, 4]) expect(out).toContain(`AC-6.${n} has no passing test`);
+    expect(out).not.toContain('AC-6.1 has no');
+    expect(out).toContain('FAIL — 3 gap(s) across 4 AC(s)');
+
+    const green = tree({
+      ...files,
+      'artifacts/junit/unit.xml': report(testcase('AC-6.1 t'), testcase('AC-6.2 t')),
+      'artifacts/junit/e2e.xml': report(
+        '<testcase name="journey" classname="AC-6.3 and AC-6.4 group"/>',
+      ),
+    });
+    const ok = run(green, '--results', 'artifacts/junit');
+    expect(ok.out).toContain(
+      '4 built AC(s) traced to tests and 1 contract file(s), 3 test case(s) in 2 report(s)',
+    );
+    expect(ok.code).toBe(0);
+  });
+
+  it('AC-0.1 with --results, no report is a failure, not a pass', () => {
+    const root = tree({
+      'docs/REQUIREMENTS.md': '- AC-6.1 x',
+      'tests/unit/a.test.ts': spec('it', 'AC-6.1 t'),
+    });
+    const { code, out } = run(root, '--results', 'artifacts/junit');
+    expect(code).toBe(1);
+    expect(out).toContain('no test case found in the JUnit reports under artifacts/junit');
+  });
+
   it('AC-0.1 refuses an unknown argument', () => {
     const { code, out } = run(tree({ 'docs/REQUIREMENTS.md': '- AC-1.1 x' }), '--bogus');
     expect(code).toBe(2);

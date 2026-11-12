@@ -18,7 +18,7 @@ export const DEFAULTS = Object.freeze({
   deploy: { adapter: 'vercel-preview', devUrl: '', health: '/api/health', bypassSecretEnv: 'VERCEL_BYPASS' },
   postMerge: [{ adapter: 'supabase-cli', dbUrlEnv: 'DEV_DB_URL', migrationsDir: 'supabase/migrations', holdOnUnverified: true }],
   guard: { allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '', requireBranchProtection: true },
-  review: { minDesignScore: 7, maxRounds: 2 },
+  review: { minDesignScore: 7, maxRounds: 2, parallelWithCi: true }, // parallelWithCi: the reviewer starts while CI runs
   budgets: { maxSessions: 150, maxHours: 120, maxUsdPerSession: 25, maxUsdPerRun: 0 }, // maxUsdPerRun 0 = no run cap
   // Environment variables no agent session may see, on top of every postMerge[].dbUrlEnv (always
   // removed) and deploy.bypassSecretEnv (kept only for the steps that open the deployed site).
@@ -39,6 +39,16 @@ export const DEFAULTS = Object.freeze({
   maxNoProgress: 3, // items in a row that end without merging anything → circuit breaker
   maxFollowups: 15,
   learnThreshold: 2, // the same failure this many times → a LEARN item that fixes the cause
+  learnCategoryThreshold: 4, // review findings that share only a category (different causes) need this many
+  // 'unless-tree-equal': when the landed check proved the merge commit has exactly the tree PR CI
+  // passed on, the next item starts while base CI runs; a red result still queues a FIX item first
+  // and a missing verdict still stops the run. 'always': every merge waits for base CI.
+  baseCiWait: 'unless-tree-equal',
+  // What the post-merge steps do when base CI is red after a merge. 'apply' (default): run them
+  // anyway. The host deploys the base branch whether CI is green or not, and merged code without
+  // its migration is the outage the hold gate exists for. 'wait': run them only once the FIX item
+  // is done, for steps that must never act on a red base (a release, a publish).
+  postMergeOnRedBase: 'apply',
   timeouts: { sessionMin: 150, reviewMin: 60, acceptMin: 120, packetMin: 60, ciMin: 45, smokeMin: 5 },
   pollMs: 30_000,
   usageLimit: { sleepMin: 30, maxWaitHours: 96 },
@@ -105,6 +115,8 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!(cfg.budgets?.maxUsdPerSession > 0)) p.push('budgets.maxUsdPerSession must be a positive number');
   if (!(cfg.budgets?.maxUsdPerRun >= 0)) p.push('budgets.maxUsdPerRun must be 0 (no cap) or a positive number');
   if (!Array.isArray(cfg.localGate?.commands) || cfg.localGate.commands.some((c) => typeof c !== 'string')) p.push('localGate.commands must be a list of shell commands (strings)');
+  if (!['always', 'unless-tree-equal'].includes(cfg.baseCiWait)) p.push('baseCiWait must be "always" or "unless-tree-equal"');
+  if (!['apply', 'wait'].includes(cfg.postMergeOnRedBase)) p.push('postMergeOnRedBase must be "apply" or "wait"');
   if (!Array.isArray(cfg.sessionEnvDeny)) p.push('sessionEnvDeny must be a list of environment variable names');
   return p;
 }

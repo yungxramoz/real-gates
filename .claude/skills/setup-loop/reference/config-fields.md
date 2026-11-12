@@ -124,6 +124,10 @@ user asks, and keep `budgets.maxUsdPerSession` set: it stops a single runaway se
 | `sessionEnvDeny` | extra environment variables no agent session may see | `[]` |
 | `guard.requireBranchProtection` | the preflight refuses to start when the base branch is unprotected | `true` |
 | `contractsDir` | where build sessions write `<item>.md` contracts | `docs/contracts` |
+| `review.parallelWithCi` | the reviewer starts while CI runs; the merge still needs both on one commit | `true` |
+| `baseCiWait` | `unless-tree-equal`: the next item starts while base CI runs on a commit whose tree PR CI already passed; `always`: wait after every merge | `unless-tree-equal` |
+| `postMergeOnRedBase` | `apply`: run post-merge steps even when base CI is red (the host deploys the code anyway); `wait`: only after the FIX item is done | `apply` |
+| `learnCategoryThreshold` | review findings that share a category but not a cause count as a pattern after this many | `4` |
 
 Set `guard.requireBranchProtection` to `false` only when the user's GitHub plan has no branch
 protection for this repository, and say what that costs: a stray push to the base is then only

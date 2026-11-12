@@ -17,7 +17,7 @@ const box = (o) => {
   boxes.push(sb);
   return sb;
 };
-const changes = (category = 'tests') => ({ structured: { verdict: 'changes', blocking: [{ file: 'src/a.ts', issue: 'no test for the new branch', fix: 'add one', category }], summary: 'needs tests' } });
+const changes = (category = 'tests') => ({ structured: { verdict: 'changes', blocking: [{ file: 'src/a.ts', issue: 'no test for the new branch', fix: 'add one', category, cause: 'Untested branch' }], summary: 'needs tests' } });
 const fixRound = (id) => ({ commit: { branch: '$OPEN', files: { [`src/${id}-fix-${Math.random().toString(36).slice(2, 6)}.txt`]: 'fix\n' }, message: 'fix' }, result: { item: id, outcome: 'ready', pr: '$PR', summary: 'fixed' } });
 const mergedFiles = (sb) => sb.originGit('ls-tree', '-r', '--name-only', 'develop').split('\n');
 
@@ -65,7 +65,7 @@ test('review changes three times → needs_human, and the repeated finding queue
   assert.equal(st.items.A1.status, 'needs_human');
   const learn = st.extra.filter((e) => e.kind === 'learn');
   assert.equal(learn.length, 1);
-  assert.equal(learn[0].signature, 'review:tests');
+  assert.equal(learn[0].signature, 'review:tests:untested-branch');
   assert.match(sb.file('.loop/PROGRESS.md'), /keeps recurring → LEARN-1 queued first in line/);
 });
 
@@ -403,4 +403,102 @@ test('agent sessions do not see the database URL; only the deployed-site steps s
   const sees = Object.fromEntries(sb.calls().map((c) => [c.phase, c.sees]));
   for (const phase of ['smoke', 'build', 'review']) assert.deepEqual(sees[phase], { DEV_DB_URL: false, VERCEL_BYPASS: false }, phase);
   assert.deepEqual(sees.packet, { DEV_DB_URL: false, VERCEL_BYPASS: true });
+});
+
+const untitledItem = (branch, file) => [
+  { commit: { branch, files: { [file]: 'x\n' }, message: 'fix' }, createPr: { title: 'fix' }, result: { outcome: 'ready', pr: '$PR', branch, summary: 'fixed' } },
+  { structured: { verdict: 'approve', blocking: [], summary: 'fine' } },
+];
+
+test('the reviewer starts while CI runs, and an approval on the green head merges', async () => {
+  const sb = box({ config: { review: { parallelWithCi: true } } });
+  sb.queue(smokeStep(), happyItem('A1'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.equal(sb.state().items.A1.status, 'done');
+  assert.match(r.stdout, /waiting for CI on PR #1, reviewing meanwhile/);
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'packet']);
+});
+
+test('red CI and review findings from the same head go into one fix round', async () => {
+  const sb = box({ config: { review: { parallelWithCi: true } } });
+  sb.setGhState((s) => (s.ciQueue = ['failure']));
+  const [build, approve] = happyItem('A1');
+  sb.queue(smokeStep(), build, changes(), fixRound('A1'), approve);
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const a = sb.state().items.A1;
+  assert.equal(a.status, 'done');
+  assert.equal(a.rounds, 2, 'one build and one fix round, not one fix round per gate');
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'build', 'review', 'packet']);
+  const progress = sb.file('.loop/PROGRESS.md');
+  assert.match(progress, /CI on PR #1: red \(unit tests\)/);
+  assert.match(progress, /review round 1 on PR #1: \*\*changes\*\*/);
+  assert.match(progress, /review round 2 on PR #1: \*\*approve\*\*/);
+});
+
+test('an approval while CI turns red does not merge: CI gets its fix round and the review runs again', async () => {
+  const sb = box({ config: { review: { parallelWithCi: true } } });
+  sb.setGhState((s) => (s.ciQueue = ['failure']));
+  const [build, approve] = happyItem('A1');
+  sb.queue(smokeStep(), build, approve, fixRound('A1'), approve);
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.equal(sb.state().items.A1.status, 'done');
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'build', 'review', 'packet']);
+});
+
+test('base CI checked in the background: a red result puts the FIX item before the next item', async () => {
+  const sb = box({ config: { baseCiWait: 'unless-tree-equal', milestonePackets: false }, backlog: { milestones: ['M1'], items: [{ id: 'A1', milestone: 'M1', title: 'a' }, { id: 'A2', milestone: 'M1', title: 'b' }] } });
+  sb.setGhState((s) => (s.baseCiQueue = ['failure']));
+  sb.queue(smokeStep(), happyItem('A1'), untitledItem('fix/base', 'src/fix.txt'), happyItem('A2'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const st = sb.state();
+  const fix = st.extra.find((e) => e.kind === 'fix');
+  assert.match(fix.id, /^FIX-[0-9a-f]{7}$/);
+  assert.deepEqual(sb.calls().map((c) => c.item), ['preflight', 'A1', 'A1', fix.id, fix.id, 'A2', 'A2']);
+  assert.equal(st.items.A1.status, 'done');
+  assert.equal(st.items[fix.id].status, 'done');
+  assert.equal(st.items.A2.status, 'done');
+  assert.deepEqual(st.pendingBaseCi, []);
+  const progress = sb.file('.loop/PROGRESS.md');
+  assert.match(progress, /has the tree CI passed on; develop CI is checked in the background/);
+  assert.match(progress, /develop CI is RED on [0-9a-f]{7} \(checked in the background\)/);
+});
+
+test('base CI checked in the background: no verdict is not a pass, the run stops', async () => {
+  const sb = box({ config: { baseCiWait: 'unless-tree-equal' } });
+  sb.setGhState((s) => {
+    s.baseCiQueue = ['pending'];
+    s.rerunQueue = ['pending'];
+  });
+  sb.queue(smokeStep(), happyItem('A1'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const st = sb.state();
+  assert.equal(st.pendingBaseCi.length, 1, 'the commit stays pending and is checked first on the next run');
+  assert.deepEqual(st.packed, [], 'no milestone is packed on an unverified base');
+  assert.match(sb.file('.loop/REPORT.md'), /develop CI gave no verdict for [0-9a-f]{7}/);
+  assert.match(sb.file('.loop/OWNER-ACTIONS.md'), /gave no verdict/);
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review']);
+});
+
+test('postMergeOnRedBase "wait": migrations are applied only after the fix item made the base green', async () => {
+  const sb = box({ config: { postMergeOnRedBase: 'wait', milestonePackets: false, postMerge: [{ adapter: 'supabase-cli', dbUrlEnv: 'TEST_DEV_DB_URL', migrationsDir: 'supabase/migrations', holdOnUnverified: true }] } });
+  sb.env.TEST_DEV_DB_URL = 'postgresql://dev.example.com/postgres';
+  sb.setGhState((s) => (s.baseCiQueue = ['failure']));
+  sb.queue(smokeStep(), happyItem('A1', { files: { 'supabase/migrations/20260101000000_init.sql': 'create table t (id int);\n' } }), untitledItem('fix/base', 'src/fix.txt'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const st = sb.state();
+  const fix = st.extra.find((e) => e.kind === 'fix');
+  assert.equal(st.items[fix.id].status, 'done');
+  assert.equal(st.items.A1.status, 'done');
+  assert.deepEqual(sb.supabaseState().remote, ['20260101000000']);
+  const progress = sb.file('.loop/PROGRESS.md');
+  const waited = progress.indexOf(`A1 · post-merge steps wait for ${fix.id}`);
+  const applied = progress.indexOf('post-merge supabase-cli: applied');
+  assert.ok(waited > 0 && applied > waited, 'nothing was applied while the base was red');
+  assert.match(progress, new RegExp(`A1 · ${fix.id} is done: running the post-merge steps now`));
 });

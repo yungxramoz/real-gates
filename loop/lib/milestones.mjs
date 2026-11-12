@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { runClaude } from './claude.mjs';
-import { goalPrompt } from './engine.mjs';
+import { goalPrompt, settleBaseCi } from './engine.mjs';
 import { ACCEPT_SCHEMA, PACKET_SCHEMA } from './schemas.mjs';
 import { writeJson, readJson } from './state.mjs';
 
@@ -96,12 +96,17 @@ async function packetSession(L, m) {
  */
 export async function packMilestones(L, only) {
   if (!L.cfg.milestonePackets || L.args.dry) return {};
+  if (L.baseCiGaveUp) return {}; // a merge has no base CI verdict: nothing is accepted or packed on it
   const S = L.store.S;
   for (const m of L.backlog.milestones) {
     if (only && m !== only) continue;
     if (S.packed.includes(m)) continue;
     const inM = L.store.allItems().filter((i) => i.milestone === m);
     if (!inM.length || !inM.every((i) => L.store.settled(i)) || !inM.some((i) => L.store.st(i.id).status === 'done')) continue;
+    // A milestone is not judged while a merge in it still waits for its base CI verdict.
+    const settled = await settleBaseCi(L, { wait: true });
+    if (settled.stop) return { stop: settled.stop };
+    if (settled.queued || L.stopRequested()) return {};
     const a = (S.accept[m] ||= { rounds: 0, passed: false });
     if (inM.some((i) => i.ui) && !a.passed && a.rounds < L.cfg.maxAcceptRounds) {
       L.proc.git('fetch', 'origin', '--prune');

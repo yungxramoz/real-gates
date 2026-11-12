@@ -9,19 +9,24 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
                              then branch, code, tests, PR to the base branch, .loop/result.json
  └─ local gate             → the script runs `localGate.commands` on the pushed head.
                              Failing? fix session with the output, before any CI wait
- └─ script waits for CI    → red? fix session with the failing log
-                             cancelled with no runner? re-run, never a fix (L-02)
  └─ pre-merge checks       → base is an ancestor (L-01), no edited migrations, no protected or
                              runtime files, coverage thresholds did not drop, the contract names
-                             every AC of the item
- └─ review session         → independent, read-only: contract, hard rules, drives the app,
+                             every AC of the item. They need neither CI nor a reviewer, so they
+                             come first
+ └─ CI and review together → the script waits for CI while the review session runs on the same
+                             head (`review.parallelWithCi`). Red CI and review findings go into
+                             one fix round. Cancelled with no runner? re-run, never a fix (L-02)
+    review session         → independent, read-only: contract, hard rules, drives the app,
                              scores design quality / originality / craft / functionality 1–10;
-                             any score < 7 blocks a UI item. Changes? fix session (max 2 rounds)
+                             any score < 7 blocks a UI item. Changes? fix session (max 2 rounds).
+                             The merge needs CI green **and** the approval, on one commit
  └─ script merges          → squash, --match-head-commit, into the base branch only
  └─ landed check           → merge commit is on origin/<base> and its patch-id equals the
                              reviewed diff. No? HELD
  └─ base CI                → on the merge commit. Red? a FIX item goes first in line.
-                             No result? one re-run, then HELD (a timeout is not a pass)
+                             No result? one re-run, then the run stops (a timeout is not a pass).
+                             When the landed check proved the merge commit has exactly the tree
+                             PR CI passed on, the next item starts meanwhile (`baseCiWait`)
  └─ post-merge steps       → the script applies new migrations with the Supabase CLI and checks
                              the migration list. Not verified? HELD, and the run stops
  └─ milestone complete?    → acceptance on the deployed dev site, after /api/health reports the
@@ -152,6 +157,32 @@ that file names every AC ID the item names (in `refs`, `title` or `scope`). In C
 runs: `skip`, `todo`, `fixme` and expected-to-fail tests do not count. ACs of items not built
 yet are listed as pending. `pnpm ac-trace --all` checks every AC, for a release.
 
+### Evidence, not titles
+
+In CI the AC gate reads the JUnit reports the test steps write to `artifacts/junit/`
+(`pnpm ac-trace --results artifacts/junit`). An AC a contract names must be named by a test case
+that **ran and passed**. A test inside a skipped group, a conditional skip or a file the runner
+never collected has a title and no passing case, so it does not count. A missing report fails the
+check. Any test runner that writes JUnit can feed it.
+
+### Base CI in the background
+
+`baseCiWait: "unless-tree-equal"` (the default): the landed check compares the merge commit's tree
+with the reviewed head. When they are identical, PR CI already passed on exactly that tree, so the
+next item starts while base CI runs. Nothing is waived: the runner looks at every pending commit
+before each item, a red result queues its FIX item first in line, and a commit without a verdict
+(after one re-run) stops the run with an owner action. Before a milestone is accepted and before a
+run reports its result, the runner waits for every pending verdict. `"always"` waits after every
+merge.
+
+### A red base and the post-merge steps
+
+`postMergeOnRedBase: "apply"` (the default) runs the post-merge steps even when base CI is red
+after a merge. That is deliberate: the host deploys the base branch whether CI is green or not, and
+merged code without its migration is the outage the hold gate exists for. `"wait"` is for steps
+that must never act on a red base (a release, a publish): the item stays open, its FIX item runs
+first, and the steps run once that item is done. If the FIX item does not finish, the item is held.
+
 ### The local gate
 
 `localGate.commands` (the preset: `pnpm check`) are run by the runner on the pushed branch head
@@ -206,9 +237,15 @@ Delete `.loop/STOP` if there is one before you re-run.
 
 ## Learning and the tighten-only rule table
 
-The script counts repeated failures by signature: the same kind of review finding
-(`review:<category>`), the same guard rule (`guard:<rule id>`), the same CI job
-(`ci:<job name>`). The second time, it queues a `LEARN-n` item first in line. That item fixes the
+The script counts repeated failures by signature: the same review finding
+(`review:<category>:<cause>`), the same guard rule (`guard:<rule id>`), the same CI job
+(`ci:<job name>`), the same local gate command (`gate:<command>`). The second time
+(`learnThreshold`), it queues a `LEARN-n` item first in line.
+
+The reviewer gives each blocking finding a category and a short cause key, and is shown the keys the
+run already uses so the same cause gets the same key. Findings that share only the category
+(`review:<category>`, different causes) need `learnCategoryThreshold` (4) before they count as a
+pattern: two unrelated bugs in fifty items are not one, and a LEARN item costs a whole build cycle. That item fixes the
 cause, one step up this ladder:
 
 ```mermaid

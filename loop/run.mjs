@@ -19,7 +19,7 @@ import { binary, createProc } from './lib/proc.mjs';
 import { isolationProblems, repoMcpServers, runClaudeOnce, sessionEnv, userSkillNames } from './lib/claude.mjs';
 import { branchProtected } from './lib/github.mjs';
 import { changedFiles, fingerprint, harnessFiles, snapshotGuard, writeSettings } from './lib/settings.mjs';
-import { countFailure, runItem } from './lib/engine.mjs';
+import { countFailure, runItem, settleBaseCi } from './lib/engine.mjs';
 import { READ_ONLY_PHASES } from './guard/core.mjs';
 import { packMilestones } from './lib/milestones.mjs';
 import { POST_MERGE } from './adapters/index.mjs';
@@ -454,9 +454,21 @@ async function main() {
       reason = 'budget reached (sessions, hours or dollars)';
       break;
     }
+    // Base CI that earlier merges did not wait for: a red one puts its FIX item first in line.
+    const bg = await settleBaseCi(L);
+    if (bg.stop) {
+      reason = bg.stop;
+      break;
+    }
     syncBase();
     const next = store.pickNext({ item: args.item, only: args.only });
     if (next.none) {
+      const last = await settleBaseCi(L, { wait: true });
+      if (last.stop) {
+        reason = last.stop;
+        break;
+      }
+      if (last.queued) continue;
       const pm = await packMilestones(L);
       if (pm.stop) {
         reason = pm.stop;
@@ -468,7 +480,7 @@ async function main() {
     }
     log(`━━━ ${next.id} · ${next.milestone} · ${next.title}`);
     const outcome = await runItem(L, next);
-    if (outcome === 'stopped' || outcome === 'budget') continue;
+    if (outcome === 'stopped' || outcome === 'budget' || outcome === 'waiting') continue;
     if (outcome === 'held') {
       held = true;
       reason = `${next.id} is held — ${store.st(next.id).lastError}`;
@@ -492,6 +504,12 @@ async function main() {
       reason = '--once';
       break;
     }
+  }
+  // Nothing is reported as finished while a merge still waits for its base CI verdict.
+  if (!stopRequested()) {
+    const end = await settleBaseCi(L, { wait: true });
+    if (end.stop) reason = `${reason}; ${end.stop}`;
+    else if (end.queued) reason = `${reason}; ${cfg.base} CI turned red on an earlier merge: its fix item is first in line for the next run`;
   }
   try {
     syncBase();

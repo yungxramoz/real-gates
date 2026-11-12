@@ -10,8 +10,9 @@
   - Acceptance criteria: `AC-<epic>.<n>`, unique across the file, one testable sentence each,
     written so a test title can carry the ID.
   - Gate: an AC is built once a contract names it (docs/contracts/<item>.md, committed with the
-    PR). scripts/ac-trace.mjs fails CI when a built AC is not in the title of a test that runs
-    (skipped and todo tests do not count). ACs not built yet are listed as pending.
+    PR). scripts/ac-trace.mjs fails CI when a built AC is not named by a test that ran and passed
+    (it reads the JUnit reports; skipped and todo tests do not count). ACs not built yet are
+    listed as pending.
     `pnpm ac-trace --all` checks every AC, for a release.
   - Never renumber an AC. Retire one by striking it through and saying why.
 -->

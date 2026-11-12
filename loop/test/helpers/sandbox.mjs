@@ -18,6 +18,10 @@ export const TEST_CONFIG = {
   deploy: { devUrl: 'https://dev.example.com' },
   guard: { allowedDbProject: 'testref0000000000000' },
   postMerge: [],
+  // The older scenarios script one session at a time and wait for base CI; the parallel review and
+  // the background base CI have scenarios of their own that switch these on.
+  review: { parallelWithCi: false },
+  baseCiWait: 'always',
   pollMs: 5,
   timeouts: { sessionMin: 1, reviewMin: 1, acceptMin: 1, packetMin: 1, ciMin: 0.003, smokeMin: 1 },
   usageLimit: { sleepMin: 0.0002, maxWaitHours: 1, minSleepMs: 1 },

@@ -155,6 +155,24 @@ export async function waitForCommitCi(ctx, sha) {
   }
 }
 
+/**
+ * One look at `ci` on a base commit, without waiting.
+ * { state: 'ok' } | { state: 'pending' | 'starved', runId } | { state: 'red', kind, jobs?, file?, text? }
+ */
+export function checkCommitCi(ctx, sha) {
+  const runs = ctx.proc.ghTry('api', `repos/${ctx.cfg.repo}/commits/${sha}/check-runs?per_page=100`);
+  let ci = null;
+  try {
+    ci = runs.ok ? (JSON.parse(runs.out || '{}').check_runs || []).find((c) => c.name === ctx.cfg.ciCheck) : null;
+  } catch {}
+  const runId = ci ? runIdFrom(ci.details_url || ci.html_url) : null;
+  if (!ci || ci.status !== 'completed') return { state: 'pending', runId };
+  if (ci.conclusion === 'success') return { state: 'ok' };
+  if (!runId) return { state: 'red', kind: 'red', text: `${ctx.cfg.ciCheck} on ${sha} concluded ${ci.conclusion}` };
+  const d = diagnoseRun(ctx, runId, `base-${sha.slice(0, 7)}`);
+  return d.kind === 'starved' ? { state: 'starved', runId } : { state: 'red', ...d };
+}
+
 const stripJsComments = (t) => String(t || '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:\\])\/\/.*$/gm, '$1');
 const THRESHOLD = /\b(lines|functions|branches|statements)\s*:\s*(\d+(?:\.\d+)?)/g;
 
@@ -298,7 +316,7 @@ export function landedCheck(ctx, { baseBefore, reviewedSha, mergeSha }) {
   // result must be the reviewed tree exactly, whitespace included.
   if (baseBefore && parent.out === baseBefore && proc.gitTry('merge-base', '--is-ancestor', baseBefore, reviewedSha).ok) {
     const tree = (rev) => proc.gitTry('rev-parse', `${rev}^{tree}`).out;
-    if (tree(mergeSha) === tree(reviewedSha)) return { ok: true, why: '' };
+    if (tree(mergeSha) === tree(reviewedSha)) return { ok: true, why: '', treeEqual: true };
     const diff = proc.gitTry('diff', '--name-only', reviewedSha, mergeSha).out.split('\n').filter(Boolean);
     return { ok: false, why: `what landed differs from what was reviewed; not reviewed: ${diff.join(', ') || '(content only)'}` };
   }

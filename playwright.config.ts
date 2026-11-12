@@ -23,7 +23,12 @@ export default defineConfig({
   retries: isCI ? 1 : 0,
   ...(isCI ? { workers: 2 } : {}),
   expect: { timeout: 5_000 },
-  reporter: [['list'], ['html', { outputFolder: 'artifacts/playwright-report', open: 'never' }]],
+  // The JUnit report is the evidence `pnpm ac-trace --results artifacts/junit` reads in CI.
+  reporter: [
+    ['list'],
+    ['html', { outputFolder: 'artifacts/playwright-report', open: 'never' }],
+    ['junit', { outputFile: 'artifacts/junit/e2e.xml' }],
+  ],
   use: {
     baseURL,
     trace: 'on-first-retry',

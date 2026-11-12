@@ -134,7 +134,8 @@ test('landed check passes for a normal squash', async () => {
   const s = { pr, reviewedSha: head, branch: 'feat/a' };
   const m = mergePr(ctx, s);
   assert.equal(m.ok, true);
-  assert.deepEqual(landedCheck(ctx, { baseBefore: m.baseBefore, reviewedSha: head, mergeSha: m.sha }), { ok: true, why: '' });
+  // treeEqual: the merge commit has exactly the tree PR CI passed on
+  assert.deepEqual(landedCheck(ctx, { baseBefore: m.baseBefore, reviewedSha: head, mergeSha: m.sha }), { ok: true, why: '', treeEqual: true });
 });
 
 test('landed check fails when merge content differs', async () => {
@@ -255,4 +256,20 @@ test('branch protection is read from the branch or from a ruleset', async () => 
   assert.equal(branchProtected(ctx, 'develop'), false);
   sb.setGhState((s) => (s.rulesets = { develop: [{ type: 'pull_request' }] }));
   assert.equal(branchProtected(ctx, 'develop'), true);
+});
+
+test('one look at base CI: pending, green, red with the failing log', async () => {
+  const { checkCommitCi } = await import('../lib/github.mjs');
+  const { sb, ctx } = setup();
+  const sha = sb.originGit('rev-parse', 'develop');
+  sb.setGhState((s) => (s.baseCiQueue = ['pending']));
+  assert.equal(checkCommitCi(ctx, sha).state, 'pending');
+  sb.setGhState((s) => (s.ci[sha] = 'success'));
+  assert.deepEqual(checkCommitCi(ctx, sha), { state: 'ok' });
+  sb.setGhState((s) => (s.ci[sha] = 'failure'));
+  const red = checkCommitCi(ctx, sha);
+  assert.equal(red.state, 'red');
+  assert.deepEqual(red.jobs, ['unit tests']);
+  sb.setGhState((s) => (s.ci[sha] = 'starved'));
+  assert.equal(checkCommitCi(ctx, sha).state, 'starved');
 });

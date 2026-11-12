@@ -15,7 +15,7 @@ export const REVIEW_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { file: { type: 'string' }, line: { type: 'integer' }, issue: { type: 'string' }, fix: { type: 'string' }, category: { type: 'string', enum: REVIEW_CATEGORIES } },
+        properties: { file: { type: 'string' }, line: { type: 'integer' }, issue: { type: 'string' }, fix: { type: 'string' }, category: { type: 'string', enum: REVIEW_CATEGORIES }, cause: { type: 'string' } },
         required: ['file', 'issue', 'fix', 'category'],
       },
     },
