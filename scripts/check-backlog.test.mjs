@@ -33,6 +33,9 @@ test('a section is the text under its heading, without comments, up to the next 
 test('the skeleton brief is fine while the backlog holds only the setup item', () => {
   assert.deepEqual(briefProblems(brief(COMMENT, COMMENT), setupOnly), []);
   assert.deepEqual(briefProblems(null, setupOnly), []);
+  // a hand-edited backlog with items that are not a list must not crash the brief check
+  assert.deepEqual(briefProblems(null, { items: {} }), []);
+  assert.deepEqual(briefProblems(null, { items: 'none' }), []);
 });
 
 test('a shaped backlog needs a success measure and terms in the brief', () => {

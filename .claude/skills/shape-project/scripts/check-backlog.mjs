@@ -113,7 +113,8 @@ function written(text) {
  * rules or empty table cells. Only asked once the backlog holds more than the setup item.
  */
 export function briefProblems(briefText, backlog) {
-  const real = (backlog?.items || []).filter((i) => i && i.id !== 'LOOP-0');
+  // a backlog whose items are not a list is backlogProblems' to report, not a crash here
+  const real = (Array.isArray(backlog?.items) ? backlog.items : []).filter((i) => i && i.id !== 'LOOP-0');
   if (!real.length) return [];
   if (briefText === null) return ['docs/BRIEF.md not found; the build sessions read it first'];
   const p = [];
