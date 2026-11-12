@@ -116,8 +116,14 @@ function decideShell(cmd, ctx) {
 // not looked at is the body of a here-document that plain shell hands to cat, tee, gh or git commit
 // as data.
 
-const WRITE_VERB = /(\btee\b|\bcp\b|\bmv\b|\brm\b|\btouch\b|\btruncate\b|\binstall\b|\bln\b|\bdd\b|\bsed\b.*\s(-[A-Za-z]*i|--in-place)|\bperl\b.*\s-[A-Za-z]*i|\bfind\b.*\s-delete\b|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bgit\s+(checkout|restore|apply|am|rm|mv)\b)/i;
+// Tested against a line or a command that went through normalizeShell, so `git -C . restore` is
+// `git restore` here.
+const WRITE_VERB = /(\btee\b|\bcp\b|\bmv\b|\brm\b|\brmdir\b|\bunlink\b|\bshred\b|\btouch\b|\btruncate\b|\binstall\b|\bln\b|\bdd\b|\bpatch\s+-|\bchmod\b|\bchown\b|\bsed\b.*\s(-[A-Za-z]*i|--in-place)|\bperl\b.*\s-[A-Za-z]*i|\bfind\b.*\s-delete\b|Set-Content|Add-Content|Clear-Content|Out-File|New-Item|Copy-Item|Move-Item|Rename-Item|Remove-Item|\bgit\s+(checkout|restore|apply|am|rm|mv)\b)/i;
 const REDIRECT = /(?:&>>?|>>?&?|>\|)\s*([^\s<>|;&]+)/g;
+/** Options of gh and git commit whose value is a text, never a path. */
+const MESSAGE_OPTION = /^(-m|--message|-b|--body|-t|--title|--notes)$/;
+/** git run in another folder: its relative paths mean something else, as after a cd. */
+const GIT_DIR = /\bgit\b[^;|&]*?\s(?:-C|--work-tree)(?:=|\s+)["']?([^\s;&|)"']+)/gi;
 const CD = /(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+([^\s;&|)]+)/gi;
 const FRAGMENTS = /[\s"'`;|&()<>=,]+/;
 /** A redirect target that is no file: a file descriptor, or the null device. */
@@ -191,10 +197,13 @@ export function readPlainShell(source) {
       if (s[i - 1] === '$') return null; // $"…"
       const inline = s.slice(i).match(/^"\$\(cat <<'([A-Za-z_][A-Za-z0-9_]*)'\n/);
       if (inline) {
-        // "$(cat <<'EOF' … EOF )": the usual way to hand a long text to gh or git commit
+        // "$(cat <<'EOF' … EOF )": the usual way to hand a long text to gh or git commit. Taken as
+        // text only where it is the value of a message option; anywhere else it could be a path.
         const close = s.indexOf(`\n${inline[1]}\n`, i + inline[0].length - 1);
-        const tail = close < 0 ? null : s.slice(close + inline[1].length + 2).match(/^[ \t]*\)"/);
-        if (!tail || pending) return null;
+        const tail = close < 0 ? null : s.slice(close + inline[1].length + 2).match(/^[ \t]*\)"(?=[\s;]|$)/);
+        const option = word ? word.text.replace(/=$/, '') : cur.words.at(-1)?.text;
+        const isValue = word ? !word.quoted && word.text.endsWith('=') : !!cur.words.length && !cur.words.at(-1).quoted;
+        if (!tail || pending || target || !isValue || !MESSAGE_OPTION.test(option || '')) return null;
         add('', true);
         cur.hereDoc = true;
         i = close + inline[1].length + 1 + tail[0].length;
@@ -316,8 +325,9 @@ export function shellWritesProtected(cmd, ctx) {
   const plain = readPlainShell(cmd);
   // What the line says, as one text without quote marks: all of it, or for plain shell what is
   // left once the here-document bodies that are data are gone.
-  const flat = plain ? plain.map((c) => [...c.words.map((w) => w.text), ...c.targets.map((t) => `> ${t}`)].join(' ')).join(' ; ') : normalizeShell(cmd);
-  const mentioned = anyProtected(flat);
+  const said = plain ? plain.map((c) => [...c.words.map((w) => w.text), ...c.targets.map((t) => `> ${t}`)].join(' ')).join(' ; ') : String(cmd);
+  const flat = normalizeShell(said); // `git -C dir restore` is `git restore` here
+  const mentioned = anyProtected(said);
   if (!mentioned) return null;
 
   const targets = plain ? plain.flatMap((c) => [...c.targets.filter((t) => !noFile(t)), ...c.words.filter((w) => w.quoted).flatMap((w) => redirectsIn(w.text))]) : redirectsIn(flat);
@@ -327,14 +337,14 @@ export function shellWritesProtected(cmd, ctx) {
     if (hit) return hit;
   }
   const anyVerb = WRITE_VERB.test(flat);
-  for (const cd of flat.matchAll(CD)) {
+  for (const cd of [...flat.matchAll(CD), ...said.matchAll(GIT_DIR)]) {
     const into = unreadable(cd[1]) ? mentioned : protectedWord(cd[1]);
     if (into && (targets.length || anyVerb)) return into;
   }
   if (!plain) return anyVerb ? mentioned : null;
 
   for (const c of plain) {
-    const text = c.words.map((w) => w.text).join(' ');
+    const text = normalizeShell(c.words.map((w) => w.text).join(' '));
     if (!WRITE_VERB.test(text)) continue;
     if (/\bxargs\b/i.test(text)) return mentioned;
     // `cp [options] sources… destination`: only the destination is written. Any other shape
