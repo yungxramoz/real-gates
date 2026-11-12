@@ -102,8 +102,8 @@ function decideShell(cmd, ctx) {
 }
 
 const WRITE_VERB = /(\btee\b|\bsed\s+-i|\bperl\s+-p?i|\bcp\b|\bmv\b|\brm\b|\btouch\b|\btruncate\b|\binstall\b|\bln\b|\bdd\b|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bgit\s+(checkout|restore|apply|rm|mv)\b)/i;
-/** Commands whose last argument is what they write; the ones before it are only read. */
-const COPY_VERB = /^(?:\S+=\S*\s+)*(cp|Copy-Item|install|ln)\b/i;
+/** A plain cp writes its last argument; the ones before it are only read. */
+const COPY_VERB = /^cp\s/i;
 const REDIRECT = /(?:&>>?|>>?|>\|)\s*([^\s<>|;&]+)/g;
 
 /**
@@ -192,9 +192,10 @@ function hereDocOpening(line) {
  * these stand outside quotes. `sed -i 's/a/b/;s/c/d/' file` stays one command.
  *
  * Nothing is ever dropped, and where the reading is not certain the piece is marked `unsure` and
- * kept together, so the caller looks at more, never at less: after a quote that never closes, and
- * from a `#` that looks like a comment to the end of its line (quote marks in it open nothing, but
- * its words stay, in case the shell did not take it for a comment).
+ * kept together, so the caller looks at more, never at less: after a quote that never closes,
+ * around a `$( … )` or backtick substitution, and from a `#` that looks like a comment to the end
+ * of its line (quote marks in it open nothing, but its words stay, in case the shell did not take
+ * it for a comment).
  */
 export function splitCommands(cmd) {
   const s = String(cmd);
@@ -217,6 +218,8 @@ export function splitCommands(cmd) {
       } else if (ch !== "'" && ch !== '"') text += ch;
       continue;
     }
+    // A substitution runs commands of its own inside one argument: `cp "$(rm x; echo a)" b`.
+    if (quote !== "'" && (ch === '`' || (/[$<>]/.test(ch) && s[i + 1] === '('))) unsure = true;
     if (quote) {
       text += ch;
       if (ch === '\\' && quote === '"' && i + 1 < s.length) text += s[++i];
@@ -258,7 +261,7 @@ export function splitCommands(cmd) {
  * names such a path (cat, grep, running the runner's tests with 2>&1) reads it and passes. Looked
  * at per simple command:
  *  - a redirect whose target is protected;
- *  - a write verb with a protected path in the same simple command (for cp and its kind only the
+ *  - a write verb with a protected path in the same simple command (for a plain cp only the
  *    last argument, the one written);
  *  - what cannot be read here counts when the line names a protected path anywhere: a redirect
  *    target or a write verb's argument with a variable, a substitution or `~` in it, a write verb
@@ -313,7 +316,9 @@ export function shellWritesProtected(cmd, ctx) {
     // "Only the last argument is written" holds for one command. An unsure piece may hold several,
     // so there every path counts.
     const copies = !part.unsure && COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
-    for (const w of copies ? words.slice(-1) : words) {
+    // cp takes options after the destination too: the last word that is not one.
+    const written = words.filter((w) => !w.startsWith('-')).slice(-1);
+    for (const w of copies ? written : words) {
       if (unreadable(w)) return mentioned;
       const hit = protectedWord(w);
       if (hit) return hit;
