@@ -150,11 +150,9 @@ export function splitCommands(cmd) {
   const parts = [];
   let text = '';
   let quote = null;
-  let quoted = false;
-  const push = () => {
-    if (text.trim()) parts.push({ text, quoted });
+  const push = (open = false) => {
+    if (text.trim()) parts.push({ text, open });
     text = '';
-    quoted = false;
   };
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
@@ -170,11 +168,15 @@ export function splitCommands(cmd) {
     }
     if (ch === "'" || ch === '"') {
       quote = ch;
-      quoted = true;
       text += ch;
       continue;
     }
     const prev = s[i - 1];
+    // A comment runs to the end of its line; an apostrophe in it opens nothing.
+    if (ch === '#' && (i === 0 || /[\s;&|(]/.test(prev))) {
+      while (i + 1 < s.length && s[i + 1] !== '\n') i++;
+      continue;
+    }
     const next = s[i + 1];
     if (ch === ';' || ch === '\n' || ch === '\r') push();
     else if (ch === '|' && prev !== '>') {
@@ -185,7 +187,7 @@ export function splitCommands(cmd) {
       if (next === '&') i++;
     } else text += ch;
   }
-  push();
+  push(quote !== null);
   return parts;
 }
 
@@ -208,7 +210,7 @@ export function shellWritesProtected(cmd, ctx) {
   const c = normalizeShell(parts.map((p) => p.text).join(' ; '));
   // A folder counts when what is inside it is protected: `loop` as much as `loop/run.mjs`.
   const protectedWord = (w) => {
-    const rel = w ? ctx.rel(w.replace(/[(){}]/g, '')) : null;
+    const rel = w ? ctx.rel(w.replace(/[(){}]/g, '').replace(/[;,&|]+$/, '')) : null;
     if (!rel) return null;
     if (isProtected(rel, ctx)) return rel;
     // inside a protected folder but let through by name (a new patch, .env.example): not a folder
@@ -236,9 +238,9 @@ export function shellWritesProtected(cmd, ctx) {
       .replace(/(?:&>>?|[0-9]*>>?|>\|)\s*[^\s<>|;&]+/g, ' ')
       .split(/\s+/)
       .filter(Boolean);
-    // "Only the last argument is written" holds for a plain command. With quotes in it the split
-    // may have kept two commands together, so every path counts.
-    const copies = !part.quoted && COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
+    // "Only the last argument is written" holds for one command. After a quote that never closed
+    // the piece may hold several, so there every path counts.
+    const copies = !part.open && COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
     for (const w of copies ? words.slice(-1) : words) {
       const hit = protectedWord(w);
       if (hit) return hit;
