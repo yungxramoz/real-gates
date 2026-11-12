@@ -141,6 +141,55 @@ export function dropHereDocBodies(cmd) {
 }
 
 /**
+ * A command line as its simple commands: cut at `;`, a line break, `&&`, `||`, `|` and `&` where
+ * these stand outside quotes. `sed -i 's/a/b/;s/c/d/' file` stays one command. A quote that never
+ * closes keeps the rest together, which only makes the caller look at more, never at less.
+ */
+export function splitCommands(cmd) {
+  const s = String(cmd);
+  const parts = [];
+  let text = '';
+  let quote = null;
+  let quoted = false;
+  const push = () => {
+    if (text.trim()) parts.push({ text, quoted });
+    text = '';
+    quoted = false;
+  };
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) {
+      text += ch;
+      if (ch === '\\' && quote === '"' && i + 1 < s.length) text += s[++i];
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < s.length) {
+      text += ch + s[++i];
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      quoted = true;
+      text += ch;
+      continue;
+    }
+    const prev = s[i - 1];
+    const next = s[i + 1];
+    if (ch === ';' || ch === '\n' || ch === '\r') push();
+    else if (ch === '|' && prev !== '>') {
+      push();
+      if (next === '|' || next === '&') i++;
+    } else if (ch === '&' && prev !== '>' && prev !== '<' && next !== '>') {
+      push();
+      if (next === '&') i++;
+    } else text += ch;
+  }
+  push();
+  return parts;
+}
+
+/**
  * Does a shell line write into a protected path? Returns the path, or null. A line that only
  * names such a path (cat, grep, running the runner's tests with 2>&1) reads it and passes. Looked
  * at per simple command:
@@ -155,11 +204,8 @@ export function dropHereDocBodies(cmd) {
 export function shellWritesProtected(cmd, ctx) {
   // A line break ends a command as a `;` does. normalizeShell folds all white space, so the breaks
   // are made visible first (a backslash at the end of a line continues it).
-  const c = normalizeShell(
-    dropHereDocBodies(cmd)
-      .replace(/\\\r?\n/g, ' ')
-      .replace(/\r?\n/g, ' ; '),
-  );
+  const parts = splitCommands(dropHereDocBodies(cmd).replace(/\\\r?\n/g, ' '));
+  const c = normalizeShell(parts.map((p) => p.text).join(' ; '));
   // A folder counts when what is inside it is protected: `loop` as much as `loop/run.mjs`.
   const protectedWord = (w) => {
     const rel = w ? ctx.rel(w.replace(/[(){}]/g, '')) : null;
@@ -173,16 +219,13 @@ export function shellWritesProtected(cmd, ctx) {
   if (!mentioned) return null;
   const scratch = (t) => /^(\/dev\/null|\$null|NUL)$/i.test(t);
   const targets = (s) => [...s.matchAll(REDIRECT)].map((m) => m[1]).filter((t) => !/^\(/.test(t) && !scratch(t));
-  const segments = c
-    .split(/&&|\|\||;|(?<!>)\|(?!&)|(?<![>&|])&(?![>&])/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  for (const seg of segments) {
-    const cd = seg.match(/^(?:cd|pushd|Set-Location|sl)\s+(\S+)/i);
-    const into = cd && protectedWord(cd[1]);
+  for (const cd of c.matchAll(/(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+([^\s;&|)]+)/gi)) {
+    const into = protectedWord(cd[1]);
     if (into && (targets(c).length || WRITE_VERB.test(c))) return into;
   }
-  for (const seg of segments) {
+  for (const part of parts) {
+    const seg = normalizeShell(part.text).trim();
+    if (!seg) continue;
     for (const target of targets(seg)) {
       if (/[$`]/.test(target)) return mentioned;
       const hit = protectedWord(target);
@@ -193,7 +236,9 @@ export function shellWritesProtected(cmd, ctx) {
       .replace(/(?:&>>?|[0-9]*>>?|>\|)\s*[^\s<>|;&]+/g, ' ')
       .split(/\s+/)
       .filter(Boolean);
-    const copies = COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
+    // "Only the last argument is written" holds for a plain command. With quotes in it the split
+    // may have kept two commands together, so every path counts.
+    const copies = !part.quoted && COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
     for (const w of copies ? words.slice(-1) : words) {
       const hit = protectedWord(w);
       if (hit) return hit;
