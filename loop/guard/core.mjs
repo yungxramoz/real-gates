@@ -119,15 +119,15 @@ function decideShell(cmd, ctx) {
 // Tested against a line or a command that went through normalizeShell, so `git -C . restore` is
 // `git restore` here.
 const WRITE_VERB = /(\btee\b|\bcp\b|\bmv\b|\brm\b|\brmdir\b|\bunlink\b|\bshred\b|\btouch\b|\btruncate\b|\binstall\b|\bln\b|\bdd\b|\bpatch\s+-|\bchmod\b|\bchown\b|\bsed\b.*\s(-[A-Za-z]*i|--in-place)|\bperl\b.*\s-[A-Za-z]*i|\bfind\b.*\s-delete\b|Set-Content|Add-Content|Clear-Content|Out-File|New-Item|Copy-Item|Move-Item|Rename-Item|Remove-Item|\bgit\s+(checkout|restore|apply|am|rm|mv)\b)/i;
-const REDIRECT = /(?:&>>?|>>?&?|>\|)\s*([^\s<>|;&]+)/g;
+const REDIRECT = /(&>>?|>>?&?|>\|)\s*([^\s<>|;&]+)/g;
 /** Options of gh and git commit whose value is a text, never a path. */
 const MESSAGE_OPTION = /^(-m|--message|-b|--body|-t|--title|--notes)$/;
 /** git run in another folder: its relative paths mean something else, as after a cd. */
 const GIT_DIR = /\bgit\b[^;|&]*?\s(?:-C|--work-tree)(?:=|\s+)["']?([^\s;&|)"']+)/gi;
 const CD = /(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+(?:-\S*\s+)*([^\s;&|)]+)/gi;
 const FRAGMENTS = /[\s"'`;|&()<>=,]+/;
-/** A redirect target that is no file: a file descriptor, or the null device. */
-const noFile = (t) => /^(\d+|-|\/dev\/null|\$null|NUL)$/i.test(t);
+/** A redirect target that is no file: the null device. A number or "-" is a file unless it follows `>&`. */
+const noFile = (t) => /^(\/dev\/null|\$null|NUL)$/i.test(t);
 /** A path this cannot read: it holds a variable, a substitution or a home folder. */
 const unreadable = (w) => /[$`]|^~/.test(w);
 /** A here-document handed to one of these is text for it, not a script. */
@@ -323,7 +323,7 @@ export function shellWritesProtected(cmd, ctx) {
     return isProtected(`${rel.replace(/\/$/, '')}/x`, ctx) ? rel : null;
   };
   const anyProtected = (text) => String(text).split(FRAGMENTS).map(protectedWord).find(Boolean) || null;
-  const redirectsIn = (text) => [...String(text).matchAll(REDIRECT)].map((m) => m[1]).filter((t) => !/^\(/.test(t) && !noFile(t));
+  const redirectsIn = (text) => [...String(text).matchAll(REDIRECT)].filter((m) => !(m[1].endsWith('&') && /^(\d+|-)$/.test(m[2]))).map((m) => m[2]).filter((t) => !/^\(/.test(t) && !noFile(t));
 
   const plain = readPlainShell(cmd);
   // What the line says, as one text without quote marks: all of it, or for plain shell what is
