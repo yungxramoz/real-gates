@@ -184,6 +184,11 @@ for (const preset of presets) {
     cfg.repo = 'acme/tool';
     cfg.gitAuthor = { name: 'Loop Tester', email: 'loop@example.com' };
     fs.writeFileSync(path.join(dir, 'loop', 'loop.config.json'), JSON.stringify(cfg, null, 2));
+    // with its own repo and commit author in the config the project is no longer the template: the
+    // sanitizer must accept that identity, or the required check could never pass after /setup-loop
+    const scan = node(['scripts/sanitize-scan.mjs'], dir);
+    assert.equal(scan.status, 0, scan.stdout);
+    assert.match(scan.stdout, /project checks/);
     const fake = path.join(dir, '.loop-fake');
     fs.mkdirSync(fake);
     fs.writeFileSync(

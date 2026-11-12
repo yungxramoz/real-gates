@@ -142,3 +142,101 @@ test('the CLI exits 1 with the hits and 0 when clean', (t) => {
   );
   assert.match(execFileSync(process.execPath, [script, clean], { encoding: 'utf8' }), /clean/);
 });
+
+// ----------------------------------------------------------------------- template and project mode
+const AUTHOR = ['owner', 'mail.test'].join('@');
+const STRANGER = ['someone', 'mail.test'].join('@');
+const VERCEL_HOST = ['my-app-git-develop-team', 'vercel', 'app'].join('.');
+const GH_TOKEN = ['ghp', 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8'].join('_');
+
+test('project mode: the original-project checks are off, keys and foreign emails are still caught', () => {
+  const text = [
+    `schema acme.items, locale ${['de', 'CH'].join('-')}, host https://${VERCEL_HOST}`,
+    `author ${AUTHOR}, cc ${STRANGER}`,
+    `token ${GH_TOKEN}`,
+  ].join('\n');
+  const template = labels(text, { terms: SAMPLE_TERMS });
+  for (const l of [
+    'sample term',
+    'original-project locale',
+    'vercel.app URL with a real team slug',
+    'email',
+    'GitHub token',
+  ])
+    assert.ok(template.includes(l), `template mode should report: ${l}`);
+  assert.equal(template.filter((l) => l === 'email').length, 2);
+  const project = scanText(text, {
+    terms: SAMPLE_TERMS,
+    mode: 'project',
+    allowEmails: [AUTHOR.toUpperCase()],
+  });
+  assert.deepEqual(
+    project.map((h) => `${h.label}: ${h.match}`),
+    [`email: ${STRANGER}`, `GitHub token: ${GH_TOKEN}`],
+  );
+});
+
+function repoWith(config, files = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sanitize-mode-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  fs.mkdirSync(path.join(dir, 'loop'));
+  fs.writeFileSync(path.join(dir, 'loop', 'loop.config.json'), JSON.stringify(config, null, 2));
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  }
+  return dir;
+}
+
+test('a repo is the template until /setup-loop wrote its repo into the config', async (t) => {
+  const { modeOf, projectIdentity } = await import('./sanitize-scan.mjs');
+  const template = repoWith({ repo: '', gitAuthor: { name: '', email: '' } });
+  const project = repoWith({ repo: 'owner/tool', gitAuthor: { name: 'An Owner', email: AUTHOR } });
+  const none = fs.mkdtempSync(path.join(os.tmpdir(), 'sanitize-mode-'));
+  t.after(() =>
+    [template, project, none].forEach((d) => fs.rmSync(d, { recursive: true, force: true })),
+  );
+  assert.equal(modeOf(template), 'template');
+  assert.equal(modeOf(project), 'project');
+  assert.equal(modeOf(none), 'template', 'no config: the strict checks');
+  assert.deepEqual(projectIdentity(project), { repo: 'owner/tool', email: AUTHOR });
+});
+
+test('a set-up project passes with its own identity in the config and the docs, and still fails on a key', (t) => {
+  const script = fileURLToPath(new URL('./sanitize-scan.mjs', import.meta.url));
+  const config = {
+    repo: 'owner/tool',
+    deploy: { devUrl: `https://${VERCEL_HOST}` },
+    gitAuthor: { name: 'An Owner', email: AUTHOR },
+  };
+  const dir = repoWith(config, {
+    'docs/OWNER-ACTIONS.md': `Protect develop in owner/tool. Commits are authored by ${AUTHOR}.\n`,
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const run = (...args) => {
+    try {
+      return {
+        code: 0,
+        out: execFileSync(process.execPath, [script, ...args, dir], { encoding: 'utf8' }),
+      };
+    } catch (e) {
+      return { code: e.status, out: String(e.stdout) };
+    }
+  };
+  const ok = run();
+  assert.equal(ok.code, 0, ok.out);
+  assert.match(ok.out, /sanitize-scan: clean \(2 files, project checks\)/);
+  // the same tree judged as a template: the host and the email are leaks there
+  const strict = run('--template');
+  assert.equal(strict.code, 1);
+  assert.match(strict.out, /vercel\.app URL with a real team slug/);
+  assert.match(strict.out, /loop\/loop\.config\.json:\d+ email/);
+  assert.match(strict.out, /template checks/);
+  // a key is a leak in any repo, and so is somebody else's address
+  fs.writeFileSync(path.join(dir, 'notes.md'), `token ${GH_TOKEN}\nask ${STRANGER}\n`);
+  const leak = run();
+  assert.equal(leak.code, 1);
+  assert.match(leak.out, /notes\.md:1 GitHub token/);
+  assert.match(leak.out, /notes\.md:2 email/);
+  assert.doesNotMatch(leak.out, /loop\.config\.json|OWNER-ACTIONS/);
+});
