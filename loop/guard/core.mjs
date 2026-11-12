@@ -114,15 +114,29 @@ const REDIRECT = /(?:&>>?|>>?|>\|)\s*([^\s<>|;&]+)/g;
 export function dropHereDocBodies(cmd) {
   const out = [];
   let end = null;
+  let body = [];
+  let quoted = false;
+  // With an unquoted delimiter the shell still runs $(…) and `…` inside the body: such a body stays.
+  const close = () => {
+    if (!quoted && /\$\(|`/.test(body.join('\n'))) out.push(...body);
+    body = [];
+  };
   for (const line of String(cmd).split(/\r?\n/)) {
     if (end !== null) {
-      if (line.trim() === end) end = null;
+      if (line.trim() === end) {
+        end = null;
+        close();
+      } else body.push(line);
       continue;
     }
     out.push(line);
     const m = line.match(/^([^"'`]*?)<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\2/);
-    if (m && !/\b(?:ba|z|da|k)?sh\b|\b(?:eval|source|pwsh|powershell)\b/i.test(line)) end = m[3];
+    if (m && !/\b(?:ba|z|da|k)?sh\b|\b(?:eval|source|pwsh|powershell)\b/i.test(line)) {
+      end = m[3];
+      quoted = !!m[2];
+    }
   }
+  if (end !== null) out.push(...body); // never closed: not a here-document we understand
   return out.join('\n');
 }
 
@@ -139,7 +153,13 @@ export function dropHereDocBodies(cmd) {
  * An early warning: the runner's own checks after every session are the hard stop.
  */
 export function shellWritesProtected(cmd, ctx) {
-  const c = normalizeShell(dropHereDocBodies(cmd));
+  // A line break ends a command as a `;` does. normalizeShell folds all white space, so the breaks
+  // are made visible first (a backslash at the end of a line continues it).
+  const c = normalizeShell(
+    dropHereDocBodies(cmd)
+      .replace(/\\\r?\n/g, ' ')
+      .replace(/\r?\n/g, ' ; '),
+  );
   // A folder counts when what is inside it is protected: `loop` as much as `loop/run.mjs`.
   const protectedWord = (w) => {
     const rel = w ? ctx.rel(w.replace(/[(){}]/g, '')) : null;
