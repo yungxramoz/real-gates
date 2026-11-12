@@ -3,8 +3,10 @@
 // Three layers, later ones win:
 //   1. DEFAULTS below: what the core loop needs whatever the project is built with. No framework,
 //      host or database is named here.
-//   2. loop/profile/profile.json: the stack profile. Which commands prove a change, which files CI
-//      runs through, which guard packs and adapters the stack needs (loop/profile/README.md).
+//   2. loop/profiles/<name>/profile.json: the stack profile that `profile` in loop.config.json
+//      names. Which commands prove a change, which files CI runs through, which guard packs and
+//      adapters the stack needs (loop/profiles/README.md). Every profile ships with the harness,
+//      so the runner's own suite can test each one whatever a project uses.
 //   3. loop/loop.config.json: this project's own values (repo, branches, the dev URL, the git
 //      author). /setup-loop writes it.
 // This module merges them and names what is still missing.
@@ -22,7 +24,7 @@ export const DEFAULTS = Object.freeze({
   base: 'develop', // the loop merges here
   production: 'main', // the loop never touches it
   ciCheck: 'ci', // the one required check-run name
-  profile: '', // the profile's name, for the log
+  profile: '', // the stack profile this project uses: a folder name under loop/profiles/. '' = none
   forge: { adapter: 'github' }, // pull requests, CI results, the merge (loop/adapters/forge-*.mjs)
   // "Does the dev site serve this commit?" http-health polls devUrl + health until the body's
   // commitField starts with the merged sha and every field in expect has an allowed value.
@@ -32,6 +34,13 @@ export const DEFAULTS = Object.freeze({
   // packs: the tool rules on top of the core guard (loop/guard/packs/). allowedDbProject and
   // dbSchema belong to the database packs.
   guard: { packs: ['github'], allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '', requireBranchProtection: true },
+  // What kinds of thing an item can deliver, and how each is reviewed and accepted
+  // (loop/lib/worktypes.mjs). An item names one with `type`; `ui: true` is the type "ui",
+  // anything else "default". A profile adds its own and removes one by setting it to null.
+  workTypes: {
+    ui: { rubric: ['design_quality', 'originality', 'craft', 'functionality'], accept: 'site' },
+    default: { rubric: [], accept: 'none' },
+  },
   // What a PR may not change because CI runs through it (loop/lib/gates.mjs).
   gates: { files: [], frozenJsonKeys: [], ratchets: [] },
   review: { minDesignScore: 7, maxRounds: 2, parallelWithCi: true }, // parallelWithCi: the reviewer starts while CI runs
@@ -94,8 +103,21 @@ export function configPath(root) {
   return path.join(root, 'loop', 'loop.config.json');
 }
 
-export function profilePath(root) {
-  return path.join(root, 'loop', 'profile', 'profile.json');
+export function profilesDir(root) {
+  return path.join(root, 'loop', 'profiles');
+}
+
+export function profilePath(root, name) {
+  return path.join(profilesDir(root), name, 'profile.json');
+}
+
+/** The profile folders the repo at `root` ships. */
+export function profileNames(root) {
+  try {
+    return fs.readdirSync(profilesDir(root), { withFileTypes: true }).filter((d) => d.isDirectory() && fs.existsSync(profilePath(root, d.name))).map((d) => d.name).sort();
+  } catch {
+    return [];
+  }
 }
 
 function readJsonIfPresent(root, file) {
@@ -107,9 +129,13 @@ function readJsonIfPresent(root, file) {
   }
 }
 
-/** The stack profile of the repo at `root` ({} when it has none). Throws on invalid JSON. */
-export function loadProfile(root) {
-  return readJsonIfPresent(root, profilePath(root));
+/** The stack profile `name` of the repo at `root` ({} for no name). Throws when it does not exist or is invalid JSON. */
+export function loadProfile(root, name) {
+  if (!name) return {};
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || !fs.existsSync(profilePath(root, name))) {
+    throw new Error(`profile "${name}" (loop/loop.config.json) is not a folder under loop/profiles/ with a profile.json (known: ${profileNames(root).join(', ') || 'none'})`);
+  }
+  return readJsonIfPresent(root, profilePath(root, name));
 }
 
 /** DEFAULTS with a profile over them: what a project of that stack starts from. */
@@ -118,11 +144,12 @@ export function withProfile(profile) {
 }
 
 /**
- * The config for the repo at `root`: DEFAULTS, then the profile, then loop/loop.config.json.
- * Throws on invalid JSON.
+ * The config for the repo at `root`: DEFAULTS, then the profile loop/loop.config.json names, then
+ * loop/loop.config.json itself. Throws on invalid JSON or an unknown profile.
  */
 export function loadConfig(root) {
-  return deepMerge(withProfile(loadProfile(root)), readJsonIfPresent(root, configPath(root)));
+  const own = readJsonIfPresent(root, configPath(root));
+  return deepMerge(withProfile(loadProfile(root, own.profile)), own);
 }
 
 /**
@@ -138,7 +165,10 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!cfg.ciCheck) p.push('ciCheck: name the required CI check-run (e.g. ci)');
   if (!cfg.gitAuthor?.name) p.push('gitAuthor.name: the commit author the loop uses');
   if (!/^[^@\s]+@[^@\s]+$/.test(cfg.gitAuthor?.email || '')) p.push('gitAuthor.email: the commit author email the loop uses (some hosts only build previews for commits by a verified account email)');
-  const needsUrl = backlog ? (backlog.items || []).some((i) => i.ui) : true;
+  // A dev URL is needed when something is accepted on a deployed site: an item of such a work
+  // type in the backlog, or, before there is a backlog, any such type in the profile.
+  const onSite = (name) => cfg.workTypes?.[name]?.accept === 'site';
+  const needsUrl = backlog ? (backlog.items || []).some((i) => onSite(i.type || (i.ui ? 'ui' : 'default'))) : Object.keys(cfg.workTypes || {}).some(onSite);
   if (needsUrl && cfg.deploy?.adapter !== 'none' && !/^https?:\/\//.test(cfg.deploy?.devUrl || '')) p.push('deploy.devUrl: the URL where the base branch is deployed (milestone acceptance runs there)');
   p.push(...packProblems(cfg)); // unknown guard packs, and what each listed pack needs
   for (const r of cfg.gates?.ratchets || []) {

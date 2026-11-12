@@ -8,7 +8,7 @@ Items in this milestone:
 
 {{ITEM_TABLE}}
 
-The acceptance evaluator's latest result (scores per screen, any unresolved failures):
+The acceptance evaluator's latest result (scores, any unresolved failures):
 
 ```json
 {{ACCEPT_JSON}}
@@ -24,10 +24,10 @@ Open asks for the owner collected so far (`.loop/OWNER-ACTIONS.md`):
 
 {{>packet-shots}}
 3. Return as structured output `markdown`: a page in plain, non-technical language with
-   - **Open this**: the dev links, one per screen
+   - **Open this**: where to look, one line per screen or command
    - **What's new**: per item, one sentence and the PR number
    - **What to check**: 3–8 concrete things only a person can judge (wording, look, flow)
-   - **Screenshots**: the file list
+   - **Evidence**: the file list
    - **Needs you**: the open asks for this milestone, copy-paste exact
    - **Known gaps and risks**: honest and short
 

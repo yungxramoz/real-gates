@@ -1,11 +1,14 @@
 # Config fields
 
 Every key of `loop/loop.config.json`: the question to ask, the recommended answer, and where the
-value comes from. A key left out of the file keeps the value from the stack profile
-(`loop/profile/profile.json`), and what the profile does not set keeps its default from
-`loop/lib/config.mjs` (`DEFAULTS`). Ask only for this project's own values. What belongs to the
-stack (check commands, gate files, guard packs, adapters, the health contract) is the profile's
-and is described in `loop/profile/README.md`; do not copy it into the project config.
+value comes from. `profile` names the stack profile (a folder under `loop/profiles/`); it is
+already set by the template or by `scripts/apply-preset.mjs`, so read it, do not ask. A key left
+out of the file keeps the value from that profile, and what the profile does not set keeps its
+default from `loop/lib/config.mjs` (`DEFAULTS`). Ask only for this project's own values. What
+belongs to the stack (check commands, gate files, work types, guard packs, adapters, the health
+contract) is the profile's and is described in `loop/profiles/README.md`; do not copy it into the
+project config. A profile with `deploy.adapter` `none` and no `postMerge` steps (the CLI
+profile) has no database and no deploy step: skip those questions.
 
 ## Contents
 

@@ -99,7 +99,7 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
   "remaining": "partial only: the concrete rest, as a list a fresh session can execute",
   "owner_actions": ["Exact, copy-paste-ready ask for the owner, with values"],
   "decisions": ["D-0xx — one line"],
-  "followups": [{ "title": "…", "scope": "…", "milestone": "M2" }],
+  "followups": [{ "title": "…", "scope": "…", "milestone": "M2", "type": "work type, if not this item's" }],
   "handoff": "Gotchas and facts the next session needs: what worked, what didn't, commands, ports."
 }
 ```

@@ -53,6 +53,7 @@ fixes its cause, and that item goes through the same gates.
 | Step | You do                                                           | You get                                                                               |
 | ---- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | 1    | **Use this template** on GitHub, then clone your copy            | A repo with no history                                                                |
+| 1b   | Not a web app? `node scripts/apply-preset.mjs` lists the stacks  | The project files of that stack ([presets/node-cli](presets/node-cli/README.md))      |
 | 2    | `/setup-loop` in Claude Code                                     | `loop/loop.config.json`, guard settings, CI values, branches                          |
 | 3    | `/shape-project`                                                 | `docs/BRIEF.md`, `docs/REQUIREMENTS.md`, `loop/backlog.json`, `docs/OWNER-ACTIONS.md` |
 | 4    | `/draft-design`                                                  | `DESIGN.md` and `design/mocks/accepted/`                                              |
@@ -67,16 +68,18 @@ After the app is done, `/run-retro` carries what the run learned back into the t
 ## The four layers
 
 Each layer only knows the one below it. Read from the top down. The core loop names no framework,
-host or database: it reads the stack profile. To port to another stack, replace layer 2 (the
-profile and the app skeleton); layer 1 stays as it is. The contract between them is in
-[loop/profile/README.md](loop/profile/README.md).
+host or database: it reads a stack profile. Two ship with the template: a web app (Next.js,
+Supabase, Vercel), which the repository is as it stands, and a Node.js command-line tool, which
+`node scripts/apply-preset.mjs node-cli` turns it into. Another stack is another profile and
+app skeleton; layer 1 stays as it is. The contract between them is in
+[loop/profiles/README.md](loop/profiles/README.md).
 
 ```mermaid
 flowchart TB
   L4["4 · Project — written by you and the skills<br/>BRIEF · REQUIREMENTS · DECISIONS · LESSONS · DESIGN.md · arc42 · backlog.json"]
   L3["3 · Skills — .claude/skills/<br/>/setup-loop · /shape-project · /draft-design · /run-retro · /sync-arc42"]
-  L2a["2a · Stack profile — loop/profile/<br/>check commands · gate files · ratchets · guard packs · adapter choice · prompt fragments"]
-  L2b["2b · App skeleton and CI<br/>Next.js · /api/health · stub mode · CI job · coverage · e2e · AC trace"]
+  L2a["2a · Stack profile — loop/profiles/&lt;name&gt;/<br/>check commands · gate files · ratchets · work types · guard packs · adapter choice · prompt fragments"]
+  L2b["2b · App skeleton and CI — repo root, or presets/&lt;name&gt;/files/<br/>the app · its CI job · coverage · e2e · AC trace"]
   L1b["1b · Adapters and guard packs — loop/adapters/, loop/guard/packs/<br/>forge · deploy probe · post-merge · notify · tool rules"]
   L1["1 · Core loop — human-owned, never edited by the loop<br/>loop/run.mjs · engine · gates · guard core · prompts · state · budgets"]
   L4 --> L3 --> L2a --> L1b --> L1
@@ -84,14 +87,14 @@ flowchart TB
   L2a --> L1
 ```
 
-| Layer                | Where                                                  | Changes                                                                 |
-| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------- |
-| 1 · Core loop        | `loop/`                                                | Never by the loop. A change it wants ships as `loop/patches/<id>.patch` |
-| 1b · Adapters, packs | `loop/adapters/`, `loop/guard/packs/`                  | When a new forge, host or tool is supported                             |
-| 2a · Stack profile   | `loop/profile/`                                        | Per stack                                                               |
-| 2b · App skeleton    | `src/`, `tests/`, `.github/`, `supabase/`              | Per stack                                                               |
-| 3 · Skills           | `.claude/skills/`                                      | Rarely. Hidden from the loop (`disable-model-invocation: true`)         |
-| 4 · Project          | `docs/`, `DESIGN.md`, `CLAUDE.md`, `loop/backlog.json` | Every project                                                           |
+| Layer                | Where                                                                 | Changes                                                                 |
+| -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 1 · Core loop        | `loop/`                                                               | Never by the loop. A change it wants ships as `loop/patches/<id>.patch` |
+| 1b · Adapters, packs | `loop/adapters/`, `loop/guard/packs/`                                 | When a new forge, host or tool is supported                             |
+| 2a · Stack profile   | `loop/profiles/<name>/`                                               | Per stack; a project names one in `loop/loop.config.json`               |
+| 2b · App skeleton    | `src/`, `tests/`, `.github/`, `supabase/`; other stacks in `presets/` | Per stack                                                               |
+| 3 · Skills           | `.claude/skills/`                                                     | Rarely. Hidden from the loop (`disable-model-invocation: true`)         |
+| 4 · Project          | `docs/`, `DESIGN.md`, `CLAUDE.md`, `loop/backlog.json`                | Every project                                                           |
 
 ## Where to watch a run
 

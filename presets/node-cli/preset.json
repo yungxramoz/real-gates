@@ -1,0 +1,23 @@
+{
+  "name": "node-cli",
+  "description": "A command-line tool in plain Node.js (ESM, no build step, no runtime dependencies to start with), shipped as an npm package. Tests with node:test, coverage thresholds as a ratchet, acceptance on the packed and installed package. No deployed site, no database.",
+  "$comment": "scripts/apply-preset.mjs removes every path in `remove` (the web preset's own files) and then copies `files/` over the repository root. Everything else (loop/, .claude/, docs skeletons, the shared scripts) stays.",
+  "remove": [
+    "src",
+    "tests",
+    "supabase",
+    "design",
+    "examples",
+    "DESIGN.md",
+    "next.config.ts",
+    "postcss.config.mjs",
+    "playwright.config.ts",
+    "vitest.config.mts",
+    "eslint.config.mjs",
+    "tsconfig.json",
+    ".prettierrc.json",
+    ".prettierignore",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml"
+  ]
+}

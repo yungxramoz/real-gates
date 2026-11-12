@@ -1,7 +1,7 @@
 // The gates that need only git: the pre-merge checks and the landed check. The script decides
 // these, never an agent. They know nothing about the forge (see adapters/forge-*.mjs) and nothing
 // about the stack: which files CI runs through and which numbers may only go up come from the
-// profile (`gates` in loop/profile/profile.json).
+// profile (`gates` in loop/profiles/<name>/profile.json).
 //
 // Lessons behind them (docs/LESSONS.md, WHY.md):
 //   L-01  CI must run on what will land: the branch must contain the current base before merge.

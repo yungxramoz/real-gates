@@ -88,9 +88,9 @@ test('the core defaults name no framework, host or database', () => {
 });
 
 test('the profile sits between the defaults and the project config', () => {
-  const root = tmpRepo({ localGate: { commands: ['make check'] }, deploy: { devUrl: 'https://dev.example.com' } });
-  fs.mkdirSync(path.join(root, 'loop', 'profile'));
-  fs.writeFileSync(path.join(root, 'loop', 'profile', 'profile.json'), JSON.stringify({ profile: 'python-api', localGate: { commands: ['pytest'], timeoutMin: 5 }, deploy: { health: '/healthz', expect: { status: ['ok'] } }, guard: { packs: ['github'] } }));
+  const root = tmpRepo({ profile: 'python-api', localGate: { commands: ['make check'] }, deploy: { devUrl: 'https://dev.example.com' } });
+  fs.mkdirSync(path.join(root, 'loop', 'profiles', 'python-api'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'loop', 'profiles', 'python-api', 'profile.json'), JSON.stringify({ localGate: { commands: ['pytest'], timeoutMin: 5 }, deploy: { health: '/healthz', expect: { status: ['ok'] } }, guard: { packs: ['github'] } }));
   const cfg = loadConfig(root);
   assert.equal(cfg.profile, 'python-api');
   assert.deepEqual(cfg.localGate, { commands: ['make check'], timeoutMin: 5 }, 'the project config wins over the profile, key by key');
@@ -99,10 +99,13 @@ test('the profile sits between the defaults and the project config', () => {
 });
 
 test('an invalid profile throws a named error', () => {
-  const root = tmpRepo({});
-  fs.mkdirSync(path.join(root, 'loop', 'profile'));
-  fs.writeFileSync(path.join(root, 'loop', 'profile', 'profile.json'), '{ nope');
-  assert.throws(() => loadConfig(root), /loop[\\/]profile[\\/]profile\.json is not valid JSON/);
+  const root = tmpRepo({ profile: 'broken' });
+  fs.mkdirSync(path.join(root, 'loop', 'profiles', 'broken'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'loop', 'profiles', 'broken', 'profile.json'), '{ nope');
+  assert.throws(() => loadConfig(root), /loop[\\/]profiles[\\/]broken[\\/]profile\.json is not valid JSON/);
+  // a name with no folder, and a name that is a path
+  assert.throws(() => loadConfig(tmpRepo({ profile: 'nope' })), /profile "nope" \(loop\/loop\.config\.json\) is not a folder under loop\/profiles\//);
+  assert.throws(() => loadConfig(tmpRepo({ profile: '../x' })), /is not a folder under loop\/profiles\//);
 });
 
 test('an unknown guard pack and an unusable ratchet are named problems', () => {

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Validator for /shape-project: can the loop build from loop/backlog.json as written?
 //
-// Shape: { milestones: string[], items: [{ id, milestone, title, refs: string[], scope, ui: boolean,
-// dependsOn: string[] }] }. It also checks that ids are unique, every milestone is known and has
+// Shape: { milestones: string[], items: [{ id, milestone, title, refs: string[], scope, dependsOn: string[],
+// and either type: string (a work type of the profile) or ui: boolean }] }. It also checks that ids are unique, every milestone is known and has
 // items, dependsOn resolves without cycles or forward references to a later milestone, every AC ID
 // (AC-<n>.<n>) mentioned exists in docs/REQUIREMENTS.md exactly once, and every file ref resolves,
 // including a #heading anchor in a markdown file.
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 const HELP = `Usage: node check-backlog.mjs [--root <repo dir>] [--backlog <file>] [--requirements <file>]
 
 Checks loop/backlog.json against docs/REQUIREMENTS.md:
-  - shape: milestones[] and items[] with id, milestone, title, refs[], scope, ui (boolean), dependsOn[]
+  - shape: milestones[] and items[] with id, milestone, title, refs[], scope, dependsOn[], and type (string) or ui (boolean)
   - unique item ids, known milestones, no empty milestone
   - dependsOn resolves, has no cycles, never points at a later milestone
   - every AC ID (AC-<n>.<n>) in refs, title or scope is defined in REQUIREMENTS.md, and defined once
@@ -33,7 +33,7 @@ const AC_RE = /\bAC-\d+\.\d+\b/g;
 // An AC is *defined* where its ID opens a list item, a heading or a table row.
 const AC_DEF_RE = /^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|\|\s*)(?:\*\*|__)?(AC-\d+\.\d+)\b/gm;
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const ITEM_KEYS = { id: 'string', milestone: 'string', title: 'string', refs: 'array', scope: 'string', ui: 'boolean', dependsOn: 'array' };
+const ITEM_KEYS = { id: 'string', milestone: 'string', title: 'string', refs: 'array', scope: 'string', dependsOn: 'array' };
 
 function parseArgs(argv) {
   const args = {};
@@ -114,6 +114,8 @@ export function backlogProblems(backlog, requirementsText, { exists, read } = {}
       if (!good) p.push(`${label}: "${key}" must be ${type === 'array' ? 'a list of strings' : `a ${type}`}`);
       else if (type === 'string' && !v.trim()) p.push(`${label}: "${key}" is empty`);
     }
+    // The work type: `type` names one of the profile's (the dry run checks the name), or the older `ui` flag.
+    if (item.type !== undefined ? typeof item.type !== 'string' || !item.type.trim() : typeof item.ui !== 'boolean') p.push(`${label}: needs "type" (a work type of the profile, e.g. "command") or "ui" (true or false)`);
     if (typeof item.id === 'string') {
       if (!ID_RE.test(item.id)) p.push(`${label}: id "${item.id}" may only use letters, digits, ".", "_" and "-"`);
       if (ids.has(item.id)) p.push(`item id "${item.id}" is used twice (items[${ids.get(item.id)}] and items[${i}])`);

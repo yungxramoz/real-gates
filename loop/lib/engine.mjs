@@ -13,7 +13,8 @@ import { runClaude } from './claude.mjs';
 import { landedCheck, preMergeChecks } from './gates.mjs';
 import { forgeAdapter, postMergeAdapter } from '../adapters/index.mjs';
 import { knownCauses, recordFailure, reviewFailures, REVIEW_CATEGORIES } from './learn.mjs';
-import { REVIEW_SCHEMA } from './schemas.mjs';
+import { reviewSchema } from './schemas.mjs';
+import { workType, workTypeName } from './worktypes.mjs';
 import { runLocalGate } from './localgate.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
@@ -137,7 +138,9 @@ function reviewBody(v) {
 }
 
 async function reviewSession(L, item, s, headSha) {
+  const rubric = workType(L.cfg, item).rubric || [];
   fs.writeFileSync(L.paths.task, L.render('review.md', {
+    RUBRIC: rubric.length ? rubric.map((r) => `\`${r}\``).join(', ') : '(none: this work type has no rubric, so leave `scores` out)',
     ITEM_ID: item.id,
     PR: s.pr,
     BRANCH: s.branch,
@@ -155,22 +158,24 @@ async function reviewSession(L, item, s, headSha) {
       s.isPartial ? `The builder declared this PR a **partial** slice. What it says remains (a claim to check, not a fact): ${short(s.remaining || '(nothing listed)', 800)}` : '',
     ].filter(Boolean).join('\n\n'),
     PREVIOUS_REVIEW: s.lastReview ? `## Your previous round's findings\n\n\`\`\`json\n${JSON.stringify(s.lastReview, null, 2)}\n\`\`\`` : '',
-  }));
+  }, { variant: workTypeName(item) }));
   L.setStatus('review', item, { pr: s.pr, round: s.reviewRounds + 1 });
   for (let tryNo = 0; tryNo < 2; tryNo++) {
     const off = guardOffset(L);
-    const r = await runClaude(L.session, { prompt: 'Review the pull request described in .loop/current-task.md (read it fully first) and return your verdict as the structured output.', phase: 'review', item, timeoutMin: L.cfg.timeouts.reviewMin, model: L.cfg.reviewModel || L.cfg.model, schema: REVIEW_SCHEMA });
+    const r = await runClaude(L.session, { prompt: 'Review the pull request described in .loop/current-task.md (read it fully first) and return your verdict as the structured output.', phase: 'review', item, timeoutMin: L.cfg.timeouts.reviewMin, model: L.cfg.reviewModel || L.cfg.model, schema: reviewSchema(rubric) });
     L.checkIsolation(r);
     countGuardBlocks(L, item, off);
     if (r.gaveUp) return null;
     const v = r.structured;
     if (v && (v.verdict === 'approve' || v.verdict === 'changes')) {
       v.blocking = Array.isArray(v.blocking) ? v.blocking : [];
-      const low = Object.entries(v.scores || {}).filter(([, n]) => typeof n === 'number' && n < L.cfg.review.minDesignScore);
-      if (item.ui && low.length) {
-        for (const [k, n] of low) if (!v.blocking.some((b) => String(b.issue || '').includes(k))) v.blocking.push({ file: '(design)', issue: `${k} scored ${n} < ${L.cfg.review.minDesignScore}`, fix: v.design || 'raise it to the DESIGN.md bar', category: 'design' });
+      // The rubric is the work type's: every score must be there, and none below the bar.
+      const scored = (k) => typeof v.scores?.[k] === 'number';
+      for (const k of rubric.filter((r) => scored(r) && v.scores[r] < L.cfg.review.minDesignScore)) {
+        if (!v.blocking.some((b) => String(b.issue || '').includes(k))) v.blocking.push({ file: '(rubric)', issue: `${k} scored ${v.scores[k]} < ${L.cfg.review.minDesignScore}`, fix: v.design || 'raise it to the bar the rubric describes', category: 'design' });
       }
-      if (item.ui && !Object.keys(v.scores || {}).length) v.blocking.push({ file: '(design)', issue: 'a UI item was reviewed without design scores', fix: 'score design quality, originality, craft and functionality', category: 'design' });
+      const unscored = rubric.filter((r) => !scored(r));
+      if (unscored.length) v.blocking.push({ file: '(rubric)', issue: `the item was reviewed without a score for: ${unscored.join(', ')}`, fix: 'score every rubric dimension from 1 to 10', category: 'design' });
       if (v.blocking.length) v.verdict = 'changes';
       try {
         const body = path.join(path.dirname(L.paths.result), 'review-body.md');
@@ -191,7 +196,7 @@ export function addFollowup(L, item, f) {
   if (count >= L.cfg.maxFollowups || !f?.title) return;
   const id = `FUP-${count + 1}`;
   const milestone = L.backlog.milestones.includes(f.milestone) ? f.milestone : item.milestone;
-  L.store.addExtra({ kind: 'followup', id, milestone, title: short(f.title, 120), scope: short(f.scope || f.title, 800), refs: [`raised by ${item.id}`], ui: true, dependsOn: [item.id] });
+  L.store.addExtra({ kind: 'followup', id, milestone, title: short(f.title, 120), scope: short(f.scope || f.title, 800), refs: [`raised by ${item.id}`], type: L.cfg.workTypes?.[f.type] ? f.type : workTypeName(item), dependsOn: [item.id] });
   L.progress(`${item.id} · follow-up ${id} queued (${milestone}): ${short(f.title, 120)}`);
 }
 

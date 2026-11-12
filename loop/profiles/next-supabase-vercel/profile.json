@@ -1,6 +1,5 @@
 {
-  "$comment": "The stack profile: everything the core loop needs to know about what this project is built with. The core (loop/run.mjs, loop/lib, loop/guard/core.mjs) names no framework, host or database; it reads this file. Order of precedence: defaults in loop/lib/config.mjs, then this profile, then loop/loop.config.json (this project's own values). The contract is described in loop/profile/README.md.",
-  "profile": "next-supabase-vercel",
+  "$comment": "A stack profile: everything the core loop needs to know about what a project is built with. The core (loop/run.mjs, loop/lib, loop/guard/core.mjs) names no framework, host or database; it reads the profile that \"profile\" in loop/loop.config.json names. Order of precedence: defaults in loop/lib/config.mjs, then this file, then loop/loop.config.json. The contract is described in loop/profiles/README.md.",
   "forge": { "adapter": "github" },
   "guard": { "packs": ["github", "supabase", "vercel"] },
   "localGate": { "commands": ["pnpm check"] },

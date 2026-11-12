@@ -1,0 +1,13 @@
+{
+  "$comment": "Written by /setup-loop: this project's own values. \"profile\" names the stack profile (a folder under loop/profiles/). Every other key overrides that profile, which overrides the defaults in loop/lib/config.mjs; anything left out keeps the value from there. Check it with: node loop/run.mjs --dry-run",
+  "profile": "node-cli",
+  "repo": "",
+  "base": "develop",
+  "production": "main",
+  "ciCheck": "ci",
+  "guard": { "forbiddenRefs": [], "protectedPaths": [".env*", "loop/**", ".github/**", ".claude/**"] },
+  "review": { "minDesignScore": 7, "maxRounds": 2 },
+  "budgets": { "maxSessions": 150, "maxHours": 120, "maxUsdPerSession": 25, "maxUsdPerRun": 0 },
+  "notify": { "ntfyTopic": "" },
+  "gitAuthor": { "name": "", "email": "" }
+}

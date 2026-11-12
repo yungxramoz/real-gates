@@ -36,6 +36,8 @@ const config = [
       'artifacts/**',
       'coverage/**',
       'node_modules/**',
+      // another stack's skeleton, copied as it is by scripts/apply-preset.mjs
+      'presets/**',
       'test-results/**',
       'playwright-report/**',
       '**/*.d.ts',

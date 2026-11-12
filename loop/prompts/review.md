@@ -37,13 +37,10 @@ Review round {{REVIEW_ROUND}} · item **{{ITEM_ID}}** · PR #{{PR}} · branch `{
      proof. A missing or weakened criterion is blocking.
    - **Hard rules** in `CLAUDE.md` (database, secrets, git) and **lessons** in `docs/LESSONS.md`.
    {{>review-drive}}
-   - **Design rubric** (UI items), each scored 1–10 and calibrated against `DESIGN.md` and the
-     accepted mocks in `design/mocks/accepted/` (open and screenshot them as your reference for an
-     8–9): **design quality** (a coherent whole in the project's design language), **originality**
-     (the project's own voice, not template layouts or generic AI patterns), **craft** (hierarchy,
-     spacing, alignment, contrast, states, the smallest supported width without horizontal scroll), **functionality**
-     (a first-time user finds the primary action and finishes the task). **Any score below
-     {{MIN_SCORE}} is a blocking finding**, with a concrete fix.
+   - **Rubric** for this item's work type. Score each of these from 1 to 10 in `scores`, under
+     exactly these keys: {{RUBRIC}}. **Any score below {{MIN_SCORE}} is a blocking finding**, with a
+     concrete fix.
+     {{>review-rubric}}
    - **Scope**: no unrelated changes, no stray files, `docs/BACKLOG.md` and `docs/DECISIONS.md`
      updated where they should be, architecture docs (`docs/architecture/`) updated when a module,
      an integration or a crosscutting rule changed.
@@ -63,5 +60,5 @@ when it fits, and coin a new one only when none does. Keys this run already uses
 (category/cause): {{KNOWN_CAUSES}}
 
 Return the verdict as your structured output (the runner gave you its schema). `verdict` is
-`approve` exactly when `blocking` is empty. Omit `scores` for non-UI items. The runner posts your
+`approve` exactly when `blocking` is empty. Leave `scores` out when the rubric above is empty. The runner posts your
 summary and findings on the PR.

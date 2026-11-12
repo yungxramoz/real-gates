@@ -16,10 +16,11 @@
 // of the snapshot the runner checks after every session.
 
 import * as github from './github.mjs';
+import * as npm from './npm.mjs';
 import * as supabase from './supabase.mjs';
 import * as vercel from './vercel.mjs';
 
-export const PACKS = { [github.name]: github, [supabase.name]: supabase, [vercel.name]: vercel };
+export const PACKS = { [github.name]: github, [npm.name]: npm, [supabase.name]: supabase, [vercel.name]: vercel };
 
 /** The pack modules for these names, in order. Throws on an unknown name: the guard fails closed. */
 export function loadPacks(names) {

@@ -21,6 +21,7 @@ import { changedFiles, fingerprint, harnessFiles, snapshotGuard, writeSettings }
 import { countFailure, runItem, settleBaseCi } from './lib/engine.mjs';
 import { READ_ONLY_PHASES } from './guard/core.mjs';
 import { packMilestones } from './lib/milestones.mjs';
+import { workTypeProblems } from './lib/worktypes.mjs';
 import { adapterProblems, forgeAdapter, notifyAdapter } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
 
@@ -135,23 +136,27 @@ async function sleepUnlessStopped(ms) {
     await new Promise((r) => setTimeout(r, Math.min(30_000, end - Date.now())));
   }
 }
-/** `{{>name}}` in a core prompt pulls in loop/profile/prompts/<name>.md: the stack's own words for that step. */
+/** `{{>name}}` in a core prompt pulls in loop/profiles/<profile>/prompts/<name>.md: the stack's own words for that step. */
 const INCLUDE = /\{\{>([\w-]+)\}\}/g;
-const fragmentFile = (frag) => path.join(ROOT, 'loop', 'profile', 'prompts', `${frag}.md`);
+const fragmentFile = (frag) => path.join(ROOT, 'loop', 'profiles', cfg.profile || '(no profile)', 'prompts', `${frag}.md`);
+const fragmentPath = (frag) => `loop/profiles/${cfg.profile || '<profile>'}/prompts/${frag}.md`;
+/** A profile with several work types may word a step per type or per acceptance mode: `<name>.<variant>.md` wins over `<name>.md`. */
+const fragmentFor = (frag, variant) => (variant && fs.existsSync(fragmentFile(`${frag}.${variant}`)) ? fragmentFile(`${frag}.${variant}`) : fragmentFile(frag));
 function promptProblems() {
   const p = [];
   const dir = path.join(ROOT, 'loop', 'prompts');
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
     for (const m of fs.readFileSync(path.join(dir, f), 'utf8').matchAll(INCLUDE)) {
-      if (!fs.existsSync(fragmentFile(m[1]))) p.push(`loop/prompts/${f} includes {{>${m[1]}}}, but the profile has no loop/profile/prompts/${m[1]}.md`);
+      if (!fs.existsSync(fragmentFile(m[1]))) p.push(`loop/prompts/${f} includes {{>${m[1]}}}, but ${cfg.profile ? 'the profile has no' : 'loop.config.json names no profile, so there is no'} ${fragmentPath(m[1])}`);
     }
   }
   return p;
 }
-function render(name, vars) {
+function render(name, vars, { variant } = {}) {
   const tpl = fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8').replace(INCLUDE, (_, frag) => {
-    if (!fs.existsSync(fragmentFile(frag))) throw new Error(`loop/prompts/${name} includes {{>${frag}}}, but the profile has no loop/profile/prompts/${frag}.md`);
-    return fs.readFileSync(fragmentFile(frag), 'utf8').trim();
+    const file = fragmentFor(frag, variant);
+    if (!fs.existsSync(file)) throw new Error(`loop/prompts/${name} includes {{>${frag}}}, but the profile has no ${fragmentPath(frag)}`);
+    return fs.readFileSync(file, 'utf8').trim();
   });
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => {
     if (vars[k] === undefined) throw new Error(`loop/prompts/${name} uses {{${k}}}, but the runner supplies no value for it`);
@@ -355,7 +360,7 @@ function preflight() {
   problems.push(...configProblems(cfg, { backlog }).map((p) => `loop/loop.config.json → ${p} (/setup-loop sets it)`));
   problems.push(...backlogProblems(backlog));
   const badAdapters = adapterProblems(cfg);
-  problems.push(...badAdapters, ...promptProblems());
+  problems.push(...badAdapters, ...promptProblems(), ...workTypeProblems(cfg, backlog));
   for (const s of cfg.postMerge || []) if (s.dbUrlEnv && !process.env[s.dbUrlEnv]) warn.push(`${s.dbUrlEnv} is not set: the first merge with a migration will hold until it is.`);
   if (!proc.sh('git', ['--version'], { allowFail: true }).ok) problems.push('git is not on PATH');
   else if (!proc.gitTry('rev-parse', '--verify', `origin/${cfg.base}`).ok) (args.dry ? warn : problems).push(`origin/${cfg.base} does not exist: create and push the ${cfg.base} branch (/setup-loop does)`);

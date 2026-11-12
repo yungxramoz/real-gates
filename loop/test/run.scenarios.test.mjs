@@ -505,11 +505,11 @@ test('postMergeOnRedBase "wait": migrations are applied only after the fix item 
 
 test('a prompt that includes a fragment the profile does not have stops the run in the preflight', async () => {
   const sb = box();
-  fs.rmSync(path.join(sb.root, 'loop', 'profile', 'prompts', 'review-drive.md'));
+  fs.rmSync(path.join(sb.root, 'loop', 'profiles', 'next-supabase-vercel', 'prompts', 'review-drive.md'));
   sb.queue(smokeStep(), happyItem('A1'));
   const r = await sb.run();
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /loop\/prompts\/review\.md includes \{\{>review-drive\}\}, but the profile has no loop\/profile\/prompts\/review-drive\.md/);
+  assert.match(r.stderr, /loop\/prompts\/review\.md includes \{\{>review-drive\}\}, but the profile has no loop\/profiles\/next-supabase-vercel\/prompts\/review-drive\.md/);
   assert.equal(sb.calls().length, 0);
 });
 
@@ -522,9 +522,9 @@ test('the build task carries the profile\'s own words for proving a change', asy
   assert.doesNotMatch(task, /\{\{>/);
   // the same core prompt with another profile's fragment
   const other = box();
-  fs.writeFileSync(path.join(other.root, 'loop', 'profile', 'prompts', 'build-proof.md'), '- `make check` must pass. Item {{ITEM_ID}}.\n');
+  fs.writeFileSync(path.join(other.root, 'loop', 'profiles', 'next-supabase-vercel', 'prompts', 'build-proof.md'), '- `make check` must pass. Item {{ITEM_ID}}.\n');
   // committed on the base, as a real profile is: the runner keeps uncommitted tracked changes aside
-  other.git('add', 'loop/profile/prompts/build-proof.md');
+  other.git('add', 'loop/profiles/next-supabase-vercel/prompts/build-proof.md');
   other.git('commit', '-q', '-m', 'another profile');
   other.git('push', '-q', 'origin', 'develop');
   other.queue(smokeStep(), { text: 'no result' });

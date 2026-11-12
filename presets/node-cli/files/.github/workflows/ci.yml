@@ -1,0 +1,202 @@
+name: CI
+
+# Runs on every PR to the base and production branches, and on every push to them: the loop waits
+# for `ci` on the merge commit, so base CI must run after a merge too. Make `ci` the one required
+# status check in branch protection.
+#
+# One job, not one per check. GitHub bills every job rounded up to a whole minute, so parallel
+# one-minute jobs bill a minute each for one minute of wall clock. Every check step runs even when
+# an earlier one failed (`!cancelled()`), so one red step never hides another, and the last step
+# names every step that did not pass.
+#
+# Adding a check: add a step with `if: ${{ !cancelled() }}` and an `id`, and add the id to the
+# final step's list. A check that is not in that list does not gate the merge.
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Did this change touch the template's own code (the runner, the skills, the repo scripts,
+      # the workflows)? The runner refuses a loop PR that edits those paths, so on almost every PR
+      # their suites would re-test code that cannot have changed. They run when the paths changed,
+      # and whenever that cannot be told (no commit to compare with, a failed fetch).
+      - name: changes
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          known=0
+          files=''
+          if [ "$EVENT" = "pull_request" ]; then
+            if git fetch --no-tags --depth=1 origin "$BASE_REF" && files=$(git diff --name-only "origin/${BASE_REF}" HEAD); then
+              known=1
+            fi
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            if git fetch --no-tags --depth=1 origin "$BEFORE" && files=$(git diff --name-only "$BEFORE" HEAD); then
+              known=1
+            fi
+          fi
+          harness=true
+          if [ "$known" = "1" ] && ! printf '%s\n' "$files" | grep -Eq '^(loop/|scripts/|\.claude/|\.github/|package\.json$)'; then
+            harness=false
+          fi
+          echo "harness=${harness}" >> "$GITHUB_OUTPUT"
+          echo "Template-owned paths changed: ${harness}"
+
+      - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # `npm ci`: an out-of-date lockfile is a red build, not a silent re-resolve.
+      - name: install
+        id: install
+        if: ${{ !cancelled() }}
+        run: npm ci
+
+      # Syntax of every source file, then the unit tests with coverage. The numbers in
+      # coverage.thresholds.json are a ratchet: a run below them fails here.
+      - name: check
+        id: check
+        if: ${{ !cancelled() }}
+        run: npm run check
+
+      # The real binary as a child process, and the package packed and installed into an empty
+      # folder: a file that `files` in package.json forgot fails here.
+      - name: e2e
+        id: e2e
+        if: ${{ !cancelled() }}
+        run: npm run test:e2e
+
+      # Every AC a contract names (docs/contracts/<item>.md, committed with the PR that builds
+      # it) must be named by a test case that ran and passed in the JUnit reports the two steps
+      # above wrote (artifacts/junit). Skipped and todo tests do not count; no report is a failure.
+      # ACs no contract names yet are listed as pending. The runner refuses a PR whose contract
+      # leaves out one of its item's ACs, so an item cannot dodge this by writing less.
+      - name: ac-trace
+        id: ac_trace
+        if: ${{ !cancelled() }}
+        run: npm run ac-trace -- --results artifacts/junit
+
+      # The project rule table may only grow. On a PR it is compared with the base branch; on a
+      # push with the commit the push replaced.
+      - name: check:rules
+        id: check_rules
+        if: ${{ !cancelled() }}
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            npm run check:rules -- --base "origin/${BASE_REF}"
+          elif [ -n "${BEFORE:-}" ] && [ "${BEFORE}" != "0000000000000000000000000000000000000000" ]; then
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+            npm run check:rules -- --base "$BEFORE"
+          else
+            echo "::notice::No earlier commit to compare with; checking the rule examples only."
+            npm run check:rules
+          fi
+
+      - name: check:skills
+        id: check_skills
+        if: ${{ !cancelled() }}
+        env:
+          HARNESS: ${{ steps.changes.outputs.harness }}
+        run: |
+          set -euo pipefail
+          if [ "$HARNESS" = "false" ]; then
+            echo "::notice::No template-owned path changed; check:skills has nothing new to check."
+            exit 0
+          fi
+          npm run check:skills
+
+      # No identifiers from another project, no personal data, no secrets in the tree.
+      - name: sanitize
+        id: sanitize
+        if: ${{ !cancelled() }}
+        run: npm run sanitize
+
+      # The loop runner's own suite (Node built-ins).
+      - name: test:loop
+        id: test_loop
+        if: ${{ !cancelled() }}
+        env:
+          HARNESS: ${{ steps.changes.outputs.harness }}
+        run: |
+          set -euo pipefail
+          if [ "$HARNESS" = "false" ]; then
+            echo "::notice::No template-owned path changed; the runner suite has nothing new to test."
+            exit 0
+          fi
+          # The suite creates real git repos; a runner without an identity cannot commit in them.
+          git config --global user.name "loop-runner CI"
+          git config --global user.email "loop-runner@example.com"
+          npm run test:loop
+
+      - name: test:scripts
+        id: test_scripts
+        if: ${{ !cancelled() }}
+        env:
+          HARNESS: ${{ steps.changes.outputs.harness }}
+        run: |
+          set -euo pipefail
+          if [ "$HARNESS" = "false" ]; then
+            echo "::notice::No template-owned path changed; the script suites have nothing new to test."
+            exit 0
+          fi
+          npm run test:scripts
+
+      # Allow-list, not a deny-list: only `success` passes. A skipped check has not passed.
+      - name: Every check must have run and passed
+        if: ${{ always() }}
+        env:
+          OUTCOMES: >-
+            install=${{ steps.install.outcome }}
+            check=${{ steps.check.outcome }}
+            e2e=${{ steps.e2e.outcome }}
+            ac_trace=${{ steps.ac_trace.outcome }}
+            check_rules=${{ steps.check_rules.outcome }}
+            check_skills=${{ steps.check_skills.outcome }}
+            sanitize=${{ steps.sanitize.outcome }}
+            test_loop=${{ steps.test_loop.outcome }}
+            test_scripts=${{ steps.test_scripts.outcome }}
+        run: |
+          set -uo pipefail
+          bad=''
+          for pair in $OUTCOMES; do
+            echo "  ${pair}"
+            [ "${pair#*=}" = "success" ] || bad="${bad} ${pair}"
+          done
+          if [ -n "$bad" ]; then
+            for b in $bad; do echo "::error::CI check did not pass: ${b}"; done
+            exit 1
+          fi
+          echo ""
+          echo "CI green: every check ran and passed."

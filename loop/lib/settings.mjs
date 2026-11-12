@@ -9,7 +9,7 @@ import { writeJson } from './state.mjs';
 import { packDeny } from '../guard/packs/index.mjs';
 
 /** The guard and the modules it imports, at their repo paths. */
-export const GUARD_FILES = ['loop/guard.mjs', 'loop/guard/core.mjs', 'loop/guard/shared.mjs', 'loop/guard/paths.mjs', 'loop/guard/rules.mjs', 'loop/guard/packs/index.mjs', 'loop/guard/packs/postgres-sql.mjs', 'loop/guard/packs/github.mjs', 'loop/guard/packs/supabase.mjs', 'loop/guard/packs/vercel.mjs', 'loop/lib/config.mjs'];
+export const GUARD_FILES = ['loop/guard.mjs', 'loop/guard/core.mjs', 'loop/guard/shared.mjs', 'loop/guard/paths.mjs', 'loop/guard/rules.mjs', 'loop/guard/packs/index.mjs', 'loop/guard/packs/postgres-sql.mjs', 'loop/guard/packs/github.mjs', 'loop/guard/packs/npm.mjs', 'loop/guard/packs/supabase.mjs', 'loop/guard/packs/vercel.mjs', 'loop/lib/config.mjs'];
 
 /**
  * Copy the guard from origin/<base> into .loop/guard/ (a protected path), with the runner's own

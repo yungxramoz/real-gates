@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { isolationProblems, runClaude, runClaudeOnce, sessionArgs } from '../lib/claude.mjs';
-import { REVIEW_SCHEMA } from '../lib/schemas.mjs';
+import { reviewSchema } from '../lib/schemas.mjs';
+
+const REVIEW_SCHEMA = reviewSchema(['design_quality', 'craft']);
 import { sessionSettings } from '../lib/settings.mjs';
 import { DEFAULTS, deepMerge } from '../lib/config.mjs';
 import { PRESET } from './helpers/preset.mjs';

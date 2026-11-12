@@ -77,7 +77,9 @@ Formats and examples for every file: [reference/doc-formats.md](reference/doc-fo
 - Milestones: each one ends in something the owner can try on the dev site. The first milestone is
   the thinnest end-to-end slice of the core journey.
 - `loop/backlog.json`: one item is one PR a single session can finish (contract, code, tests,
-  screenshots). Split anything larger. `ui: true` when the item changes what a user sees.
+  screenshots). Split anything larger. `ui: true` when the item changes what a user sees; in a
+  profile with its own work types (`workTypes` in `loop/profiles/<name>/profile.json`), set
+  `type` instead.
   `dependsOn` only for real build order.
 - `docs/BACKLOG.md`: the milestones in prose: goal, what "done" looks like, the items in order.
 

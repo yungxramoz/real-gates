@@ -46,13 +46,26 @@ The loop is three things, kept apart:
 | | Where | Knows |
 | --- | --- | --- |
 | **Core** | `loop/run.mjs`, `loop/lib/`, `loop/guard/core.mjs`, `loop/prompts/` | The method: the item engine, the gates, git, the read-only steps. No framework, host or database |
-| **Stack profile** | `loop/profile/` | What this stack is: the check commands, the files CI runs through, the ratchets, which guard packs and adapters to use, and the stack's words for each step |
-| **Project config** | `loop/loop.config.json` | This project's own values: repo, branches, the dev URL, the git author |
+| **Stack profile** | `loop/profiles/<name>/`, named by `profile` in the project config | What this stack is: the check commands, the files CI runs through, the ratchets, the work types, which guard packs and adapters to use, and the stack's words for each step |
+| **Project config** | `loop/loop.config.json` | Which profile, and this project's own values: repo, branches, the dev URL, the git author |
 
 Behind the profile's choices sit **adapters** (`loop/adapters/`: the forge, the deploy probe, the
 post-merge steps, notifications) and **guard packs** (`loop/guard/packs/`: the rules for one tool
 or service). The core only calls their interfaces. Another stack is another profile and app
-skeleton; another forge or host is another adapter. The contract: [profile/README.md](profile/README.md).
+skeleton; another forge or host is another adapter. The contract: [profiles/README.md](profiles/README.md).
+
+Two profiles ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
+(`node scripts/apply-preset.mjs node-cli`). This page describes the web preset where it has to
+name a tool; where the two differ, the profile decides:
+
+| | Web app | Node CLI |
+| --- | --- | --- |
+| Local gate | `pnpm check` | `npm run check` |
+| Work types | `ui` (four design scores), `default` | `command` (help and errors, ergonomics, output, robustness), `default` |
+| Milestone acceptance | on the deployed dev site | on the merged base: packed, installed under `.loop/`, used from there |
+| Post-merge steps | migrations to the dev database | none |
+| Guard packs | `github`, `supabase`, `vercel` | `github`, `npm` |
+| Ratchet | coverage thresholds in the Vitest config | `coverage.thresholds.json` |
 
 ## Prerequisites (once)
 
@@ -131,7 +144,7 @@ cannot run, the action is refused. The runner starts sessions with a copy of the
 base branch, so a change in the working tree cannot switch a rule off. Its locked
 core (`loop/guard/core.mjs`) holds the git, file and read-only rules. The rules for a tool or
 service are in guard packs (`loop/guard/packs/`), switched on by `guard.packs` in the profile
-(the preset: `github`, `supabase`, `vercel`). A pack can only block, an unknown pack name refuses
+(the web preset: `github`, `supabase`, `vercel`; the CLI preset: `github`, `npm`). A pack can only block, an unknown pack name refuses
 every call, and the packs are part of the snapshot. Together they block:
 
 | Area | Blocked |
