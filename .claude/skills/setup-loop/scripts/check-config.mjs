@@ -23,7 +23,8 @@ Checks that this clone is ready for the unattended loop:
   - git remote "origin" exists and has the base and production branches
   - gh is logged in and can see the configured repo
   - Claude Code is at least the version floor in loop/lib/config.mjs
-  - Node is new enough for the runner, Playwright and its Chromium are installed
+  - Node is new enough for the runner; Playwright and its Chromium are installed, when the
+    project's package.json declares @playwright/test
 
   --root <dir>    repo root (default: the nearest folder above the current one with loop/loop.config.json)
   --config-only   skip the git, gh, claude and Playwright checks
@@ -192,9 +193,27 @@ function playwrightBrowserDir(root) {
   return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'ms-playwright');
 }
 
+/** The project's package manager, from its lockfile: what a "run this" hint has to name. */
+function packageManager(root) {
+  return fs.existsSync(path.join(root, 'pnpm-lock.yaml')) ? { install: 'pnpm install', exec: 'pnpm exec' } : { install: 'npm install', exec: 'npx' };
+}
+
+/**
+ * Browser prerequisites, only for a project that declares Playwright. A stack without it (a
+ * command-line tool, a library) has nothing to install here, and asking for it would keep the
+ * validator from ever reaching "ready".
+ */
 function checkPlaywright(root) {
+  let pkg = {};
+  try {
+    pkg = readJson(path.join(root, 'package.json'));
+  } catch {
+    // no readable package.json: nothing declares Playwright
+  }
+  if (!{ ...pkg.dependencies, ...pkg.devDependencies }['@playwright/test']) return;
+  const pm = packageManager(root);
   if (!fs.existsSync(path.join(root, 'node_modules', '@playwright', 'test'))) {
-    problem('playwright', '@playwright/test is not installed; run "pnpm install"');
+    problem('playwright', `@playwright/test is not installed; run "${pm.install}"`);
   }
   const dir = playwrightBrowserDir(root);
   let entries = [];
@@ -204,7 +223,7 @@ function checkPlaywright(root) {
     // no browser folder yet: reported below
   }
   if (!entries.some((e) => /^chromium/.test(e))) {
-    problem('playwright', `no Chromium for Playwright in ${dir}; run "pnpm exec playwright install chromium"`);
+    problem('playwright', `no Chromium for Playwright in ${dir}; run "${pm.exec} playwright install chromium"`);
   } else ok('playwright', `Chromium found in ${dir}`);
 }
 

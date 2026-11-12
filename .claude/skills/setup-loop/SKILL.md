@@ -23,7 +23,11 @@ Done means: `node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"` prints `ready`
 4. **Write only these files**: `loop/loop.config.json`, `.env.example`, the `branches:` filters in
    `.github/workflows/*.yml`, and new rows in `docs/OWNER-ACTIONS.md`. Never edit `loop/run.mjs`,
    `loop/lib/`, `loop/guard*` or `loop/backlog.json`.
-5. **Secrets stay out of git.** `.env.example` holds names with empty values. Never ask the user to
+5. **Ask only what this stack needs.** `profile` in `loop/loop.config.json` names the stack profile
+   (`loop/profiles/<name>/profile.json`). Read it first. No `postMerge` steps there: skip step 4
+   (database). `deploy.adapter` is `none`: skip step 5 (deploy). Use the project's package manager
+   in every command you show (`pnpm` with a `pnpm-lock.yaml`, otherwise `npm`).
+6. **Secrets stay out of git.** `.env.example` holds names with empty values. Never ask the user to
    paste a secret into the chat; tell them where it goes.
 
 ## Workflow
@@ -33,10 +37,10 @@ Copy this checklist into your reply and tick it off as you go:
 ```
 Setup progress:
 - [ ] 1. Baseline: run the validator, read the current config
-- [ ] 2. Tools: Node, Claude Code, gh, pnpm install, Playwright Chromium
+- [ ] 2. Tools: Node, Claude Code, gh, dependencies installed, a browser for the tests if the stack uses one
 - [ ] 3. Repo and branches (repo, base, production, ciCheck)
-- [ ] 4. Database (allowed project, forbidden projects, DB URL variable)
-- [ ] 5. Deploy (dev URL, health path, bypass secret variable)
+- [ ] 4. Database (allowed project, forbidden projects, DB URL variable), if the profile has one
+- [ ] 5. Deploy (dev URL, health path, bypass secret variable), if the profile deploys
 - [ ] 6. Notify topic and git author
 - [ ] 7. Write the config, .env.example, CI branch filters, owner actions
 - [ ] 8. Validate: run check-config, fix, repeat until "ready"
@@ -60,8 +64,10 @@ Fix what the validator named, in this order. Each fix is the user's command or n
 
 - Claude Code below the floor in `loop/lib/config.mjs` → the user runs `claude update`.
 - `gh` not logged in → the user runs `! gh auth login`.
-- `@playwright/test` missing → ask, then `pnpm install`.
-- No Chromium → ask, then `pnpm exec playwright install chromium`.
+- `@playwright/test` missing → ask, then install the dependencies (`pnpm install` or `npm install`).
+- No Chromium → ask, then install it (`pnpm exec playwright install chromium`).
+
+The validator names the last two only for a project whose `package.json` declares Playwright.
 
 MCP servers: loop sessions see only servers in the repo's own `.mcp.json` (the runner passes
 `--strict-mcp-config`). Run `claude mcp list` and tell the user which personal servers the loop will
