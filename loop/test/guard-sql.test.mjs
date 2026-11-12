@@ -5,7 +5,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SQL_BLOCK_REASONS as R, sqlBlockReason, stripSqlComments } from '../guard/sql.mjs';
+import { SQL_BLOCK_REASONS as R, sqlBlockReason, stripSqlComments } from '../guard/packs/postgres-sql.mjs';
 
 const W = { allowWrite: true, schema: 'app' }; // a session allowed to write, app schema only
 

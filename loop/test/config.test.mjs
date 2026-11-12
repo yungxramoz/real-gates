@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { DEFAULTS, configProblems, deepMerge, loadConfig, versionNumber } from '../lib/config.mjs';
+import { PRESET } from './helpers/preset.mjs';
 
 function tmpRepo(config) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-config-'));
@@ -37,17 +38,17 @@ test('invalid JSON throws a named error', () => {
 });
 
 test('empty repo is a named problem', () => {
-  const p = configProblems(deepMerge(DEFAULTS, { ...runnable, repo: '' }));
+  const p = configProblems(deepMerge(PRESET, { ...runnable, repo: '' }));
   assert.equal(p.length, 1);
   assert.match(p[0], /^repo:/);
 });
 
 test('a fully set config has no problems', () => {
-  assert.deepEqual(configProblems(deepMerge(DEFAULTS, runnable)), []);
+  assert.deepEqual(configProblems(deepMerge(PRESET, runnable)), []);
 });
 
 test('base equal to production is rejected', () => {
-  const p = configProblems(deepMerge(DEFAULTS, { ...runnable, base: 'main' }));
+  const p = configProblems(deepMerge(PRESET, { ...runnable, base: 'main' }));
   assert.ok(p.some((x) => /both "main"/.test(x)));
 });
 
@@ -65,16 +66,59 @@ test('arrays replace instead of merging', () => {
 });
 
 test('dev URL is only required when the backlog has UI', () => {
-  const cfg = deepMerge(DEFAULTS, { ...runnable, deploy: { devUrl: '' } });
+  const cfg = deepMerge(PRESET, { ...runnable, deploy: { devUrl: '' } });
   assert.ok(configProblems(cfg, { backlog: { items: [{ ui: true }] } }).some((x) => /devUrl/.test(x)));
   assert.ok(!configProblems(cfg, { backlog: { items: [{ ui: false }] } }).some((x) => /devUrl/.test(x)));
 });
 
 test('bypassing permissions is not a supported mode', () => {
-  assert.ok(configProblems(deepMerge(DEFAULTS, { ...runnable, permissionMode: 'bypassPermissions' })).some((x) => /not supported/.test(x)));
+  assert.ok(configProblems(deepMerge(PRESET, { ...runnable, permissionMode: 'bypassPermissions' })).some((x) => /not supported/.test(x)));
 });
 
 test('version numbers compare', () => {
   assert.ok(versionNumber('2.1.319 (Claude Code)') > versionNumber('2.1.295'));
   assert.equal(versionNumber('nope'), 0);
+});
+
+test('the core defaults name no framework, host or database', () => {
+  assert.doesNotMatch(JSON.stringify(DEFAULTS), /supabase|vercel|vitest|playwright|pnpm|next/i);
+  assert.deepEqual(DEFAULTS.postMerge, []);
+  assert.deepEqual(DEFAULTS.gates, { files: [], frozenJsonKeys: [], ratchets: [] });
+  assert.deepEqual(DEFAULTS.guard.packs, ['github']);
+});
+
+test('the profile sits between the defaults and the project config', () => {
+  const root = tmpRepo({ localGate: { commands: ['make check'] }, deploy: { devUrl: 'https://dev.example.com' } });
+  fs.mkdirSync(path.join(root, 'loop', 'profile'));
+  fs.writeFileSync(path.join(root, 'loop', 'profile', 'profile.json'), JSON.stringify({ profile: 'python-api', localGate: { commands: ['pytest'], timeoutMin: 5 }, deploy: { health: '/healthz', expect: { status: ['ok'] } }, guard: { packs: ['github'] } }));
+  const cfg = loadConfig(root);
+  assert.equal(cfg.profile, 'python-api');
+  assert.deepEqual(cfg.localGate, { commands: ['make check'], timeoutMin: 5 }, 'the project config wins over the profile, key by key');
+  assert.deepEqual(cfg.deploy, { adapter: 'http-health', devUrl: 'https://dev.example.com', health: '/healthz', commitField: 'commit', expect: { status: ['ok'] }, bypassSecretEnv: '', bypassHeader: '' });
+  assert.equal(cfg.base, 'develop', 'what neither names keeps its default');
+});
+
+test('an invalid profile throws a named error', () => {
+  const root = tmpRepo({});
+  fs.mkdirSync(path.join(root, 'loop', 'profile'));
+  fs.writeFileSync(path.join(root, 'loop', 'profile', 'profile.json'), '{ nope');
+  assert.throws(() => loadConfig(root), /loop[\\/]profile[\\/]profile\.json is not valid JSON/);
+});
+
+test('an unknown guard pack and an unusable ratchet are named problems', () => {
+  const p = configProblems(deepMerge(PRESET, { ...runnable, guard: { packs: ['github', 'oracle'] }, gates: { ratchets: [{ name: 'cov', files: ['x'], number: '(' }] } }));
+  assert.ok(p.some((x) => /guard\.packs: "oracle" is not a guard pack/.test(x)), p.join('|'));
+  assert.ok(p.some((x) => /gates\.ratchets: "cov" is not usable/.test(x)), p.join('|'));
+});
+
+test('a pack asks for what it needs: the database pack wants the allowed project', () => {
+  const noRef = deepMerge(PRESET, { ...runnable, guard: { allowedDbProject: '' } });
+  assert.ok(configProblems(noRef).some((x) => /allowedDbProject/.test(x)));
+  // without the pack, nobody asks
+  assert.ok(!configProblems(deepMerge(noRef, { guard: { packs: ['github'] } })).some((x) => /allowedDbProject/.test(x)));
+});
+
+test('no deployed site: adapter "none" needs no dev URL even with UI items', () => {
+  const cfg = deepMerge(PRESET, { ...runnable, deploy: { adapter: 'none', devUrl: '' } });
+  assert.ok(!configProblems(cfg, { backlog: { items: [{ ui: true }] } }).some((x) => /devUrl/.test(x)));
 });

@@ -7,39 +7,14 @@ import path from 'node:path';
 
 import { runClaude } from './claude.mjs';
 import { goalPrompt, settleBaseCi } from './engine.mjs';
+import { deployAdapter } from '../adapters/index.mjs';
 import { ACCEPT_SCHEMA, PACKET_SCHEMA } from './schemas.mjs';
 import { writeJson, readJson } from './state.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Poll the dev site's health endpoint until it serves `sha` (and a healthy db). The acceptance
- * evaluator must test what was merged, not an older deployment. {ok} | {ok:false, why}
- */
-export async function waitForDeploy(L, sha) {
-  const d = L.cfg.deploy || {};
-  if (!d.devUrl) return { ok: false, why: 'deploy.devUrl is not set' };
-  const url = d.devUrl.replace(/\/$/, '') + (d.health || '/api/health');
-  const headers = {};
-  const bypass = d.bypassSecretEnv && L.envBase[d.bypassSecretEnv];
-  if (bypass) headers['x-vercel-protection-bypass'] = bypass;
-  const deadline = Date.now() + (L.cfg.timeouts.deployMin ?? 20) * 60_000;
-  let last = '';
-  for (;;) {
-    if (L.stopRequested()) return { ok: false, why: 'stopped' };
-    try {
-      const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
-      const body = await res.json().catch(() => ({}));
-      last = `HTTP ${res.status}, commit ${body.commit ?? '?'}, db ${body.db ?? '?'}`;
-      if (res.ok && String(body.commit || '').startsWith(sha.slice(0, 7)) && ['ok', 'stub'].includes(body.db)) return { ok: true };
-    } catch (e) {
-      last = String(e.message || e);
-    }
-    if (Date.now() > deadline) return { ok: false, why: `${url} never served ${sha.slice(0, 7)} with a healthy db (last: ${last})` };
-    await sleep(L.cfg.pollMs ?? 30_000);
-  }
-}
+/** The deployed site this project's acceptance runs on, behind the deploy adapter the config names. */
+const deploy = (L) => deployAdapter(L.cfg.deploy?.adapter);
 
 async function acceptSession(L, m, round, sha) {
   const items = L.store.allItems().filter((i) => i.milestone === m);
@@ -51,7 +26,8 @@ async function acceptSession(L, m, round, sha) {
     BASE: L.cfg.base,
     DEV_URL: L.cfg.deploy.devUrl,
     HEALTH: L.cfg.deploy.health,
-    BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || 'VERCEL_BYPASS',
+    BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || '(none)',
+    BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
     MIN_SCORE: L.cfg.review.minDesignScore,
     BASE_SHA_SHORT: sha.slice(0, 7),
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status} · refs: ${(i.refs || []).join('; ')}`).join('\n'),
@@ -75,7 +51,8 @@ async function packetSession(L, m) {
   fs.writeFileSync(L.paths.task, L.render('packet.md', {
     MILESTONE: m,
     DEV_URL: L.cfg.deploy.devUrl,
-    BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || 'VERCEL_BYPASS',
+    BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || '(none)',
+    BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status}${L.store.st(i.id).prs?.length ? ` · PR ${L.store.st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}`).join('\n'),
     OWNER_ACTIONS: L.ownerActionsTail(60),
     ACCEPT_JSON: JSON.stringify({ ...readJson(path.join(L.paths.run, `accept-${m}.json`), { note: 'no acceptance run (no UI items)' }), ...(L.store.S.accept[m]?.unverified ? { fixesNotReAccepted: 'These failures are from the last acceptance round. Their fix items merged through CI and review but were not re-tested on the dev site: say so in the packet.' } : {}) }, null, 2),
@@ -108,10 +85,11 @@ export async function packMilestones(L, only) {
     if (settled.stop) return { stop: settled.stop };
     if (settled.queued || L.stopRequested()) return {};
     const a = (S.accept[m] ||= { rounds: 0, passed: false });
-    if (inM.some((i) => i.ui) && !a.passed && a.rounds < L.cfg.maxAcceptRounds) {
+    // No deployed site (deploy.adapter 'none'): nothing to accept on, the packet is written as is.
+    if (inM.some((i) => i.ui) && L.cfg.deploy?.adapter !== 'none' && !a.passed && a.rounds < L.cfg.maxAcceptRounds) {
       L.proc.git('fetch', 'origin', '--prune');
       const sha = L.proc.git('rev-parse', `origin/${L.cfg.base}`);
-      const dep = await waitForDeploy(L, sha);
+      const dep = await deploy(L).waitUntilServing(L, sha);
       if (!dep.ok) {
         if (dep.why === 'stopped') return {};
         L.ownerAction(m, `The dev site does not serve the merged ${L.cfg.base} (${dep.why}). Check the deployment, then re-run the loop: acceptance for ${m} runs first.`);

@@ -1,11 +1,18 @@
 // Loop configuration: defaults, loading and validation.
 //
-// Every value the original runner had hardcoded (repo, branch names, the one database project the
-// loop may touch, the dev URL, the git author) lives in loop/loop.config.json. /setup-loop writes
-// that file; this module fills in the defaults and names what is still missing.
+// Three layers, later ones win:
+//   1. DEFAULTS below: what the core loop needs whatever the project is built with. No framework,
+//      host or database is named here.
+//   2. loop/profile/profile.json: the stack profile. Which commands prove a change, which files CI
+//      runs through, which guard packs and adapters the stack needs (loop/profile/README.md).
+//   3. loop/loop.config.json: this project's own values (repo, branches, the dev URL, the git
+//      author). /setup-loop writes it.
+// This module merges them and names what is still missing.
 
 import fs from 'node:fs';
 import path from 'node:path';
+
+import { packProblems } from '../guard/packs/index.mjs';
 
 /** Oldest Claude Code the loop runs on: --permission-prompts none, fail-closed hooks, /goal. */
 export const MIN_CLAUDE_VERSION = '2.1.319';
@@ -15,9 +22,18 @@ export const DEFAULTS = Object.freeze({
   base: 'develop', // the loop merges here
   production: 'main', // the loop never touches it
   ciCheck: 'ci', // the one required check-run name
-  deploy: { adapter: 'vercel-preview', devUrl: '', health: '/api/health', bypassSecretEnv: 'VERCEL_BYPASS' },
-  postMerge: [{ adapter: 'supabase-cli', dbUrlEnv: 'DEV_DB_URL', migrationsDir: 'supabase/migrations', holdOnUnverified: true }],
-  guard: { allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '', requireBranchProtection: true },
+  profile: '', // the profile's name, for the log
+  forge: { adapter: 'github' }, // pull requests, CI results, the merge (loop/adapters/forge-*.mjs)
+  // "Does the dev site serve this commit?" http-health polls devUrl + health until the body's
+  // commitField starts with the merged sha and every field in expect has an allowed value.
+  // adapter 'none': nothing is deployed, so no milestone acceptance on a site.
+  deploy: { adapter: 'http-health', devUrl: '', health: '/api/health', commitField: 'commit', expect: {}, bypassSecretEnv: '', bypassHeader: '' },
+  postMerge: [], // steps the runner takes after a merge (loop/adapters/postmerge-*.mjs)
+  // packs: the tool rules on top of the core guard (loop/guard/packs/). allowedDbProject and
+  // dbSchema belong to the database packs.
+  guard: { packs: ['github'], allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '', requireBranchProtection: true },
+  // What a PR may not change because CI runs through it (loop/lib/gates.mjs).
+  gates: { files: [], frozenJsonKeys: [], ratchets: [] },
   review: { minDesignScore: 7, maxRounds: 2, parallelWithCi: true }, // parallelWithCi: the reviewer starts while CI runs
   budgets: { maxSessions: 150, maxHours: 120, maxUsdPerSession: 25, maxUsdPerRun: 0 }, // maxUsdPerRun 0 = no run cap
   // Environment variables no agent session may see, on top of every postMerge[].dbUrlEnv (always
@@ -28,7 +44,7 @@ export const DEFAULTS = Object.freeze({
   localGate: { commands: [], timeoutMin: 20 },
   contractsDir: 'docs/contracts', // <dir>/<item id>.md, written by the build session
 
-  notify: { ntfyTopic: '' },
+  notify: { adapter: 'ntfy', ntfyTopic: '' },
   gitAuthor: { name: '', email: '' },
   // Per-item limits, unchanged from the original run.
   maxAttemptsPerItem: 3, // failed / no-result build sessions before an item is marked failed
@@ -78,18 +94,35 @@ export function configPath(root) {
   return path.join(root, 'loop', 'loop.config.json');
 }
 
-/** The config for the repo at `root`: loop/loop.config.json over DEFAULTS. Throws on invalid JSON. */
-export function loadConfig(root) {
-  const file = configPath(root);
-  let raw = {};
-  if (fs.existsSync(file)) {
-    try {
-      raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch (e) {
-      throw new Error(`${path.relative(root, file)} is not valid JSON: ${e.message}`);
-    }
+export function profilePath(root) {
+  return path.join(root, 'loop', 'profile', 'profile.json');
+}
+
+function readJsonIfPresent(root, file) {
+  if (!fs.existsSync(file)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    throw new Error(`${path.relative(root, file)} is not valid JSON: ${e.message}`);
   }
-  return deepMerge(DEFAULTS, raw);
+}
+
+/** The stack profile of the repo at `root` ({} when it has none). Throws on invalid JSON. */
+export function loadProfile(root) {
+  return readJsonIfPresent(root, profilePath(root));
+}
+
+/** DEFAULTS with a profile over them: what a project of that stack starts from. */
+export function withProfile(profile) {
+  return deepMerge(DEFAULTS, profile || {});
+}
+
+/**
+ * The config for the repo at `root`: DEFAULTS, then the profile, then loop/loop.config.json.
+ * Throws on invalid JSON.
+ */
+export function loadConfig(root) {
+  return deepMerge(withProfile(loadProfile(root)), readJsonIfPresent(root, configPath(root)));
 }
 
 /**
@@ -98,18 +131,25 @@ export function loadConfig(root) {
  */
 export function configProblems(cfg, { backlog } = {}) {
   const p = [];
-  if (!/^[\w.-]+\/[\w.-]+$/.test(cfg.repo || '')) p.push('repo: set it to the GitHub "owner/name" of this repository');
+  if (!/^[\w.-]+\/[\w.-]+$/.test(cfg.repo || '')) p.push('repo: set it to the "owner/name" of this repository on the forge');
   if (!cfg.base) p.push('base: name the branch the loop merges into (e.g. develop)');
   if (!cfg.production) p.push('production: name the production branch (e.g. main)');
   if (cfg.base && cfg.base === cfg.production) p.push(`base and production are both "${cfg.base}": the loop must never merge into production`);
   if (!cfg.ciCheck) p.push('ciCheck: name the required CI check-run (e.g. ci)');
   if (!cfg.gitAuthor?.name) p.push('gitAuthor.name: the commit author the loop uses');
-  if (!/^[^@\s]+@[^@\s]+$/.test(cfg.gitAuthor?.email || '')) p.push('gitAuthor.email: the commit author email the loop uses (Vercel only builds previews for commits by a verified account email)');
+  if (!/^[^@\s]+@[^@\s]+$/.test(cfg.gitAuthor?.email || '')) p.push('gitAuthor.email: the commit author email the loop uses (some hosts only build previews for commits by a verified account email)');
   const needsUrl = backlog ? (backlog.items || []).some((i) => i.ui) : true;
-  if (needsUrl && !/^https?:\/\//.test(cfg.deploy?.devUrl || '')) p.push('deploy.devUrl: the URL where the base branch is deployed (milestone acceptance runs there)');
-  const usesDb = (cfg.postMerge || []).some((s) => s.adapter === 'supabase-cli');
-  if (usesDb && !cfg.guard?.allowedDbProject) p.push('guard.allowedDbProject: the one Supabase project ref the loop may touch');
-  if ((cfg.guard?.forbiddenRefs || []).includes(cfg.guard?.allowedDbProject) && cfg.guard?.allowedDbProject) p.push('guard.forbiddenRefs contains guard.allowedDbProject');
+  if (needsUrl && cfg.deploy?.adapter !== 'none' && !/^https?:\/\//.test(cfg.deploy?.devUrl || '')) p.push('deploy.devUrl: the URL where the base branch is deployed (milestone acceptance runs there)');
+  p.push(...packProblems(cfg)); // unknown guard packs, and what each listed pack needs
+  for (const r of cfg.gates?.ratchets || []) {
+    try {
+      if (!r?.name || !Array.isArray(r.files) || !r.number) throw new Error('needs name, files and number');
+      new RegExp(r.number);
+      if (r.within) new RegExp(r.within);
+    } catch (e) {
+      p.push(`gates.ratchets: "${r?.name || '?'}" is not usable (${e.message})`);
+    }
+  }
   if (!['auto', 'acceptEdits'].includes(cfg.permissionMode)) p.push(`permissionMode "${cfg.permissionMode}" is not supported: use "auto" (the loop never bypasses permissions)`);
   if (!(cfg.review?.minDesignScore >= 1 && cfg.review?.minDesignScore <= 10)) p.push('review.minDesignScore must be between 1 and 10');
   if (!(cfg.budgets?.maxUsdPerSession > 0)) p.push('budgets.maxUsdPerSession must be a positive number');

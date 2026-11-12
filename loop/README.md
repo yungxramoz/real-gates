@@ -39,6 +39,21 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
 Why each step is there: [../WHY.md](../WHY.md). It is deliberately **sequential**: concurrent
 agents sharing one working tree are what broke the setup this loop replaced.
 
+## Core, profile, project
+
+The loop is three things, kept apart:
+
+| | Where | Knows |
+| --- | --- | --- |
+| **Core** | `loop/run.mjs`, `loop/lib/`, `loop/guard/core.mjs`, `loop/prompts/` | The method: the item engine, the gates, git, the read-only steps. No framework, host or database |
+| **Stack profile** | `loop/profile/` | What this stack is: the check commands, the files CI runs through, the ratchets, which guard packs and adapters to use, and the stack's words for each step |
+| **Project config** | `loop/loop.config.json` | This project's own values: repo, branches, the dev URL, the git author |
+
+Behind the profile's choices sit **adapters** (`loop/adapters/`: the forge, the deploy probe, the
+post-merge steps, notifications) and **guard packs** (`loop/guard/packs/`: the rules for one tool
+or service). The core only calls their interfaces. Another stack is another profile and app
+skeleton; another forge or host is another adapter. The contract: [profile/README.md](profile/README.md).
+
 ## Prerequisites (once)
 
 `/setup-loop` checks and writes all of this. By hand:
@@ -113,8 +128,11 @@ runs.
 
 **The guard** (`loop/guard.mjs`) is a fail-closed PreToolUse hook on every loop session: if it
 cannot run, the action is refused. The runner starts sessions with a copy of the guard from the
-base branch, so a change in the working tree cannot switch a rule off. Its locked core
-(`loop/guard/core.mjs`) blocks:
+base branch, so a change in the working tree cannot switch a rule off. Its locked
+core (`loop/guard/core.mjs`) holds the git, file and read-only rules. The rules for a tool or
+service are in guard packs (`loop/guard/packs/`), switched on by `guard.packs` in the profile
+(the preset: `github`, `supabase`, `vercel`). A pack can only block, an unknown pack name refuses
+every call, and the packs are part of the snapshot. Together they block:
 
 | Area | Blocked |
 | --- | --- |

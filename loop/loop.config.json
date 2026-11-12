@@ -1,15 +1,14 @@
 {
-  "$comment": "Written by /setup-loop. Every key overrides a default in loop/lib/config.mjs; anything left out keeps its default. Check it with: node loop/run.mjs --dry-run",
+  "$comment": "Written by /setup-loop: this project's own values. Every key overrides the stack profile (loop/profile/profile.json), which overrides the defaults in loop/lib/config.mjs; anything left out keeps the value from there. Check it with: node loop/run.mjs --dry-run",
   "repo": "",
   "base": "develop",
   "production": "main",
   "ciCheck": "ci",
-  "deploy": { "adapter": "vercel-preview", "devUrl": "", "health": "/api/health", "bypassSecretEnv": "VERCEL_BYPASS" },
+  "deploy": { "devUrl": "", "health": "/api/health", "bypassSecretEnv": "VERCEL_BYPASS" },
   "postMerge": [{ "adapter": "supabase-cli", "dbUrlEnv": "DEV_DB_URL", "migrationsDir": "supabase/migrations", "holdOnUnverified": true }],
   "guard": { "allowedDbProject": "", "forbiddenRefs": [], "protectedPaths": [".env*", "loop/**", ".github/**", ".claude/**"], "dbSchema": "" },
   "review": { "minDesignScore": 7, "maxRounds": 2 },
   "budgets": { "maxSessions": 150, "maxHours": 120, "maxUsdPerSession": 25, "maxUsdPerRun": 0 },
-  "localGate": { "commands": ["pnpm check"] },
   "notify": { "ntfyTopic": "" },
   "gitAuthor": { "name": "", "email": "" }
 }

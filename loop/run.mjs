@@ -17,12 +17,11 @@ import { configProblems, loadConfig, MIN_CLAUDE_VERSION, versionNumber } from '.
 import { backlogProblems, createState, HELD_PHASE, readJson, TERMINAL, writeJson } from './lib/state.mjs';
 import { binary, createProc } from './lib/proc.mjs';
 import { isolationProblems, repoMcpServers, runClaudeOnce, sessionEnv, userSkillNames } from './lib/claude.mjs';
-import { branchProtected } from './lib/github.mjs';
 import { changedFiles, fingerprint, harnessFiles, snapshotGuard, writeSettings } from './lib/settings.mjs';
 import { countFailure, runItem, settleBaseCi } from './lib/engine.mjs';
 import { READ_ONLY_PHASES } from './guard/core.mjs';
 import { packMilestones } from './lib/milestones.mjs';
-import { POST_MERGE } from './adapters/index.mjs';
+import { adapterProblems, forgeAdapter, notifyAdapter } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
 
 // ------------------------------------------------------------------------------------------ setup
@@ -119,9 +118,8 @@ function ownerAction(itemId, text) {
   fs.writeFileSync(paths.owner, existing + `- [ ] **${itemId}** — ${t}  _(${stamp()})_\n`);
 }
 async function notify(title, body) {
-  if (!cfg.notify?.ntfyTopic) return;
   try {
-    await fetch(`https://ntfy.sh/${cfg.notify.ntfyTopic}`, { method: 'POST', headers: { Title: title }, body });
+    await notifyAdapter(cfg.notify?.adapter).send(cfg.notify, title, body);
   } catch {}
 }
 function setStatus(phase, item, extra = {}) {
@@ -137,8 +135,24 @@ async function sleepUnlessStopped(ms) {
     await new Promise((r) => setTimeout(r, Math.min(30_000, end - Date.now())));
   }
 }
+/** `{{>name}}` in a core prompt pulls in loop/profile/prompts/<name>.md: the stack's own words for that step. */
+const INCLUDE = /\{\{>([\w-]+)\}\}/g;
+const fragmentFile = (frag) => path.join(ROOT, 'loop', 'profile', 'prompts', `${frag}.md`);
+function promptProblems() {
+  const p = [];
+  const dir = path.join(ROOT, 'loop', 'prompts');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
+    for (const m of fs.readFileSync(path.join(dir, f), 'utf8').matchAll(INCLUDE)) {
+      if (!fs.existsSync(fragmentFile(m[1]))) p.push(`loop/prompts/${f} includes {{>${m[1]}}}, but the profile has no loop/profile/prompts/${m[1]}.md`);
+    }
+  }
+  return p;
+}
 function render(name, vars) {
-  const tpl = fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8');
+  const tpl = fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8').replace(INCLUDE, (_, frag) => {
+    if (!fs.existsSync(fragmentFile(frag))) throw new Error(`loop/prompts/${name} includes {{>${frag}}}, but the profile has no loop/profile/prompts/${frag}.md`);
+    return fs.readFileSync(fragmentFile(frag), 'utf8').trim();
+  });
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => {
     if (vars[k] === undefined) throw new Error(`loop/prompts/${name} uses {{${k}}}, but the runner supplies no value for it`);
     return String(vars[k] ?? '');
@@ -211,7 +225,7 @@ function beforeSession() {
     warnedTree = true;
     log(`⚠ the guard is not on origin/${cfg.base} yet: sessions use the working-tree copy until it is.`);
   }
-  writeSettings(paths.settings, snap.entry);
+  writeSettings(paths.settings, snap.entry, cfg);
   const files = harnessFiles(snap, paths.settings);
   harness = { files, prints: fingerprint(files) };
 }
@@ -340,17 +354,13 @@ function preflight() {
   if (!fs.existsSync(path.join(ROOT, 'CLAUDE.md'))) problems.push('CLAUDE.md not found: run from the repository');
   problems.push(...configProblems(cfg, { backlog }).map((p) => `loop/loop.config.json → ${p} (/setup-loop sets it)`));
   problems.push(...backlogProblems(backlog));
-  for (const s of cfg.postMerge || []) if (!POST_MERGE[s.adapter]) problems.push(`postMerge adapter "${s.adapter}" is unknown (known: ${Object.keys(POST_MERGE).join(', ')})`);
+  const badAdapters = adapterProblems(cfg);
+  problems.push(...badAdapters, ...promptProblems());
   for (const s of cfg.postMerge || []) if (s.dbUrlEnv && !process.env[s.dbUrlEnv]) warn.push(`${s.dbUrlEnv} is not set: the first merge with a migration will hold until it is.`);
   if (!proc.sh('git', ['--version'], { allowFail: true }).ok) problems.push('git is not on PATH');
   else if (!proc.gitTry('rev-parse', '--verify', `origin/${cfg.base}`).ok) (args.dry ? warn : problems).push(`origin/${cfg.base} does not exist: create and push the ${cfg.base} branch (/setup-loop does)`);
-  const ghOk = proc.ghTry('auth', 'status').ok;
-  if (!ghOk) (args.dry ? warn : problems).push('gh is not logged in (`gh auth login`)');
-  // Nobody reviews the loop's PRs, so GitHub itself has to refuse a push to the base. The runner's
-  // after-session check only notices one once it has happened.
-  if (ghOk && cfg.repo && cfg.guard?.requireBranchProtection !== false && !branchProtected({ proc, cfg }, cfg.base)) {
-    (args.dry ? warn : problems).push(`${cfg.base} has no branch protection or ruleset on GitHub. Protect it: require a pull request and the "${cfg.ciCheck}" status check, no required approvals, no direct or force pushes (docs/OWNER-ACTIONS.md). If your GitHub plan does not offer protection for this repository, set guard.requireBranchProtection to false in loop/loop.config.json and accept that a stray push is only noticed afterwards.`);
-  }
+  // The forge's own preconditions: logged in, and the base branch protected there.
+  if (!badAdapters.length) (args.dry ? warn : problems).push(...forgeAdapter(cfg.forge?.adapter).preflightProblems({ proc, cfg }));
   if (process.env.ANTHROPIC_API_KEY && !cfg.allowApiKey) warn.push('ANTHROPIC_API_KEY is set: the loop removes it from its sessions so they run on your subscription.');
   const claude = binary('claude', process.env);
   const v = proc.sh(claude.cmd, [...claude.pre, '--version'], { allowFail: true, timeoutMs: 60_000 });

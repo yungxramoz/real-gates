@@ -32,21 +32,16 @@ Review round {{REVIEW_ROUND}} · item **{{ITEM_ID}}** · PR #{{PR}} · branch `{
    `git diff origin/{{BASE}}...origin/{{BRANCH}}`. Read changed files whole where the diff is not enough.
 3. Check each of these and cite evidence:
    - **Acceptance criteria**: each one met, or explicitly the owner's. New logic without tests is
-     blocking. UI without a Playwright journey whose title carries the AC ID is blocking.
+     blocking. UI without an end-to-end journey whose title carries the AC ID is blocking.
    - **The contract** `docs/contracts/{{ITEM_ID}}.md`: every AC from the docs is in it with real
      proof. A missing or weakened criterion is blocking.
    - **Hard rules** in `CLAUDE.md` (database, secrets, git) and **lessons** in `docs/LESSONS.md`.
-   - **Use it like a user** (UI items): check the branch out into a temporary worktree
-     (`git worktree add .loop/review-wt origin/{{BRANCH}}`, install, build, start it on a free
-     unusual port) and drive the flows with Playwright the way a first-time user would: click,
-     type, submit, go back, keyboard only, the empty and error states, at 360 px and desktop. Don't
-     stop at the happy path the author tested. Screenshot into `.loop/shots/{{ITEM_ID}}-review/`
-     and look at every shot. Remove the worktree afterwards (`git worktree remove --force .loop/review-wt`).
+   {{>review-drive}}
    - **Design rubric** (UI items), each scored 1–10 and calibrated against `DESIGN.md` and the
      accepted mocks in `design/mocks/accepted/` (open and screenshot them as your reference for an
      8–9): **design quality** (a coherent whole in the project's design language), **originality**
      (the project's own voice, not template layouts or generic AI patterns), **craft** (hierarchy,
-     spacing, alignment, contrast, states, 360 px without horizontal scroll), **functionality**
+     spacing, alignment, contrast, states, the smallest supported width without horizontal scroll), **functionality**
      (a first-time user finds the primary action and finishes the task). **Any score below
      {{MIN_SCORE}} is a blocking finding**, with a concrete fix.
    - **Scope**: no unrelated changes, no stray files, `docs/BACKLOG.md` and `docs/DECISIONS.md`

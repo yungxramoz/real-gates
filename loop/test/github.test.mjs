@@ -8,7 +8,11 @@ import { spawnSync } from 'node:child_process';
 
 import { makeSandbox } from './helpers/sandbox.mjs';
 import { createProc } from '../lib/proc.mjs';
-import { coverageThresholds, landedCheck, mergePr, preMergeChecks, prView, waitForCommitCi, waitForPrCi } from '../lib/github.mjs';
+import { landedCheck, preMergeChecks, ratchetValues } from '../lib/gates.mjs';
+import { mergePr, prView, waitForCommitCi, waitForPrCi } from '../adapters/forge-github.mjs';
+import { PRESET } from './helpers/preset.mjs';
+
+const coverageThresholds = (text) => ratchetValues(text, PRESET.gates.ratchets[0]);
 
 const boxes = [];
 after(() => boxes.forEach((b) => b.cleanup()));
@@ -229,7 +233,7 @@ test('a PR merged by someone else is reported as merged, not closed', async () =
 });
 
 test('pre-merge refuses a missing contract and a contract that leaves out an AC of the item', async () => {
-  const { itemAcs } = await import('../lib/github.mjs');
+  const { itemAcs } = await import('../lib/gates.mjs');
   const item = { id: 'E1-1', title: 'Form', refs: ['AC-1.1', 'docs/REQUIREMENTS.md'], scope: 'Covers AC-1.2 and AC-1.10.' };
   assert.deepEqual(itemAcs(item), ['AC-1.2', 'AC-1.10', 'AC-1.1']);
   const { sb, ctx } = setup();
@@ -249,7 +253,7 @@ test('pre-merge refuses a missing contract and a contract that leaves out an AC 
 });
 
 test('branch protection is read from the branch or from a ruleset', async () => {
-  const { branchProtected } = await import('../lib/github.mjs');
+  const { branchProtected } = await import('../adapters/forge-github.mjs');
   const { sb, ctx } = setup();
   assert.equal(branchProtected(ctx, 'develop'), true);
   sb.setGhState((s) => (s.unprotected = ['develop']));
@@ -259,7 +263,7 @@ test('branch protection is read from the branch or from a ruleset', async () => 
 });
 
 test('one look at base CI: pending, green, red with the failing log', async () => {
-  const { checkCommitCi } = await import('../lib/github.mjs');
+  const { checkCommitCi } = await import('../adapters/forge-github.mjs');
   const { sb, ctx } = setup();
   const sha = sb.originGit('rev-parse', 'develop');
   sb.setGhState((s) => (s.baseCiQueue = ['pending']));
@@ -272,4 +276,40 @@ test('one look at base CI: pending, green, red with the failing log', async () =
   assert.deepEqual(red.jobs, ['unit tests']);
   sb.setGhState((s) => (s.ci[sha] = 'starved'));
   assert.equal(checkCommitCi(ctx, sha).state, 'starved');
+});
+
+test('a ratchet is described by the profile: a hash-comment config with one number works the same way', async () => {
+  const ratchet = { name: 'coverage', files: ['pyproject.toml'], comments: 'hash', number: '\\b(fail_under)\\s*=\\s*(\\d+(?:\\.\\d+)?)', hint: 'Add tests instead.' };
+  assert.deepEqual(ratchetValues('[tool.coverage.report]\n# fail_under = 100\nfail_under = 85\n', ratchet), { fail_under: 85 });
+  const toml = (n, extra = '') => `[tool.coverage.report]\nfail_under = ${n}\n${extra}`;
+  const gates = { files: ['Makefile'], frozenJsonKeys: [], ratchets: [ratchet] };
+  const { sb, ctx } = setup({ config: { gates }, files: { 'pyproject.toml': toml(85), Makefile: 'check:\n\tpytest\n' } });
+  openPr(sb, 'feat/lower', { 'pyproject.toml': toml(80) });
+  assert.match(preMergeChecks(ctx, { branch: 'feat/lower' }).text, /coverage threshold fail_under went from 85 to 80 — the ratchet only goes up\. Add tests instead\./);
+  openPr(sb, 'feat/omit', { 'pyproject.toml': toml(90, 'omit = ["src/*"]\n') });
+  assert.match(preMergeChecks(ctx, { branch: 'feat/omit' }).text, /only the coverage threshold numbers may change/);
+  openPr(sb, 'feat/make', { Makefile: 'check:\n\ttrue\n' });
+  assert.match(preMergeChecks(ctx, { branch: 'feat/make' }).text, /`Makefile` \(M\): CI runs through it/);
+  openPr(sb, 'feat/raise', { 'pyproject.toml': toml(90), 'src/x.py': 'x = 1\n' });
+  assert.deepEqual(preMergeChecks(ctx, { branch: 'feat/raise' }), { ok: true });
+});
+
+test('with no gates in the profile, the core protects only the harness', async () => {
+  const { sb, ctx } = setup({ config: { gates: { files: [], frozenJsonKeys: [], ratchets: [] } }, files: { 'package.json': '{"scripts":{"a":"b"}}\n' } });
+  openPr(sb, 'feat/a', { 'package.json': '{"scripts":{"a":"c"}}\n', 'tsconfig.json': '{}\n' });
+  assert.deepEqual(preMergeChecks(ctx, { branch: 'feat/a' }), { ok: true });
+  openPr(sb, 'feat/b', { 'loop/run.mjs': '// edited\n' });
+  assert.match(preMergeChecks(ctx, { branch: 'feat/b' }).text, /loop\/run\.mjs/);
+});
+
+test('adapters are picked by name, and an unknown name is a preflight problem', async () => {
+  const { adapterProblems, deployAdapter, forgeAdapter, notifyAdapter } = await import('../adapters/index.mjs');
+  assert.equal(forgeAdapter('github').name, 'github');
+  assert.deepEqual(await deployAdapter('none').waitUntilServing({}, 'abc'), { ok: true });
+  await notifyAdapter('none').send({}, 't', 'b');
+  assert.throws(() => forgeAdapter('gitlab'), /unknown forge adapter "gitlab" \(known: github\)/);
+  assert.deepEqual(adapterProblems(PRESET), []);
+  const p = adapterProblems({ forge: { adapter: 'gitlab' }, deploy: { adapter: 'vercel-preview' }, notify: { adapter: 'slack' }, postMerge: [{ adapter: 'flyway' }] });
+  assert.equal(p.length, 4);
+  assert.match(p.join('|'), /deploy adapter "vercel-preview" is unknown \(known: http-health, none\)/);
 });

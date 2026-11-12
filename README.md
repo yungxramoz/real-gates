@@ -66,27 +66,32 @@ After the app is done, `/run-retro` carries what the run learned back into the t
 
 ## The four layers
 
-Each layer only knows the one below it. Read from the top down. To port to another stack, replace
-layer 2b only.
+Each layer only knows the one below it. Read from the top down. The core loop names no framework,
+host or database: it reads the stack profile. To port to another stack, replace layer 2 (the
+profile and the app skeleton); layer 1 stays as it is. The contract between them is in
+[loop/profile/README.md](loop/profile/README.md).
 
 ```mermaid
 flowchart TB
   L4["4 · Project — written by you and the skills<br/>BRIEF · REQUIREMENTS · DECISIONS · LESSONS · DESIGN.md · arc42 · backlog.json"]
   L3["3 · Skills — .claude/skills/<br/>/setup-loop · /shape-project · /draft-design · /run-retro · /sync-arc42"]
-  L2a["2a · Gate adapters<br/>CI · review · merge · post-merge · deploy · notify"]
-  L2b["2b · Stack preset<br/>Next.js · /api/health · stub mode · CI · coverage · e2e · AC trace"]
-  L1["1 · Core loop — human-owned, never edited by the loop<br/>loop/run.mjs · guard · rule table · prompts · state · budgets"]
-  L4 --> L3 --> L2a --> L1
-  L3 --> L2b --> L1
+  L2a["2a · Stack profile — loop/profile/<br/>check commands · gate files · ratchets · guard packs · adapter choice · prompt fragments"]
+  L2b["2b · App skeleton and CI<br/>Next.js · /api/health · stub mode · CI job · coverage · e2e · AC trace"]
+  L1b["1b · Adapters and guard packs — loop/adapters/, loop/guard/packs/<br/>forge · deploy probe · post-merge · notify · tool rules"]
+  L1["1 · Core loop — human-owned, never edited by the loop<br/>loop/run.mjs · engine · gates · guard core · prompts · state · budgets"]
+  L4 --> L3 --> L2a --> L1b --> L1
+  L3 --> L2b
+  L2a --> L1
 ```
 
-| Layer              | Where                                                  | Changes                                                                 |
-| ------------------ | ------------------------------------------------------ | ----------------------------------------------------------------------- |
-| 1 · Core loop      | `loop/`                                                | Never by the loop. A change it wants ships as `loop/patches/<id>.patch` |
-| 2a · Gate adapters | `loop/adapters/`                                       | Per project, through `loop/loop.config.json`                            |
-| 2b · Stack preset  | `src/`, `tests/`, `.github/`, `supabase/`              | Per stack                                                               |
-| 3 · Skills         | `.claude/skills/`                                      | Rarely. Hidden from the loop (`disable-model-invocation: true`)         |
-| 4 · Project        | `docs/`, `DESIGN.md`, `CLAUDE.md`, `loop/backlog.json` | Every project                                                           |
+| Layer                | Where                                                  | Changes                                                                 |
+| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| 1 · Core loop        | `loop/`                                                | Never by the loop. A change it wants ships as `loop/patches/<id>.patch` |
+| 1b · Adapters, packs | `loop/adapters/`, `loop/guard/packs/`                  | When a new forge, host or tool is supported                             |
+| 2a · Stack profile   | `loop/profile/`                                        | Per stack                                                               |
+| 2b · App skeleton    | `src/`, `tests/`, `.github/`, `supabase/`              | Per stack                                                               |
+| 3 · Skills           | `.claude/skills/`                                      | Rarely. Hidden from the loop (`disable-model-invocation: true`)         |
+| 4 · Project          | `docs/`, `DESIGN.md`, `CLAUDE.md`, `loop/backlog.json` | Every project                                                           |
 
 ## Where to watch a run
 

@@ -1,8 +1,11 @@
 # Config fields
 
 Every key of `loop/loop.config.json`: the question to ask, the recommended answer, and where the
-value comes from. Defaults live in `loop/lib/config.mjs` (`DEFAULTS`); a key left out of the file
-keeps its default.
+value comes from. A key left out of the file keeps the value from the stack profile
+(`loop/profile/profile.json`), and what the profile does not set keeps its default from
+`loop/lib/config.mjs` (`DEFAULTS`). Ask only for this project's own values. What belongs to the
+stack (check commands, gate files, guard packs, adapters, the health contract) is the profile's
+and is described in `loop/profile/README.md`; do not copy it into the project config.
 
 ## Contents
 

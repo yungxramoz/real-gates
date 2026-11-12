@@ -2,7 +2,7 @@
 
 Milestone **{{MILESTONE}}** is finished as far as the loop can take it. Write the owner's "come
 look" page. The loop does not wait for them: it carries on with the next milestone. You are
-read-only: you have no file-editing tools; screenshots go under `.loop/` through Playwright.
+read-only: you have no file-editing tools; screenshots go under `.loop/`.
 
 Items in this milestone:
 
@@ -22,9 +22,7 @@ Open asks for the owner collected so far (`.loop/OWNER-ACTIONS.md`):
 
 ## Procedure
 
-1. Dev URL: `{{DEV_URL}}` (send `{{BYPASS_ENV}}` as the `x-vercel-protection-bypass` header if it is set).
-2. With Playwright, screenshot every screen this milestone added or changed at 360 px, a common
-   phone size and one desktop width, into `.loop/reviews/{{MILESTONE}}/`. Look at each one.
+{{>packet-shots}}
 3. Return as structured output `markdown`: a page in plain, non-technical language with
    - **Open this**: the dev links, one per screen
    - **What's new**: per item, one sentence and the PR number

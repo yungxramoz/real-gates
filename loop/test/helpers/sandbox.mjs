@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULTS, deepMerge } from '../../lib/config.mjs';
+import { deepMerge } from '../../lib/config.mjs';
+import { PRESET } from './preset.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOOP = path.resolve(HERE, '..', '..');
@@ -21,6 +22,7 @@ export const TEST_CONFIG = {
   // The older scenarios script one session at a time and wait for base CI; the parallel review and
   // the background base CI have scenarios of their own that switch these on.
   review: { parallelWithCi: false },
+  localGate: { commands: [] }, // the preset's own gate needs the app's toolchain; scenarios that test the gate set one
   baseCiWait: 'always',
   pollMs: 5,
   timeouts: { sessionMin: 1, reviewMin: 1, acceptMin: 1, packetMin: 1, ciMin: 0.003, smokeMin: 1 },
@@ -52,7 +54,7 @@ export function makeSandbox({ backlog = DEFAULT_BACKLOG, config = {}, files = {}
   git(root, 'config', 'user.name', 'Loop Tester');
   git(root, 'config', 'core.autocrlf', 'false');
   copyLoop(path.join(root, 'loop'));
-  const cfg = deepMerge(deepMerge(DEFAULTS, TEST_CONFIG), config);
+  const cfg = deepMerge(deepMerge(PRESET, TEST_CONFIG), config);
   fs.writeFileSync(path.join(root, 'loop', 'loop.config.json'), JSON.stringify(cfg, null, 2));
   fs.writeFileSync(path.join(root, 'loop', 'backlog.json'), JSON.stringify(backlog, null, 2));
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# Test project\n');

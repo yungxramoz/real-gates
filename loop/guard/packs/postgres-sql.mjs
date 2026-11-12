@@ -1,4 +1,5 @@
-// The SQL rules of the loop guard, for every Supabase MCP `execute_sql` call an agent makes.
+// Postgres SQL rules, used by the database guard packs (./supabase.mjs) for every `execute_sql`
+// call an agent makes, and by the post-merge adapter to spot destructive migrations.
 //
 // In real-gates agents never write to a database: the runner applies merged migration files itself,
 // after CI and review (loop/adapters/postmerge-supabase-cli.mjs). So an agent's SQL must be

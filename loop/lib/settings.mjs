@@ -6,9 +6,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { writeJson } from './state.mjs';
+import { packDeny } from '../guard/packs/index.mjs';
 
 /** The guard and the modules it imports, at their repo paths. */
-export const GUARD_FILES = ['loop/guard.mjs', 'loop/guard/core.mjs', 'loop/guard/sql.mjs', 'loop/guard/paths.mjs', 'loop/guard/rules.mjs', 'loop/lib/config.mjs'];
+export const GUARD_FILES = ['loop/guard.mjs', 'loop/guard/core.mjs', 'loop/guard/shared.mjs', 'loop/guard/paths.mjs', 'loop/guard/rules.mjs', 'loop/guard/packs/index.mjs', 'loop/guard/packs/postgres-sql.mjs', 'loop/guard/packs/github.mjs', 'loop/guard/packs/supabase.mjs', 'loop/guard/packs/vercel.mjs', 'loop/lib/config.mjs'];
 
 /**
  * Copy the guard from origin/<base> into .loop/guard/ (a protected path), with the runner's own
@@ -35,7 +36,7 @@ export function snapshotGuard(root, cfg, proc) {
   return { dir, entry: path.join(dir, 'loop', 'guard.mjs'), config, fromTree };
 }
 
-export function sessionSettings(guardEntry) {
+export function sessionSettings(guardEntry, cfg = {}) {
   return {
     // Everything the loop learns goes into committed files. Machine-local memory would steer later
     // sessions invisibly, and differently on every machine.
@@ -50,13 +51,14 @@ export function sessionSettings(guardEntry) {
       ],
     },
     permissions: {
-      deny: ['Bash(gh pr merge:*)', 'Bash(git push --force:*)', 'Bash(git push -f:*)', 'Bash(supabase db push:*)', 'Bash(supabase db reset:*)', 'mcp__supabase__apply_migration'],
+      // A second lock beside the guard: the core's own, plus what each guard pack in use adds.
+      deny: ['Bash(git push --force:*)', 'Bash(git push -f:*)', ...packDeny(cfg)],
     },
   };
 }
 
-export function writeSettings(file, guardEntry) {
-  writeJson(file, sessionSettings(guardEntry));
+export function writeSettings(file, guardEntry, cfg) {
+  writeJson(file, sessionSettings(guardEntry, cfg));
 }
 
 /** sha256 of each file (null when missing), for the after-session integrity check. */

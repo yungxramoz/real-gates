@@ -40,9 +40,9 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
 
 3. **Contract first.** Before writing code, write `docs/contracts/{{ITEM_ID}}.md`: every acceptance
    criterion of this item (its AC IDs from `docs/REQUIREMENTS.md`), each with the concrete proof you
-   will deliver: a test whose title contains the AC ID, a Playwright journey, a screenshot, a
+   will deliver: a test whose title contains the AC ID, an end-to-end journey, a screenshot, a
    command. Add the screens a user will see and the states each must handle (empty, loading, error,
-   full, 360 px). The reviewer grades the PR against this contract, and CI checks that every AC ID
+   full, the smallest supported width). The reviewer grades the PR against this contract, and CI checks that every AC ID
    appears in a contract and in a test title. Commit it with the change and paste it into the PR body.
    The runner refuses a PR whose contract leaves out an AC the item names, and CI refuses an AC
    whose only test is skipped, `todo` or expected to fail.
@@ -62,15 +62,7 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
 
 6. **Prove it locally before you push.** A red CI costs a whole round, and the runner runs the
    project's local gate itself on your pushed head before it waits for CI.
-   - `pnpm check` and `pnpm build` must pass.
-   - New logic gets unit tests. Never lower a coverage threshold; the ratchet only goes up and the
-     runner refuses a PR that lowers it.
-   - UI work gets at least one Playwright journey in `tests/e2e/journeys/` whose title carries the
-     AC ID. Run it against a local production build on an unusual port, and first fetch a page and
-     check for a string only your branch serves: another process on the port gives a convincing
-     false pass. Take 360 px and desktop screenshots into `.loop/shots/{{ITEM_ID}}/` and **look at
-     them**. Judge against `DESIGN.md` and `design/mocks/accepted/`. The reviewer scores design
-     quality, originality, craft and functionality 1–10 and blocks anything below {{MIN_SCORE}}.
+   {{>build-proof}}
 
 7. **Migrations.** New files only, in the migrations directory `CLAUDE.md` names. Files already on
    `{{BASE}}` are frozen: fix forward with a new file. Never apply anything to a database yourself;
@@ -78,8 +70,7 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
    unbounded `DELETE`, dropping a column) is never applied automatically and waits for the owner.
 
 8. **Harness and gate changes.** `loop/`, `.github/`, `.claude/` and `.env*` are not yours, and
-   neither is CI's wiring: the `scripts` in `package.json`, `scripts/`, and the lint, test, type
-   and format configs. The Vitest config may change only by raising coverage thresholds. The guard
+   neither is CI's wiring: {{>build-gate-files}} The guard
    blocks the edits and the runner refuses a PR that makes them. You may add dependencies, add rows
    to `loop/rules/project-rules.json`, and write a new `loop/patches/<item>.patch` for a change the
    owner applies later. If you need a wiring change, take a default that works without it and put

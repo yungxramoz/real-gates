@@ -10,8 +10,8 @@ import path from 'node:path';
 
 import { HELD_PHASE, readJson, TERMINAL } from './state.mjs';
 import { runClaude } from './claude.mjs';
-import { checkCommitCi, landedCheck, mergePr, preMergeChecks, prView, waitForCommitCi, waitForPrCi } from './github.mjs';
-import { postMergeAdapter } from '../adapters/index.mjs';
+import { landedCheck, preMergeChecks } from './gates.mjs';
+import { forgeAdapter, postMergeAdapter } from '../adapters/index.mjs';
 import { knownCauses, recordFailure, reviewFailures, REVIEW_CATEGORIES } from './learn.mjs';
 import { REVIEW_SCHEMA } from './schemas.mjs';
 import { runLocalGate } from './localgate.mjs';
@@ -19,6 +19,8 @@ import { runLocalGate } from './localgate.mjs';
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
 const NEXT_AFTER_HOLD = { landed: 'baseci', baseci: 'postmerge', postmerge: 'finish', 'outside-merge': 'rebuild' };
 const RECHECKABLE = new Set(['landed', 'baseci', 'postmerge']);
+/** Pull requests, CI and the merge go through the forge adapter the config names. */
+const forge = (L) => forgeAdapter(L.cfg.forge?.adapter);
 
 export function goalPrompt(L, condition) {
   return L.cfg.useGoal ? `/goal ${condition} Stop after ${L.cfg.goalMaxTurns} turns.` : condition;
@@ -173,7 +175,7 @@ async function reviewSession(L, item, s, headSha) {
       try {
         const body = path.join(path.dirname(L.paths.result), 'review-body.md');
         fs.writeFileSync(body, reviewBody(v));
-        L.proc.ghTry('pr', 'review', String(s.pr), '--repo', L.cfg.repo, '--comment', '--body-file', body);
+        forge(L).postReview(L, s.pr, body);
       } catch {}
       return v;
     }
@@ -218,7 +220,7 @@ export async function settleBaseCi(L, { wait = false } = {}) {
   const S = L.store.S;
   S.pendingBaseCi ||= [];
   let queued = 0;
-  const { base, repo } = L.cfg;
+  const { base } = L.cfg;
   // Once this run stopped for a missing verdict it does not ask again: a second wait would re-run
   // CI behind the owner's back and could clear the stop it just reported. The next run checks first.
   if (L.baseCiGaveUp) return { queued };
@@ -242,14 +244,14 @@ export async function settleBaseCi(L, { wait = false } = {}) {
     };
     if (wait) {
       L.setStatus('baseci', { id: p.item }, { sha: p.sha });
-      const dev = await waitForCommitCi(L, p.sha);
+      const dev = await forge(L).waitForCommitCi(L, p.sha);
       if (dev.kind === 'stopped') return { queued };
       if (dev.ok) drop();
       else if (dev.kind === 'timeout') return noVerdict(dev.text);
       else red(dev);
       continue;
     }
-    const c = checkCommitCi(L, p.sha);
+    const c = forge(L).checkCommitCi(L, p.sha);
     if (c.state === 'ok') drop();
     else if (c.state === 'red') red(c);
     else {
@@ -259,7 +261,7 @@ export async function settleBaseCi(L, { wait = false } = {}) {
         p.reruns = (p.reruns || 0) + 1;
         if (late) p.rerun = true;
         p.since = Date.now();
-        L.proc.ghTry('run', 'rerun', String(c.runId), '--repo', repo);
+        forge(L).rerunCi(L, c.runId);
         L.store.save();
       } else if (late) return noVerdict(`no result within ${L.cfg.timeouts.ciMin} min${p.rerun ? ', also after a re-run' : ''}`);
     }
@@ -333,7 +335,7 @@ export async function runItem(L, item) {
         s.lastError = `The session ended without a valid .loop/result.json${run?.timedOut ? ' (it timed out)' : ''}. Log: ${run ? path.relative(L.root, run.log) : '?'}`;
         L.progress(`${item.id} · build round ${s.rounds} produced no result (attempt ${s.attempts}/${L.cfg.maxAttemptsPerItem})`);
         if (s.attempts >= L.cfg.maxAttemptsPerItem) return finish('failed', s.lastError);
-        if (s.pr && prView(L, s.pr).state === 'OPEN') s.phase = 'ci';
+        if (s.pr && forge(L).prView(L, s.pr).state === 'OPEN') s.phase = 'ci';
         save();
         continue;
       }
@@ -352,7 +354,7 @@ export async function runItem(L, item) {
       // ready | partial: check the PR really is what the agent says it is
       let v = null;
       try {
-        v = r.pr ? prView(L, r.pr) : null;
+        v = r.pr ? forge(L).prView(L, r.pr) : null;
       } catch {}
       if (v && v.state === 'MERGED' && v.baseRefName === L.cfg.base) {
         // Merged during the build session itself: the change is on the base unreviewed. Never retry on top of it.
@@ -392,7 +394,7 @@ export async function runItem(L, item) {
     if (s.phase === 'ci') {
       let view = null;
       try {
-        view = prView(L, s.pr);
+        view = forge(L).prView(L, s.pr);
       } catch {}
       const open = view?.state === 'OPEN';
       // Structural checks first: they need neither CI nor a reviewer, so a PR that fails them
@@ -416,7 +418,7 @@ export async function runItem(L, item) {
       const parallel = !!L.cfg.review?.parallelWithCi && !!head;
       L.log(`… waiting for CI on PR #${s.pr}${parallel ? ', reviewing meanwhile' : ''}`);
       L.setStatus('ci', item, { pr: s.pr });
-      const [ciR, rvR] = await Promise.allSettled([waitForPrCi(L, s.pr), parallel ? reviewSession(L, item, s, head) : null]);
+      const [ciR, rvR] = await Promise.allSettled([forge(L).waitForPrCi(L, s.pr), parallel ? reviewSession(L, item, s, head) : null]);
       if (ciR.status === 'rejected') throw ciR.reason;
       if (rvR.status === 'rejected') throw rvR.reason;
       const ci = ciR.value;
@@ -471,7 +473,7 @@ export async function runItem(L, item) {
         continue;
       }
       // the reviewer reviewed s.ciSha; make sure nothing moved underneath it
-      if (prView(L, s.pr).headRefOid !== s.ciSha) {
+      if (forge(L).prView(L, s.pr).headRefOid !== s.ciSha) {
         s.phase = 'ci';
         save();
         continue;
@@ -484,7 +486,7 @@ export async function runItem(L, item) {
 
     if (s.phase === 'merge') {
       L.setStatus('merge', item, { pr: s.pr });
-      const m = mergePr(L, s);
+      const m = forge(L).mergePr(L, s);
       if (!m.ok) {
         L.progress(`${item.id} · merge of PR #${s.pr} refused: ${m.kind} ${m.text || ''}`);
         if (m.kind === 'behind') {
@@ -536,7 +538,7 @@ export async function runItem(L, item) {
         if (!S.pendingBaseCi.some((p) => p.sha === s.mergeSha)) S.pendingBaseCi.push({ sha: s.mergeSha, item: item.id, milestone: item.milestone, since: Date.now() });
         L.progress(`${item.id} · ${sha7} has the tree CI passed on; ${L.cfg.base} CI is checked in the background`);
       } else {
-        const dev = await waitForCommitCi(L, s.mergeSha);
+        const dev = await forge(L).waitForCommitCi(L, s.mergeSha);
         if (dev.kind === 'stopped') return 'stopped';
         if (!dev.ok && dev.kind === 'timeout') return hold('baseci', dev.text, `${item.id}: CI on ${L.cfg.base} never finished for ${sha7} (${dev.text}). Check GitHub Actions (quota, runners, a stuck job). Re-run the loop once CI reports; it checks again. To accept the commit without a CI verdict: node loop/run.mjs --release ${item.id}`);
         if (!dev.ok) {

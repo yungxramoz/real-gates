@@ -13,10 +13,11 @@ import { decide } from '../guard/core.mjs';
 import { repoRelative, globToRegExp } from '../guard/paths.mjs';
 import { compileRules } from '../guard/rules.mjs';
 import { DEFAULTS, deepMerge } from '../lib/config.mjs';
+import { PRESET } from './helpers/preset.mjs';
 
 const LOOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = process.platform === 'win32' ? 'C:\\work\\app' : '/work/app';
-const cfg = deepMerge(DEFAULTS, { repo: 'acme/app', guard: { allowedDbProject: 'allowedref000000000a', forbiddenRefs: ['forbiddenref00000000z'] } });
+const cfg = deepMerge(PRESET, { repo: 'acme/app', guard: { allowedDbProject: 'allowedref000000000a', forbiddenRefs: ['forbiddenref00000000z'] } });
 
 function ctx(over = {}) {
   return {
@@ -145,7 +146,7 @@ describe('MCP rules', () => {
     allowed(mcp('mcp__vercel__get_deployment', {}));
   });
   test('with no project configured, every Supabase call with a project is blocked', () => {
-    const c = { cfg: deepMerge(DEFAULTS, {}) };
+    const c = { cfg: deepMerge(PRESET, {}) };
     blocked(mcp(sql, { project_id: 'anything', query: 'select 1' }, c), 'core:db-project');
   });
 });
@@ -227,5 +228,41 @@ describe('spellings that used to slip past (adversarial review)', () => {
   });
   test('ordinary feature-branch work stays allowed', () => {
     for (const cmd of ['git push -u origin feat/a', 'git -C .loop/review-wt status', 'gh pr create --base develop --title "x" --body-file .loop/pr.md', 'gh api repos/acme/app/pulls/5', 'git config user.name']) allowed(sh(cmd));
+  });
+});
+
+describe('guard packs', () => {
+  const core = { cfg: deepMerge(DEFAULTS, { repo: 'acme/app', guard: { packs: [] } }) };
+  test('with no pack listed, the core alone decides: tool rules are off, git rules stay', () => {
+    allowed(sh('gh pr merge 5 --squash', core));
+    allowed(sh('supabase db push', core));
+    allowed(sh('vercel env pull', core));
+    allowed(mcp('mcp__supabase__apply_migration', { name: 'x', query: 'create table t ()' }, core));
+    allowed(mcp('mcp__vercel__create_deployment', {}, core));
+    blocked(sh('git push --force origin feat/x', core), 'core:force-push');
+    blocked(sh('git add -A', core), 'core:add-all');
+    blocked(edit('loop/run.mjs', core), 'core:protected-path');
+  });
+  test('each pack switches its own rules on, and only those', () => {
+    const only = (packs) => ({ cfg: deepMerge(DEFAULTS, { repo: 'acme/app', guard: { packs, allowedDbProject: 'allowedref000000000a' } }) });
+    blocked(sh('gh pr merge 5 --squash', only(['github'])), 'core:merge');
+    allowed(sh('supabase db push', only(['github'])));
+    blocked(sh('supabase db push', only(['supabase'])), 'core:db-apply');
+    blocked(mcp('mcp__supabase__execute_sql', { project_id: 'allowedref000000000a', query: 'delete from t' }, only(['supabase'])), 'core:sql');
+    allowed(sh('gh pr merge 5 --squash', only(['supabase'])));
+    blocked(mcp('mcp__vercel__create_deployment', {}, only(['vercel'])), 'core:vercel-write');
+    allowed(mcp('mcp__vercel__list_deployments', {}, only(['vercel'])));
+  });
+  test('an unknown pack name fails closed', () => {
+    assert.throws(() => sh('ls', { cfg: deepMerge(DEFAULTS, { guard: { packs: ['nope'] } }) }), /unknown guard pack "nope"/);
+  });
+  test('the real hook refuses every call when the config names an unknown pack', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-pack-'));
+    const cfgFile = path.join(dir, 'config.json');
+    fs.writeFileSync(cfgFile, JSON.stringify(deepMerge(DEFAULTS, { guard: { packs: ['nope'] } })));
+    const r = spawnSync(process.execPath, [path.join(LOOP, 'guard.mjs')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: dir }), encoding: 'utf8', env: { ...process.env, LOOP_ROOT: dir, LOOP_GUARD_CONFIG: cfgFile, LOOP_GUARD_LOG: path.join(dir, 'guard.log') } });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /core:guard-error.*unknown guard pack/);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

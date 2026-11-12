@@ -10,7 +10,7 @@
 //   - destructive SQL is never applied automatically; it waits for the owner;
 //   - anything it cannot verify holds the item and stops the run.
 
-import { DESTRUCTIVE, stripSqlComments } from '../guard/sql.mjs';
+import { DESTRUCTIVE, stripSqlComments } from '../guard/packs/postgres-sql.mjs';
 
 export const name = 'supabase-cli';
 
@@ -41,7 +41,7 @@ export function run(ctx, { mergeSha, item, step }) {
     return { ok: false, why: `${step.dbUrlEnv} is not set, so the runner cannot reach the dev database`, ownerAction: `Set ${step.dbUrlEnv} (the dev project's connection string, Project Settings → Database) in the environment that runs the loop, then re-run it. It verifies before it moves on.` };
   }
   const list = (label) => {
-    const r = proc.supabase(['migration', 'list', '--db-url', url], { timeoutMs: 5 * 60_000 });
+    const r = proc.tool('supabase', ['migration', 'list', '--db-url', url], { timeoutMs: 5 * 60_000 });
     if (!r.ok) return { error: `supabase migration list failed${label ? ` ${label}` : ''}: ${(r.err || r.out).slice(-500)}` };
     return parseMigrationList(r.out);
   };
@@ -61,7 +61,7 @@ export function run(ctx, { mergeSha, item, step }) {
     return { ok: false, why: `destructive SQL waits for the owner: ${destructive.join(', ')}`, ownerAction: `Review ${destructive.join(', ')} (DROP, TRUNCATE, unbounded DELETE or a dropped column, merged with ${item.id}). If it is right, apply the pending migrations yourself: supabase db push --db-url "$${step.dbUrlEnv}" --include-all — then re-run the loop. It verifies the ledger before it moves on.` };
   }
 
-  const push = proc.supabase(['db', 'push', '--db-url', url, '--include-all', '--yes'], { input: 'y\n', timeoutMs: 10 * 60_000 });
+  const push = proc.tool('supabase', ['db', 'push', '--db-url', url, '--include-all', '--yes'], { input: 'y\n', timeoutMs: 10 * 60_000 });
   const after = list('after the push');
   if (after.error) return { ok: false, why: after.error, ownerAction: `Check the dev database: the push of ${pending.join(', ')} could not be verified. Re-run the loop once it is reachable.` };
   const missing = pending.filter((f) => !after.remote.includes(versionOf(f)));

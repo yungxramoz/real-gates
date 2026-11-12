@@ -250,7 +250,7 @@ test('dry run on a fresh config names what /setup-loop must set', async () => {
   const sb = box({ config: { repo: '', gitAuthor: { email: '' } } });
   const r = await sb.run(['--dry-run']);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /repo: set it to the GitHub "owner\/name"/);
+  assert.match(r.stderr, /repo: set it to the "owner\/name" of this repository on the forge/);
   assert.match(r.stderr, /gitAuthor\.email/);
   assert.equal(sb.calls().length, 0);
 });
@@ -501,4 +501,34 @@ test('postMergeOnRedBase "wait": migrations are applied only after the fix item 
   const applied = progress.indexOf('post-merge supabase-cli: applied');
   assert.ok(waited > 0 && applied > waited, 'nothing was applied while the base was red');
   assert.match(progress, new RegExp(`A1 · ${fix.id} is done: running the post-merge steps now`));
+});
+
+test('a prompt that includes a fragment the profile does not have stops the run in the preflight', async () => {
+  const sb = box();
+  fs.rmSync(path.join(sb.root, 'loop', 'profile', 'prompts', 'review-drive.md'));
+  sb.queue(smokeStep(), happyItem('A1'));
+  const r = await sb.run();
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /loop\/prompts\/review\.md includes \{\{>review-drive\}\}, but the profile has no loop\/profile\/prompts\/review-drive\.md/);
+  assert.equal(sb.calls().length, 0);
+});
+
+test('the build task carries the profile\'s own words for proving a change', async () => {
+  const sb = box();
+  sb.queue(smokeStep(), { text: 'no result' });
+  await sb.run(['--once', '--max-iterations', '2']);
+  const task = sb.file('.loop/current-task.md');
+  assert.match(task, /`pnpm check` and `pnpm build` must pass/);
+  assert.doesNotMatch(task, /\{\{>/);
+  // the same core prompt with another profile's fragment
+  const other = box();
+  fs.writeFileSync(path.join(other.root, 'loop', 'profile', 'prompts', 'build-proof.md'), '- `make check` must pass. Item {{ITEM_ID}}.\n');
+  // committed on the base, as a real profile is: the runner keeps uncommitted tracked changes aside
+  other.git('add', 'loop/profile/prompts/build-proof.md');
+  other.git('commit', '-q', '-m', 'another profile');
+  other.git('push', '-q', 'origin', 'develop');
+  other.queue(smokeStep(), { text: 'no result' });
+  await other.run(['--once', '--max-iterations', '2']);
+  assert.match(other.file('.loop/current-task.md'), /`make check` must pass\. Item A1\./);
+  assert.doesNotMatch(other.file('.loop/current-task.md'), /pnpm check/);
 });
