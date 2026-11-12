@@ -124,7 +124,7 @@ const REDIRECT = /(?:&>>?|>>?&?|>\|)\s*([^\s<>|;&]+)/g;
 const MESSAGE_OPTION = /^(-m|--message|-b|--body|-t|--title|--notes)$/;
 /** git run in another folder: its relative paths mean something else, as after a cd. */
 const GIT_DIR = /\bgit\b[^;|&]*?\s(?:-C|--work-tree)(?:=|\s+)["']?([^\s;&|)"']+)/gi;
-const CD = /(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+([^\s;&|)]+)/gi;
+const CD = /(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+(?:-\S*\s+)*([^\s;&|)]+)/gi;
 const FRAGMENTS = /[\s"'`;|&()<>=,]+/;
 /** A redirect target that is no file: a file descriptor, or the null device. */
 const noFile = (t) => /^(\d+|-|\/dev\/null|\$null|NUL)$/i.test(t);
@@ -304,7 +304,10 @@ export function readPlainShell(source) {
  */
 export function shellWritesProtected(cmd, ctx) {
   // A folder counts when what is inside it is protected: `loop` as much as `loop/run.mjs`.
-  const protectedWord = (w) => {
+  // A backslash is a path separator to some tools and an escape to the shell (lo\op is loop):
+  // both readings count.
+  const protectedWord = (w) => readAs(w) || (String(w || '').includes('\\') ? readAs(String(w).replace(/\\/g, '')) : null);
+  const readAs = (w) => {
     const word = String(w || '')
       .replace(/[(){}]/g, '')
       .replace(/[;,&|]+$/, '')
@@ -325,9 +328,9 @@ export function shellWritesProtected(cmd, ctx) {
   const plain = readPlainShell(cmd);
   // What the line says, as one text without quote marks: all of it, or for plain shell what is
   // left once the here-document bodies that are data are gone.
-  const said = plain ? plain.map((c) => [...c.words.map((w) => w.text), ...c.targets.map((t) => `> ${t}`)].join(' ')).join(' ; ') : String(cmd);
+  const said = plain ? plain.map((c) => [...c.words.map((w) => w.text), ...c.targets.map((t) => `> ${t}`)].join(' ')).join(' ; ') : String(cmd).replace(/\\\r?\n/g, '').replace(/["'`]/g, ''); // lo"op"/run.mjs is loop/run.mjs, and so is lo\⏎op/run.mjs
   const flat = normalizeShell(said); // `git -C dir restore` is `git restore` here
-  const mentioned = anyProtected(said);
+  const mentioned = anyProtected(said) || anyProtected(flat);
   if (!mentioned) return null;
 
   const targets = plain ? plain.flatMap((c) => [...c.targets.filter((t) => !noFile(t)), ...c.words.filter((w) => w.quoted).flatMap((w) => redirectsIn(w.text))]) : redirectsIn(flat);
