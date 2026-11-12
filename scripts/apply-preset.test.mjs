@@ -168,6 +168,18 @@ for (const preset of presets) {
       assert.equal(r.status, 0, `${args[0]}:\n${r.stdout}\n${r.stderr}`);
     }
 
+    // the setup validator asks only for what this stack declares: /setup-loop must be able to
+    // reach "ready" without installing another stack's tools
+    const validator = node(['.claude/skills/setup-loop/scripts/check-config.mjs'], dir);
+    if (!{ ...pkg.dependencies, ...pkg.devDependencies }['@playwright/test']) {
+      assert.doesNotMatch(validator.stdout, /playwright/i, validator.stdout);
+    }
+    assert.doesNotMatch(
+      validator.stdout,
+      /PROBLEM {2}config: (guard.allowedDbProject|deploy.devUrl)/,
+      validator.stdout,
+    );
+
     // the loop's preflight accepts the project: profile, packs, adapters, prompt fragments, backlog
     cfg.repo = 'acme/tool';
     cfg.gitAuthor = { name: 'Loop Tester', email: 'loop@example.com' };
