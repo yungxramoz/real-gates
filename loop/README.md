@@ -314,6 +314,35 @@ then runs `pnpm test:loop`.
 truth for acceptance criteria. Edit the backlog between runs: reorder, add or split items. Agents
 cannot edit it. `loop/loop.config.json` overrides any default in `loop/lib/config.mjs`.
 
+## Taking a later template version
+
+A project made from the template is a copy. `scripts/sync-template.mjs` brings the template's
+part of it up to date:
+
+```sh
+node scripts/sync-template.mjs --dry-run
+node scripts/sync-template.mjs
+```
+
+Without `--from` it syncs from the template the repository was created from (it asks GitHub
+through `gh`). `--from <folder or git URL>` names another source, `--ref <branch>` a branch of a
+URL. A project that does not have the command yet runs the template's copy from its own folder:
+`node ../real-gates/scripts/sync-template.mjs`.
+
+| | Paths | What happens |
+| --- | --- | --- |
+| The template's | `loop/`, `.claude/skills/`, the shared scripts, `loop-runner.yml`, the CI workflow of your stack | replaced; a file the template dropped is removed |
+| Yours, inside `loop/` | `loop.config.json`, `backlog.json`, `rules/project-rules.json`, `patches/` | never touched |
+| Yours | docs, `CLAUDE.md`, the app, `package.json` | never touched; when the template changed one since your last sync, the command names it |
+
+The list lives in `loop/harness.json`. The command refuses a working tree with uncommitted
+changes, and records the template commit it synced from in `loop/template.lock.json`.
+
+Do it between runs, never while the loop runs: sessions start with the guard from the base
+branch. Afterwards run `node loop/run.mjs --dry-run` and the runner suite, commit on a branch and
+merge it through a pull request like any other change. A new template version can add a config
+key or a preflight check; the dry run names what it needs.
+
 ## Tests
 
 `pnpm test:loop` runs the runner suite: a fake `claude` and a fake `gh` play scripted sessions

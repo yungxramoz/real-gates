@@ -1,0 +1,19 @@
+{
+  "$comment": "What belongs to the template in every project made from it. scripts/sync-template.mjs reads this file from the template and brings these paths in a project up to date. Everything else in a project is the project's own and is never touched: its docs, CLAUDE.md, the app, package.json.",
+  "mirror": ["loop", ".claude/skills"],
+  "files": [
+    "scripts/ac-trace.mjs",
+    "scripts/apply-preset.mjs",
+    "scripts/apply-preset.test.mjs",
+    "scripts/check-backlog.test.mjs",
+    "scripts/check-skills.mjs",
+    "scripts/check-skills.test.mjs",
+    "scripts/sanitize-scan.mjs",
+    "scripts/sanitize-scan.test.mjs",
+    "scripts/sync-template.mjs",
+    "scripts/sync-template.test.mjs",
+    ".github/workflows/loop-runner.yml"
+  ],
+  "presetFiles": [".github/workflows/ci.yml"],
+  "keep": ["loop/loop.config.json", "loop/backlog.json", "loop/rules/project-rules.json", "loop/patches/**", "loop/template.lock.json"]
+}
