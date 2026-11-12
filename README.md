@@ -65,6 +65,19 @@ the versions and tells you what is missing. Details: [loop/README.md](loop/READM
 After the app is done, `/run-retro` carries what the run learned back into the template, and
 `/sync-arc42` keeps `docs/architecture/` true once per milestone.
 
+## Taking a later template version
+
+A project is a copy, so a fix in the template reaches it only when you fetch it:
+
+```sh
+node scripts/sync-template.mjs --dry-run   # what would change
+node scripts/sync-template.mjs             # do it, then review, commit on a branch, open a PR
+```
+
+It updates what is the template's (the loop, the skills, the shared scripts, the CI workflow of
+your stack) and never touches what is yours (the config, the backlog, the rules the loop learned,
+your docs, the app). Details: [loop/README.md](loop/README.md#taking-a-later-template-version).
+
 ## The four layers
 
 Each layer only knows the one below it. Read from the top down. The core loop names no framework,
