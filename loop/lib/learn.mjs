@@ -17,6 +17,7 @@
 // learnThreshold. The bare category stays as a net for causes that never got the same key twice.
 
 export const MAX_LEARN_PER_SIGNATURE = 3;
+const ENDED = new Set(['done', 'blocked', 'failed', 'needs_human', 'skipped']);
 
 /**
  * Count one failure. Returns a LEARN item to queue when the signature has failed `threshold` more
@@ -27,9 +28,12 @@ export function recordFailure(S, { signature, detail, item, threshold = 2 }) {
   S.learn ||= {};
   const e = (S.learn[signature] ||= { count: 0, sinceLearn: 0, details: [], queued: [] });
   e.count++;
-  e.sinceLearn++;
+  // While a LEARN item for this failure is still open, more of the same says nothing new: it must
+  // not queue a second item beside the first. Counting starts again once that item has ended.
+  const open = e.queued.some((id) => !ENDED.has(S.items?.[id]?.status));
+  if (!open) e.sinceLearn++;
   if (detail) e.details = [...e.details, `${item?.id || '-'}: ${String(detail).replace(/\s+/g, ' ').slice(0, 300)}`].slice(-5);
-  if (e.sinceLearn < threshold || e.queued.length >= MAX_LEARN_PER_SIGNATURE) return null;
+  if (open || e.sinceLearn < threshold || e.queued.length >= MAX_LEARN_PER_SIGNATURE) return null;
   e.sinceLearn = 0;
   const n = Object.values(S.learn).reduce((a, x) => a + x.queued.length, 0) + 1;
   const id = `LEARN-${n}`;
