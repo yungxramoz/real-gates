@@ -101,245 +101,248 @@ function decideShell(cmd, ctx) {
   return ok;
 }
 
-const WRITE_VERB = /(\btee\b|\bsed\s+-i|\bperl\s+-p?i|\bcp\b|\bmv\b|\brm\b|\btouch\b|\btruncate\b|\binstall\b|\bln\b|\bdd\b|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bgit\s+(checkout|restore|apply|rm|mv)\b)/i;
-/** A plain cp writes its last argument; the ones before it are only read. */
-const COPY_VERB = /^cp\s/i;
-const REDIRECT = /(?:&>>?|>>?|>\|)\s*([^\s<>|;&]+)/g;
+// --------------------------------------------------------------- shell writes into protected paths
+//
+// "Does this line write a harness file?" has two answers, and the cheap one is the default.
+//
+// The coarse answer needs no understanding of the line: it names a protected path somewhere, and
+// it has a write verb somewhere, or a redirect whose target is protected or cannot be read. That
+// refuses harmless lines too (a pull request text that says "loop/" and "rm").
+//
+// The exact answer cuts the line into its commands and looks at each one. It is only given for
+// plain shell, read by readPlainShell below, which returns null at the first thing it does not
+// know for certain: a backslash, a backtick, $( … ), $'…', a parenthesis, a comment, an unusual
+// here-document. Then the coarse answer stands. Nothing is ever guessed, and the only text that is
+// not looked at is the body of a here-document that plain shell hands to cat, tee, gh or git commit
+// as data.
+
+const WRITE_VERB = /(\btee\b|\bcp\b|\bmv\b|\brm\b|\btouch\b|\btruncate\b|\binstall\b|\bln\b|\bdd\b|\bsed\b.*\s(-[A-Za-z]*i|--in-place)|\bperl\b.*\s-[A-Za-z]*i|\bfind\b.*\s-delete\b|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bgit\s+(checkout|restore|apply|am|rm|mv)\b)/i;
+const REDIRECT = /(?:&>>?|>>?&?|>\|)\s*([^\s<>|;&]+)/g;
+const CD = /(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+([^\s;&|)]+)/gi;
+const FRAGMENTS = /[\s"'`;|&()<>=,]+/;
+/** A redirect target that is no file: a file descriptor, or the null device. */
+const noFile = (t) => /^(\d+|-|\/dev\/null|\$null|NUL)$/i.test(t);
+/** A path this cannot read: it holds a variable, a substitution or a home folder. */
+const unreadable = (w) => /[$`]|^~/.test(w);
+/** A here-document handed to one of these is text for it, not a script. */
+const takesText = (words) => {
+  const w = words.filter((x) => x.text !== '{').map((x) => x.text);
+  return /^(cat|tee|gh)$/.test(w[0] || '') || (w[0] === 'git' && w.includes('commit') && !w.some((x) => x === 'apply' || x === 'am'));
+};
 
 /**
- * A here-document's body is data, not a command: a pull request text that says "loop/" and "rm"
- * writes nothing. Bodies are dropped, except where a shell reads them (bash <<EOF) and where the
- * shell still runs something inside (an unquoted delimiter with $(…) or backticks in the body).
- *
- * Whether a `<<` opens one is read the way the shell reads the whole command, with the quotes that
- * are open carried from line to line: inside quotes or a comment it is text, `<<<` is a
- * here-string. Inside "$( … )" the shell starts over, so `--body "$(cat <<'EOF'` opens one. From
- * the first thing this does not follow (backticks, `((`), nothing more is taken for a
- * here-document, and every line after it is read as a command.
+ * A line of plain shell as its commands, each with its words and the targets of its redirects, or
+ * null when the line holds anything this does not read with certainty. Quoted words keep their
+ * text. The body of a here-document is left out where it is data (see takesText); every other
+ * here-document makes the line not plain.
  */
-export function dropHereDocBodies(cmd) {
-  const out = [];
-  const state = { stack: [null], lost: false }; // the quote open at each level of $( … )
-  let end = null;
-  let body = [];
-  let quoted = false;
-  const close = () => {
-    if (!quoted && /\$\(|`/.test(body.join('\n'))) out.push(...body);
-    body = [];
+export function readPlainShell(source) {
+  const s = String(source).replace(/\r\n/g, '\n');
+  if (s.includes('\r')) return null;
+  const commands = [];
+  let cur = { words: [], targets: [], hereDoc: false, piped: false };
+  let word = null;
+  let target = null; // a redirect waits for its target: { amp }
+  let pending = null; // a here-document waits for its body: { delim, literal, dash, cmd }
+  let afterPipe = false;
+  const wordEnd = () => {
+    if (!word) return true;
+    if (target) {
+      if (!(target.amp && !word.quoted && /^(\d+|-)$/.test(word.text))) cur.targets.push(word.text);
+      target = null;
+    } else cur.words.push(word);
+    word = null;
+    return true;
   };
-  for (const line of String(cmd).split(/\r?\n/)) {
-    if (end !== null) {
-      if (line.trim() === end) {
-        end = null;
-        close();
-      } else body.push(line);
-      continue;
-    }
-    out.push(line);
-    const open = hereDocOpening(line, state);
-    if (open && !/\b(?:ba|z|da|k)?sh\b|\b(?:eval|source|pwsh|powershell)\b/i.test(line)) {
-      end = open.word;
-      quoted = open.quoted;
-    }
-  }
-  if (end !== null) out.push(...body); // never closed: not a here-document we understand
-  return out.join('\n');
-}
-
-/** The first here-document `line` opens, or null. `state` is carried from line to line. */
-function hereDocOpening(line, state) {
-  const { stack } = state;
-  const top = () => stack[stack.length - 1];
-  const set = (q) => (stack[stack.length - 1] = q);
-  let found = null;
-  for (let i = 0; i < line.length && !state.lost; i++) {
-    const ch = line[i];
-    const next = line[i + 1];
-    if (top() === "'") {
-      if (ch === "'") set(null);
-      continue;
-    }
-    if (top() === "$'") {
-      if (ch === '\\') i++;
-      else if (ch === "'") set(null);
-      continue;
-    }
-    if (ch === '\\') {
-      i++;
-      continue;
-    }
-    if (ch === '`' || (ch === '(' && next === '(')) {
-      state.lost = true;
-      break;
-    }
-    if (ch === '$' && next === '(') {
-      if (line[i + 2] === '(') {
-        state.lost = true;
-        break;
-      }
-      stack.push(null);
-      i++;
-      continue;
-    }
-    if (top() === '"') {
-      if (ch === '"') set(null);
-      continue;
-    }
-    if (ch === ')' && stack.length > 1) stack.pop();
-    else if (ch === '$' && next === "'") {
-      set("$'");
-      i++;
-    } else if (ch === '"' || ch === "'") set(ch);
-    else if (ch === '#' && (i === 0 || /[\s;&|(]/.test(line[i - 1]))) break; // a comment, to the end of the line
-    else if (ch === '<' && next === '<') {
-      if (line[i + 2] === '<') {
-        i += 2;
-        continue;
-      }
-      const m = line.slice(i).match(/^<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1/);
-      if (m) {
-        found ||= { word: m[2], quoted: !!m[1] };
-        i += m[0].length - 1;
-      } else i++;
-    }
-  }
-  return state.lost ? null : found;
-}
-
-/**
- * A command line as its simple commands: cut at `;`, a line break, `&&`, `||`, `|` and `&` where
- * these stand outside quotes. `sed -i 's/a/b/;s/c/d/' file` stays one command.
- *
- * Nothing is ever dropped, and where the reading is not certain the piece is marked `unsure` and
- * kept together, so the caller looks at more, never at less: after a quote that never closes,
- * around a `$( … )` or backtick substitution, and from a `#` that looks like a comment to the end
- * of its line (quote marks in it open nothing, but its words stay, in case the shell did not take
- * it for a comment).
- */
-export function splitCommands(cmd) {
-  const s = String(cmd);
-  const parts = [];
-  let text = '';
-  let quote = null;
-  let comment = false;
-  let unsure = false;
-  const push = (open = false) => {
-    if (text.trim()) parts.push({ text, unsure: unsure || open });
-    text = '';
-    unsure = false;
+  const commandEnd = (sep) => {
+    wordEnd();
+    if (target) return false; // a redirect without a target
+    if (sep === '|') cur.piped = true;
+    if (afterPipe) cur.piped = true;
+    if (cur.words.length || cur.targets.length) commands.push(cur);
+    else if (sep === '|' || afterPipe) return false;
+    afterPipe = sep === '|';
+    cur = { words: [], targets: [], hereDoc: false, piped: false };
+    return true;
+  };
+  const add = (text, quoted) => {
+    word ||= { text: '', quoted: false };
+    word.text += text;
+    if (quoted) word.quoted = true;
+  };
+  /** A number right before a redirect is its file descriptor, not a word. */
+  const dropDescriptor = () => {
+    if (word && !word.quoted && /^\d+$/.test(word.text)) word = null;
+    else wordEnd();
   };
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
-    if (comment) {
-      if (ch === '\n') {
-        comment = false;
-        push();
-      } else if (ch !== "'" && ch !== '"') text += ch;
-      continue;
-    }
-    // A substitution runs commands of its own inside one argument: `cp "$(rm x; echo a)" b`.
-    const literal = quote === "'" || quote === "$'";
-    if (!literal && (ch === '`' || (/[$<>]/.test(ch) && s[i + 1] === '('))) unsure = true;
-    if (quote) {
-      text += ch;
-      // a backslash keeps the next character in "…" and in $'…', not in '…'
-      if (ch === '\\' && quote !== "'" && i + 1 < s.length) text += s[++i];
-      else if (ch === (quote === "$'" ? "'" : quote)) quote = null;
-      continue;
-    }
-    if (ch === '\\' && i + 1 < s.length) {
-      text += ch + s[++i];
-      continue;
-    }
-    const prev = s[i - 1];
-    if (ch === "'" || ch === '"') {
-      quote = ch === "'" && prev === '$' ? "$'" : ch;
-      text += ch;
-      continue;
-    }
-    if (ch === '#' && (i === 0 || /[\s;&|(]/.test(prev))) {
-      comment = true;
-      unsure = true;
-      text += ch;
-      continue;
-    }
     const next = s[i + 1];
-    if (ch === ';' || ch === '\n' || ch === '\r') push();
-    else if (ch === '|' && prev !== '>') {
-      push();
-      if (next === '|' || next === '&') i++;
-    } else if (ch === '&' && prev !== '>' && prev !== '<' && next !== '>') {
-      push();
-      if (next === '&') i++;
-    } else text += ch;
+    if (ch === '\\' || ch === '`' || ch === '(' || ch === ')') return null;
+    if (ch === "'") {
+      if (s[i - 1] === '$') return null; // $'…'
+      const end = s.indexOf("'", i + 1);
+      if (end < 0) return null;
+      const text = s.slice(i + 1, end);
+      if (pending && text.includes('\n')) return null;
+      add(text, true);
+      i = end;
+    } else if (ch === '"') {
+      if (s[i - 1] === '$') return null; // $"…"
+      const inline = s.slice(i).match(/^"\$\(cat <<'([A-Za-z_][A-Za-z0-9_]*)'\n/);
+      if (inline) {
+        // "$(cat <<'EOF' … EOF )": the usual way to hand a long text to gh or git commit
+        const close = s.indexOf(`\n${inline[1]}\n`, i + inline[0].length - 1);
+        const tail = close < 0 ? null : s.slice(close + inline[1].length + 2).match(/^[ \t]*\)"/);
+        if (!tail || pending) return null;
+        add('', true);
+        cur.hereDoc = true;
+        i = close + inline[1].length + 1 + tail[0].length;
+        continue;
+      }
+      const end = s.indexOf('"', i + 1);
+      if (end < 0) return null;
+      const text = s.slice(i + 1, end);
+      if (/[\\`]|\$[('"{]/.test(text) || (pending && text.includes('\n'))) return null;
+      add(text, true);
+      i = end;
+    } else if (ch === '$' && /[('"{]/.test(next || '')) return null;
+    else if (ch === '{' || ch === '}') {
+      // only as a word of its own: a group, not an expansion
+      if (word || !(next === undefined || /[\s;]/.test(next))) return null;
+      add(ch, false);
+    } else if (ch === '#' && !word) return null;
+    else if (ch === ' ' || ch === '\t') wordEnd();
+    else if (ch === '\n') {
+      if (!commandEnd('\n')) return null;
+      if (!pending) continue;
+      let at = i + 1;
+      let body = '';
+      let closed = false;
+      while (at <= s.length) {
+        const eol = s.indexOf('\n', at);
+        const line = s.slice(at, eol < 0 ? s.length : eol);
+        at = eol < 0 ? s.length + 1 : eol + 1;
+        if ((pending.dash ? line.replace(/^\t+/, '') : line) === pending.delim) {
+          closed = true;
+          break;
+        }
+        body += `${line}\n`;
+      }
+      if (!closed || (!pending.literal && /[$`\\]/.test(body))) return null;
+      pending = null;
+      i = at - 2; // the line break that ends the closing line, or the end
+    } else if (ch === ';') {
+      if (next === ';' || !commandEnd(';')) return null;
+    } else if (ch === '&') {
+      if (next === '>') {
+        wordEnd();
+        i += s[i + 2] === '>' ? 2 : 1;
+        if (target) return null;
+        target = { amp: false };
+      } else {
+        if (next === '&') i++;
+        if (!commandEnd('&')) return null;
+      }
+    } else if (ch === '|') {
+      if (next === '&') return null;
+      if (next === '|') i++;
+      if (!commandEnd(next === '|' ? '||' : '|')) return null;
+    } else if (ch === '>') {
+      dropDescriptor();
+      if (target) return null;
+      if (s[i + 1] === '>') i++;
+      const amp = s[i + 1] === '&';
+      if (amp || s[i + 1] === '|') i++;
+      target = { amp };
+    } else if (ch === '<') {
+      if (next !== '<') {
+        dropDescriptor(); // reading from a file or a descriptor
+        if (next === '&') i++;
+        continue;
+      }
+      if (s[i + 2] === '<' || pending || target) return null;
+      dropDescriptor();
+      const dash = s[i + 2] === '-';
+      const rest = s.slice(i + (dash ? 3 : 2));
+      const m = rest.match(/^[ \t]*(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))(?=[\s;|&<>]|$)/);
+      if (!m) return null;
+      pending = { delim: m[1] || m[2] || m[3], literal: !m[3], dash };
+      cur.hereDoc = true;
+      i += (dash ? 2 : 1) + m[0].length;
+    } else add(ch, false);
   }
-  push(quote !== null);
-  return parts;
+  if (!commandEnd('')) return null;
+  if (pending) return null;
+  // A here-document's text must not travel on: with a pipe anywhere on the line it is not plain.
+  if (commands.some((c) => c.hereDoc) && commands.some((c) => c.piped || (c.hereDoc && !takesText(c.words)))) return null;
+  return commands;
 }
 
 /**
  * Does a shell line write into a protected path? Returns the path, or null. A line that only
- * names such a path (cat, grep, running the runner's tests with 2>&1) reads it and passes. Looked
- * at per simple command:
- *  - a redirect whose target is protected;
- *  - a write verb with a protected path in the same simple command (for a plain cp only the
- *    last argument, the one written);
- *  - what cannot be read here counts when the line names a protected path anywhere: a redirect
- *    target or a write verb's argument with a variable, a substitution or `~` in it, a write verb
- *    fed by xargs;
- *  - after a cd into a protected folder, or into one that cannot be read here, relative paths
- *    mean something else, so any redirect to a file or write verb on the line counts.
- * Not looked at: what a program does with a path it is handed (`node -e`, a script fed by a
- * here-document). An early warning: the runner's own checks after every session are the hard stop.
+ * names such a path (cat, grep, running the runner's tests with 2>&1) reads it and passes.
+ *
+ * What counts, when the line names a protected path at all:
+ *  - a redirect whose target is protected, or cannot be read here (a variable, a substitution, ~);
+ *  - a cd into a protected folder, or into one that cannot be read here, together with any
+ *    redirect to a file or any write verb: relative paths then mean something else;
+ *  - a write verb. In plain shell (readPlainShell) only with a protected or unreadable path in the
+ *    same command, and for `cp sources… destination` only by its destination. In anything else,
+ *    anywhere on the line.
+ * Not looked at: what a program does with a path it is handed (`node -e`, a script). An early
+ * warning: the runner's own checks after every session are the hard stop.
  */
 export function shellWritesProtected(cmd, ctx) {
-  // A line break ends a command as a `;` does. normalizeShell folds all white space, so the breaks
-  // are made visible first (a backslash at the end of a line continues it).
-  const parts = splitCommands(dropHereDocBodies(cmd).replace(/\\\r?\n/g, ' '));
-  const c = normalizeShell(parts.map((p) => p.text).join(' ; '));
   // A folder counts when what is inside it is protected: `loop` as much as `loop/run.mjs`.
   const protectedWord = (w) => {
-    // `../loop/run.mjs` after a cd may be the repository's own: it is read without the dots too.
     const word = String(w || '')
       .replace(/[(){}]/g, '')
       .replace(/[;,&|]+$/, '')
-      .replace(/^(?:\.\.?[\\/])+/, '');
+      .replace(/^(?:\.\.?[\\/])+/, '') // `../loop/run.mjs` after a cd may be the repository's own
+      .replace(/^\/([A-Za-z])\//, '$1:/'); // /c/Users/… is C:/Users/… in Git Bash
     const rel = word ? ctx.rel(word) : null;
     if (!rel) return null;
     if (isProtected(rel, ctx)) return rel;
+    // a patch names its files a/… and b/…
+    if (/^[ab]\//.test(rel) && isProtected(rel.slice(2), ctx)) return rel.slice(2);
     // inside a protected folder but let through by name (a new patch, .env.example): not a folder
     if (matchesAny(rel, ctx.cfg.guard?.protectedPaths || []) || /^\.loop(\/|$)/.test(rel)) return null;
     return isProtected(`${rel.replace(/\/$/, '')}/x`, ctx) ? rel : null;
   };
-  const mentioned = c.split(/[\s"'`;|&()<>=]+/).map(protectedWord).find(Boolean) || null;
+  const anyProtected = (text) => String(text).split(FRAGMENTS).map(protectedWord).find(Boolean) || null;
+  const redirectsIn = (text) => [...String(text).matchAll(REDIRECT)].map((m) => m[1]).filter((t) => !/^\(/.test(t) && !noFile(t));
+
+  const plain = readPlainShell(cmd);
+  // What the line says, as one text without quote marks: all of it, or for plain shell what is
+  // left once the here-document bodies that are data are gone.
+  const flat = plain ? plain.map((c) => [...c.words.map((w) => w.text), ...c.targets.map((t) => `> ${t}`)].join(' ')).join(' ; ') : normalizeShell(cmd);
+  const mentioned = anyProtected(flat);
   if (!mentioned) return null;
-  const scratch = (t) => /^(\/dev\/null|\$null|NUL)$/i.test(t);
-  const targets = (s) => [...s.matchAll(REDIRECT)].map((m) => m[1]).filter((t) => !/^\(/.test(t) && !scratch(t));
-  const unreadable = (w) => /[$`]|^~/.test(w);
-  for (const cd of c.matchAll(/(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+([^\s;&|)]+)/gi)) {
-    const into = unreadable(cd[1]) ? mentioned : protectedWord(cd[1]);
-    if (into && (targets(c).length || WRITE_VERB.test(c))) return into;
+
+  const targets = plain ? plain.flatMap((c) => [...c.targets.filter((t) => !noFile(t)), ...c.words.filter((w) => w.quoted).flatMap((w) => redirectsIn(w.text))]) : redirectsIn(flat);
+  for (const t of targets) {
+    if (unreadable(t)) return mentioned;
+    const hit = protectedWord(t) || protectedWord(t.replace(/\\/g, ''));
+    if (hit) return hit;
   }
-  for (const part of parts) {
-    const seg = normalizeShell(part.text).trim();
-    if (!seg) continue;
-    for (const target of targets(seg)) {
-      if (unreadable(target)) return mentioned;
-      const hit = protectedWord(target);
-      if (hit) return hit;
-    }
-    if (!WRITE_VERB.test(seg)) continue;
-    if (/\bxargs\b/i.test(seg)) return mentioned;
-    const words = seg
-      .replace(/(?:&>>?|[0-9]*>>?|>\|)\s*[^\s<>|;&]+/g, ' ')
-      .split(/[\s=]+/)
-      .filter(Boolean);
-    // "Only the last argument is written" holds for one command. An unsure piece may hold several,
-    // so there every path counts.
-    const copies = !part.unsure && COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
-    // cp takes options after the destination too: the last word that is not one.
-    const written = words.filter((w) => !w.startsWith('-')).slice(-1);
-    for (const w of copies ? written : words) {
+  const anyVerb = WRITE_VERB.test(flat);
+  for (const cd of flat.matchAll(CD)) {
+    const into = unreadable(cd[1]) ? mentioned : protectedWord(cd[1]);
+    if (into && (targets.length || anyVerb)) return into;
+  }
+  if (!plain) return anyVerb ? mentioned : null;
+
+  for (const c of plain) {
+    const text = c.words.map((w) => w.text).join(' ');
+    if (!WRITE_VERB.test(text)) continue;
+    if (/\bxargs\b/i.test(text)) return mentioned;
+    // `cp [options] sources… destination`: only the destination is written. Any other shape
+    // (an option after the first path, -t) is read whole.
+    const args = c.words.slice(1).map((w) => w.text);
+    const firstPath = args.findIndex((a) => !a.startsWith('-'));
+    const plainCopy = !c.words[0].quoted && c.words[0].text === 'cp' && firstPath >= 0 && !args.slice(firstPath).some((a) => a.startsWith('-')) && !args.some((a) => /^(-[A-Za-z]*t|--target-directory)/.test(a));
+    for (const w of plainCopy ? args.slice(-1) : text.split(FRAGMENTS)) {
       if (unreadable(w)) return mentioned;
       const hit = protectedWord(w);
       if (hit) return hit;
