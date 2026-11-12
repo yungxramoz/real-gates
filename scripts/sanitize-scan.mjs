@@ -1,9 +1,18 @@
 #!/usr/bin/env node
 // Sanitizer scan: no trace of the original project, no personal data, no keys.
 //
-// Usage: node scripts/sanitize-scan.mjs [repo-root]
+// Usage: node scripts/sanitize-scan.mjs [--template | --project] [repo-root]
 // Scans every text file git knows about or would add (`git ls-files -co --exclude-standard`).
 // Exit 0 when clean; exit 1 with one `file:line label: match` line per hit.
+//
+// Two modes, because this file is copied into every project the template makes:
+// - template: the repository is the template itself (loop/loop.config.json names no repo). Every
+//   check runs: nothing of the original project or its author, no real hosts or project refs.
+// - project: /setup-loop has written the repo into loop/loop.config.json. The project's own
+//   identity is not a leak: its owner, its commit author, its hosts and its database ref have to
+//   be in its config. So the original-project checks are off, and the commit author's email
+//   (gitAuthor.email) is allowed. Keys, tokens and every other email are still refused.
+// The mode is read from the config; --template or --project forces one.
 //
 // Two kinds of checks, all case-insensitive:
 // - TERMS: names from the original project. They are stored as SHA-256 prefixes, not as text, so
@@ -55,11 +64,13 @@ const hasDigit = (s) => /\d/.test(s);
 
 /**
  * Regex checks. `keep(match)` can veto a hit (e.g. allowed emails). Every regex gets the `gi` flags.
+ * `scope: 'template'` marks a check that only makes sense in the template itself: in a project, a
+ * real host or project ref is the project's own configuration.
  */
 export const PATTERNS = [
-  { label: 'ticket id from the original project', re: /\bSAN-\d+\b/ },
-  { label: 'original-project locale', re: /\bde-CH\b/ },
-  { label: 'original multi-agent tool', re: /paperclip/ },
+  { label: 'ticket id from the original project', scope: 'template', re: /\bSAN-\d+\b/ },
+  { label: 'original-project locale', scope: 'template', re: /\bde-CH\b/ },
+  { label: 'original multi-agent tool', scope: 'template', re: /paperclip/ },
   {
     label: 'email',
     kind: 'email',
@@ -70,12 +81,21 @@ export const PATTERNS = [
     // A concrete *.vercel.app host. Placeholders (<team>, {slug}, …, *) break the host and are not
     // matched; hosts containing "example" are allowed.
     label: 'vercel.app URL with a real team slug',
+    scope: 'template',
     re: /(?<![\w<>{}…*.-])[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.vercel\.app\b/,
     keep: (m) => !/example/i.test(m),
   },
-  { label: 'Supabase project ref in a URL', re: /\b[a-z]{20}\.supabase\.(?:co|in|com)\b/ },
-  { label: 'Supabase project ref in a URL', re: /project[_-]?ref=[a-z]{20}\b/ },
-  { label: 'Supabase project ref in a URL', re: /supabase\.com\/dashboard\/project\/[a-z]{20}\b/ },
+  {
+    label: 'Supabase project ref in a URL',
+    scope: 'template',
+    re: /\b[a-z]{20}\.supabase\.(?:co|in|com)\b/,
+  },
+  { label: 'Supabase project ref in a URL', scope: 'template', re: /project[_-]?ref=[a-z]{20}\b/ },
+  {
+    label: 'Supabase project ref in a URL',
+    scope: 'template',
+    re: /supabase\.com\/dashboard\/project\/[a-z]{20}\b/,
+  },
   { label: 'JWT', re: /\beyJ[a-z0-9_-]{10,}\.eyJ[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}/ },
   { label: 'sk- style secret key', re: /\bsk-(?:[a-z]+-)*[a-z0-9_-]{20,}/, keep: hasDigit },
   { label: 're_ style API key', re: /\bre_[a-z0-9]{6,}_[a-z0-9_]{12,}\b/, keep: hasDigit },
@@ -117,15 +137,44 @@ function words(line) {
 }
 
 /**
+ * What a project says about itself in loop/loop.config.json: { repo, email }. Both empty in the
+ * template, and when there is no readable config.
+ */
+export function projectIdentity(root) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(root, 'loop', 'loop.config.json'), 'utf8'));
+    return { repo: String(cfg.repo || ''), email: String(cfg.gitAuthor?.email || '') };
+  } catch {
+    return { repo: '', email: '' };
+  }
+}
+
+/** 'project' once /setup-loop has written the repo into the config, 'template' before. */
+export function modeOf(root) {
+  return projectIdentity(root).repo ? 'project' : 'template';
+}
+
+/**
  * Hits in one file's text. `file` is the repo-relative path with forward slashes; it decides the
  * LICENSE exemption. `terms` and `patterns` default to the built-in lists (tests pass their own).
+ * `mode: 'project'` leaves out the original-project terms and the template-only patterns;
+ * `allowEmails` are addresses that are not a leak there (the project's commit author).
  */
-export function scanText(text, { file = '', terms = TERMS, patterns = PATTERNS } = {}) {
+export function scanText(
+  text,
+  { file = '', terms = TERMS, patterns = PATTERNS, mode = 'template', allowEmails = [] } = {},
+) {
   const nameExempt = NAME_EXEMPT.includes(file);
+  const project = mode === 'project';
+  const allowed = new Set(allowEmails.filter(Boolean).map((e) => e.toLowerCase()));
   const byHash = new Map(
-    terms.filter((t) => !(nameExempt && t.kind === 'name')).map((t) => [t.hash, t]),
+    (project ? [] : terms)
+      .filter((t) => !(nameExempt && t.kind === 'name'))
+      .map((t) => [t.hash, t]),
   );
-  const active = patterns.filter((p) => !(nameExempt && p.kind === 'email'));
+  const active = patterns.filter(
+    (p) => !(nameExempt && p.kind === 'email') && !(project && p.scope === 'template'),
+  );
   const hits = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
@@ -145,6 +194,7 @@ export function scanText(text, { file = '', terms = TERMS, patterns = PATTERNS }
       const re = new RegExp(p.re.source, 'gi');
       for (const m of line.matchAll(re)) {
         if (p.keep && !p.keep(m[0])) continue;
+        if (p.kind === 'email' && allowed.has(m[0].toLowerCase())) continue;
         hits.push({ file, line: i + 1, label: p.label, match: m[0] });
       }
     }
@@ -174,8 +224,9 @@ function isBinary(buf, file) {
   return buf.subarray(0, 8192).includes(0);
 }
 
-/** Every hit in the repo at `root`. */
-export function scanRepo(root) {
+/** Every hit in the repo at `root`. `mode` defaults to what the repo's config says it is. */
+export function scanRepo(root, { mode = modeOf(root) } = {}) {
+  const allowEmails = mode === 'project' ? [projectIdentity(root).email] : [];
   const hits = [];
   for (const file of listFiles(root)) {
     if (SELF_EXEMPT.includes(file)) continue;
@@ -188,7 +239,7 @@ export function scanRepo(root) {
       continue; // tracked but deleted in the working tree
     }
     if (isBinary(buf, file)) continue;
-    hits.push(...scanText(buf.toString('utf8'), { file }));
+    hits.push(...scanText(buf.toString('utf8'), { file, mode, allowEmails }));
   }
   return hits;
 }
@@ -198,18 +249,25 @@ export function formatHit(h) {
 }
 
 function main() {
-  const arg = process.argv[2];
+  const args = process.argv.slice(2);
+  const forced = args.includes('--template')
+    ? 'template'
+    : args.includes('--project')
+      ? 'project'
+      : null;
+  const arg = args.find((a) => !a.startsWith('--'));
   const root = arg
     ? path.resolve(arg)
     : execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-  const hits = scanRepo(root);
+  const mode = forced || modeOf(root);
+  const hits = scanRepo(root, { mode });
   if (hits.length === 0) {
-    console.log(`sanitize-scan: clean (${listFiles(root).length} files)`);
+    console.log(`sanitize-scan: clean (${listFiles(root).length} files, ${mode} checks)`);
     return 0;
   }
   for (const h of hits) console.log(formatHit(h));
   console.log(
-    `sanitize-scan: ${hits.length} hit(s) in ${new Set(hits.map((h) => h.file)).size} file(s)`,
+    `sanitize-scan: ${hits.length} hit(s) in ${new Set(hits.map((h) => h.file)).size} file(s), ${mode} checks`,
   );
   return 1;
 }
