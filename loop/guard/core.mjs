@@ -130,10 +130,10 @@ export function dropHereDocBodies(cmd) {
       continue;
     }
     out.push(line);
-    const m = line.match(/^([^"'`]*?)<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\2/);
-    if (m && !/\b(?:ba|z|da|k)?sh\b|\b(?:eval|source|pwsh|powershell)\b/i.test(line)) {
-      end = m[3];
-      quoted = !!m[2];
+    const open = hereDocOpening(line);
+    if (open && !/\b(?:ba|z|da|k)?sh\b|\b(?:eval|source|pwsh|powershell)\b/i.test(line)) {
+      end = open.word;
+      quoted = open.quoted;
     }
   }
   if (end !== null) out.push(...body); // never closed: not a here-document we understand
@@ -141,21 +141,82 @@ export function dropHereDocBodies(cmd) {
 }
 
 /**
+ * The here-document a line opens, read the way the shell reads the line: a `<<` inside quotes or
+ * in a comment is text, `<<<` is a here-string, and inside `((` it is a shift. Inside "$( … )" the
+ * shell starts over, so `--body "$(cat <<'EOF'` opens one. Where this cannot tell (backticks), it
+ * says no, and the lines that follow are read as commands.
+ */
+function hereDocOpening(line) {
+  if (line.includes('((')) return null;
+  const stack = [null]; // the quote that is open at each level of $( … )
+  const top = () => stack[stack.length - 1];
+  const set = (q) => (stack[stack.length - 1] = q);
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (top() === "'") {
+      if (ch === "'") set(null);
+      continue;
+    }
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (ch === '$' && line[i + 1] === '(') {
+      stack.push(null);
+      i++;
+      continue;
+    }
+    if (top() === '"') {
+      if (ch === '"') set(null);
+      continue;
+    }
+    if (ch === ')' && stack.length > 1) stack.pop();
+    else if (ch === '"' || ch === "'") set(ch);
+    else if (ch === '`') return null;
+    else if (ch === '#' && (i === 0 || /[\s;&|(]/.test(line[i - 1]))) return null;
+    else if (ch === '<' && line[i + 1] === '<') {
+      if (line[i + 2] === '<') {
+        i += 2;
+        continue;
+      }
+      const m = line.slice(i).match(/^<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1/);
+      if (m) return { word: m[2], quoted: !!m[1] };
+      i++;
+    }
+  }
+  return null;
+}
+
+/**
  * A command line as its simple commands: cut at `;`, a line break, `&&`, `||`, `|` and `&` where
- * these stand outside quotes. `sed -i 's/a/b/;s/c/d/' file` stays one command. A quote that never
- * closes keeps the rest together, which only makes the caller look at more, never at less.
+ * these stand outside quotes. `sed -i 's/a/b/;s/c/d/' file` stays one command.
+ *
+ * Nothing is ever dropped, and where the reading is not certain the piece is marked `unsure` and
+ * kept together, so the caller looks at more, never at less: after a quote that never closes, and
+ * from a `#` that looks like a comment to the end of its line (quote marks in it open nothing, but
+ * its words stay, in case the shell did not take it for a comment).
  */
 export function splitCommands(cmd) {
   const s = String(cmd);
   const parts = [];
   let text = '';
   let quote = null;
+  let comment = false;
+  let unsure = false;
   const push = (open = false) => {
-    if (text.trim()) parts.push({ text, open });
+    if (text.trim()) parts.push({ text, unsure: unsure || open });
     text = '';
+    unsure = false;
   };
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
+    if (comment) {
+      if (ch === '\n') {
+        comment = false;
+        push();
+      } else if (ch !== "'" && ch !== '"') text += ch;
+      continue;
+    }
     if (quote) {
       text += ch;
       if (ch === '\\' && quote === '"' && i + 1 < s.length) text += s[++i];
@@ -172,9 +233,10 @@ export function splitCommands(cmd) {
       continue;
     }
     const prev = s[i - 1];
-    // A comment runs to the end of its line; an apostrophe in it opens nothing.
     if (ch === '#' && (i === 0 || /[\s;&|(]/.test(prev))) {
-      while (i + 1 < s.length && s[i + 1] !== '\n') i++;
+      comment = true;
+      unsure = true;
+      text += ch;
       continue;
     }
     const next = s[i + 1];
@@ -195,13 +257,16 @@ export function splitCommands(cmd) {
  * Does a shell line write into a protected path? Returns the path, or null. A line that only
  * names such a path (cat, grep, running the runner's tests with 2>&1) reads it and passes. Looked
  * at per simple command:
- *  - a redirect whose target is protected; a target with a variable cannot be read here, so it
- *    counts when the line names a protected path anywhere;
+ *  - a redirect whose target is protected;
  *  - a write verb with a protected path in the same simple command (for cp and its kind only the
  *    last argument, the one written);
- *  - after a cd into a protected folder relative paths cannot be read here, so any redirect to a
- *    file or write verb on the line counts.
- * An early warning: the runner's own checks after every session are the hard stop.
+ *  - what cannot be read here counts when the line names a protected path anywhere: a redirect
+ *    target or a write verb's argument with a variable, a substitution or `~` in it, a write verb
+ *    fed by xargs;
+ *  - after a cd into a protected folder, or into one that cannot be read here, relative paths
+ *    mean something else, so any redirect to a file or write verb on the line counts.
+ * Not looked at: what a program does with a path it is handed (`node -e`, a script fed by a
+ * here-document). An early warning: the runner's own checks after every session are the hard stop.
  */
 export function shellWritesProtected(cmd, ctx) {
   // A line break ends a command as a `;` does. normalizeShell folds all white space, so the breaks
@@ -210,7 +275,12 @@ export function shellWritesProtected(cmd, ctx) {
   const c = normalizeShell(parts.map((p) => p.text).join(' ; '));
   // A folder counts when what is inside it is protected: `loop` as much as `loop/run.mjs`.
   const protectedWord = (w) => {
-    const rel = w ? ctx.rel(w.replace(/[(){}]/g, '').replace(/[;,&|]+$/, '')) : null;
+    // `../loop/run.mjs` after a cd may be the repository's own: it is read without the dots too.
+    const word = String(w || '')
+      .replace(/[(){}]/g, '')
+      .replace(/[;,&|]+$/, '')
+      .replace(/^(?:\.\.?[\\/])+/, '');
+    const rel = word ? ctx.rel(word) : null;
     if (!rel) return null;
     if (isProtected(rel, ctx)) return rel;
     // inside a protected folder but let through by name (a new patch, .env.example): not a folder
@@ -221,39 +291,33 @@ export function shellWritesProtected(cmd, ctx) {
   if (!mentioned) return null;
   const scratch = (t) => /^(\/dev\/null|\$null|NUL)$/i.test(t);
   const targets = (s) => [...s.matchAll(REDIRECT)].map((m) => m[1]).filter((t) => !/^\(/.test(t) && !scratch(t));
+  const unreadable = (w) => /[$`]|^~/.test(w);
   for (const cd of c.matchAll(/(?:^|[\s;&|(])(?:cd|pushd|Set-Location|sl)\s+([^\s;&|)]+)/gi)) {
-    const into = protectedWord(cd[1]);
+    const into = unreadable(cd[1]) ? mentioned : protectedWord(cd[1]);
     if (into && (targets(c).length || WRITE_VERB.test(c))) return into;
   }
   for (const part of parts) {
     const seg = normalizeShell(part.text).trim();
     if (!seg) continue;
     for (const target of targets(seg)) {
-      if (/[$`]/.test(target)) return mentioned;
+      if (unreadable(target)) return mentioned;
       const hit = protectedWord(target);
       if (hit) return hit;
     }
     if (!WRITE_VERB.test(seg)) continue;
+    if (/\bxargs\b/i.test(seg)) return mentioned;
     const words = seg
       .replace(/(?:&>>?|[0-9]*>>?|>\|)\s*[^\s<>|;&]+/g, ' ')
-      .split(/\s+/)
+      .split(/[\s=]+/)
       .filter(Boolean);
-    // "Only the last argument is written" holds for one command. After a quote that never closed
-    // the piece may hold several, so there every path counts.
-    const copies = !part.open && COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
+    // "Only the last argument is written" holds for one command. An unsure piece may hold several,
+    // so there every path counts.
+    const copies = !part.unsure && COPY_VERB.test(seg) && !/\s-t\s|--target-directory/.test(seg);
     for (const w of copies ? words.slice(-1) : words) {
+      if (unreadable(w)) return mentioned;
       const hit = protectedWord(w);
       if (hit) return hit;
     }
-  }
-  return null;
-}
-
-function protectedPathMentioned(c, ctx) {
-  const words = c.split(/[\s"'`;|&()<>]+/).filter(Boolean);
-  for (const w of words) {
-    const rel = ctx.rel(w);
-    if (rel && isProtected(rel, ctx)) return rel;
   }
   return null;
 }
