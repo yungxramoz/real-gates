@@ -301,6 +301,25 @@ export function readPlainShell(source) {
 }
 
 /**
+ * The words one command of plain shell could write to: null when it has no write verb, else
+ * { words, xargs }. `cp [options] sources… destination` writes only its destination; any other
+ * shape (an option after the first path, -t, a redirect to or from a file) is read whole.
+ */
+function written(c) {
+  const text = normalizeShell(c.words.map((w) => w.text).join(' '));
+  if (!WRITE_VERB.test(text)) return null;
+  const args = c.words.slice(1).map((w) => w.text);
+  const firstPath = args.findIndex((a) => !a.startsWith('-'));
+  const bare = !c.reads && !c.hereDoc && c.targets.every(noFile);
+  const shape = bare && !c.words[0].quoted && firstPath >= 0 && !args.slice(firstPath).some((a) => a.startsWith('-')) && !args.some((a) => /^(-[A-Za-z]*t|--target-directory)/.test(a));
+  const plainCopy = shape && c.words[0].text === 'cp';
+  // `cp a.json dir/` and `mv a.json dir` write dir/a.json: the name each source would get there counts too.
+  const paths = args.slice(firstPath).map((a) => a.replace(/\\/g, '/'));
+  const inFolder = shape && /^(cp|mv)$/.test(c.words[0].text) ? paths.slice(0, -1).map((s) => path.posix.join(paths.at(-1), path.posix.basename(s))) : [];
+  return { words: [...(plainCopy ? args.slice(-1) : text.split(FRAGMENTS)), ...inFolder], xargs: /\bxargs\b/i.test(text) };
+}
+
+/**
  * Does a shell line write into a protected path? Returns the path, or null. A line that only
  * names such a path (cat, grep, running the runner's tests with 2>&1) reads it and passes.
  *
@@ -358,7 +377,7 @@ export function shellWritesProtected(cmd, ctx) {
       if (isRelative(to)) for (const f of ['', ...folders]) folders.add(cleanPath(path.posix.join(f, to)));
       else if (ctx.rel(to.replace(/^\/([A-Za-z])\//, '$1:/'))) folders.add(ctx.rel(to.replace(/^\/([A-Za-z])\//, '$1:/')));
     }
-    const words = [...targets, ...(anyVerb ? said.split(FRAGMENTS) : [])].filter((w) => w && isRelative(w));
+    const words = [...targets, ...(plain ? plain.flatMap((c) => written(c)?.words || []) : anyVerb ? said.split(FRAGMENTS) : [])].filter((w) => w && isRelative(w));
     for (const f of folders) {
       if (!f || f === '.' || f.startsWith('..')) continue;
       for (const w of words) {
@@ -368,7 +387,8 @@ export function shellWritesProtected(cmd, ctx) {
     }
   }
 
-  const mentioned = anyProtected(said) || anyProtected(flat);
+  // also the name a copied or moved file gets in the folder it goes to (written, above)
+  const mentioned = anyProtected(said) || anyProtected(flat) || (plain ? plain.flatMap((c) => written(c)?.words || []).map(protectedWord).find(Boolean) : null) || null;
   if (!mentioned) return null;
 
   for (const t of targets) {
@@ -383,18 +403,12 @@ export function shellWritesProtected(cmd, ctx) {
   if (!plain) return anyVerb ? mentioned : null;
 
   for (const c of plain) {
-    const text = normalizeShell(c.words.map((w) => w.text).join(' '));
-    if (!WRITE_VERB.test(text)) continue;
-    if (/\bxargs\b/i.test(text)) return mentioned;
-    // `cp [options] sources… destination`: only the destination is written. Any other shape
-    // (an option after the first path, -t, a redirect to or from a file) is read whole.
-    const args = c.words.slice(1).map((w) => w.text);
-    const firstPath = args.findIndex((a) => !a.startsWith('-'));
-    const bare = !c.reads && !c.hereDoc && c.targets.every(noFile);
-    const plainCopy = bare && !c.words[0].quoted && c.words[0].text === 'cp' && firstPath >= 0 && !args.slice(firstPath).some((a) => a.startsWith('-')) && !args.some((a) => /^(-[A-Za-z]*t|--target-directory)/.test(a));
-    for (const w of plainCopy ? args.slice(-1) : text.split(FRAGMENTS)) {
-      if (unreadable(w)) return mentioned;
-      const hit = protectedWord(w);
+    const w = written(c);
+    if (!w) continue;
+    if (w.xargs) return mentioned;
+    for (const word of w.words) {
+      if (unreadable(word)) return mentioned;
+      const hit = protectedWord(word);
       if (hit) return hit;
     }
   }
@@ -422,6 +436,24 @@ export function shellWritesProtected(cmd, ctx) {
 
 /** Commands that print or search the text they are given and never run it as shell. */
 const READS_TEXT = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'cat', 'head', 'tail', 'wc', 'sort', 'uniq', 'jq', 'test', '[', 'cd', 'ls', 'diff', 'node', 'gh', 'git']);
+/**
+ * git and gh run text in many places (`git submodule foreach '<shell>'`, `git bisect run`,
+ * `rebase --exec`, an alias, a pager set on the line; `gh alias`, `gh extension`, `gh config`).
+ * They count as readers only in these subcommands, which print or search.
+ */
+const GIT_READS = new Set(['log', 'show', 'diff', 'grep', 'status', 'ls-files', 'ls-tree', 'rev-parse', 'rev-list', 'cat-file', 'blame', 'merge-base', 'describe', 'shortlog', 'fetch', 'show-ref', 'for-each-ref', 'diff-tree']);
+const GIT_VALUE_OPTION = /^(-C|--git-dir|--work-tree|--namespace)$/;
+const GIT_RUNS = /^(-c|--config-env|--exec-path|-O|--open-files-in-pager|--ext-diff|--exec|-x)/;
+const GH_READS = new Set(['pr', 'issue', 'run', 'api', 'repo', 'release', 'search', 'workflow', 'status']);
+const GH_VALUE_OPTION = /^(-R|--repo|--hostname)$/;
+/** The subcommand of `git …` or `gh …`: the first word that is no option and no option's value. */
+const subcommand = (words, takesValue) => {
+  for (let i = 1; i < words.length; i++) {
+    if (takesValue.test(words[i])) i++;
+    else if (!words[i].startsWith('-')) return words[i];
+  }
+  return null;
+};
 /** After one of these the working folder is anyone's guess. */
 const MOVES = new Set(['source', '.', 'eval', 'builtin', 'command', 'trap', 'alias', 'shopt', 'enable']);
 /** A word that changes the working folder, in bash or PowerShell, wherever it stands in a command. */
@@ -459,8 +491,8 @@ export function shellWritesOutsideLoop(cmd, ctx) {
     const w = lead(c).map((x) => x.text);
     if (!w.length) return true;
     if (!READS_TEXT.has(first(c))) return false;
-    if (w[0] === 'git') return !w.some((x) => /^(-c|--config-env|--exec-path)/.test(x));
-    if (w[0] === 'gh') return !w.some((x) => /^(alias|extension|ext)$/.test(x));
+    if (w[0] === 'git') return GIT_READS.has(subcommand(w, GIT_VALUE_OPTION)) && !w.some((x) => GIT_RUNS.test(x));
+    if (w[0] === 'gh') return GH_READS.has(subcommand(w, GH_VALUE_OPTION));
     return true;
   });
 

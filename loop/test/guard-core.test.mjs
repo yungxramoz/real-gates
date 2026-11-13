@@ -457,6 +457,9 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
     ['node -e "console.log([1, 2].map(x => x * 2))"'],
     ['gh pr comment 3 --body "before -> after"'],
     ["git log --format='%h > %s' -3"],
+    ["git -C .loop/review-wt --no-pager show -s --format='%an > %s' HEAD"],
+    ["git grep -n '=>' -- src"],
+    ['gh -R acme/app pr view 3 --json title --jq \'select(.title > "a")\''],
     ["cat > .loop/reviews/rec.mjs <<'EOF'\nconst big = (a) => a > 1;\nconsole.log(big(2));\nEOF"],
     ["printf '%s' \"exit 0 > expected\" > .loop/reviews/t.txt"],
     // tee writes a file too
@@ -512,6 +515,13 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
     ["printf 'x > src/a.ts' | xargs -I{} sh -c {}"],
     ["gh alias set w '!echo x > src/a.ts'"],
     ["git -c alias.w='!echo x > src/a.ts' w"],
+    // git and gh run text in many subcommands: only the ones that print or search read it
+    ["git submodule foreach 'echo x > victim.txt'"],
+    ["git submodule foreach --recursive 'echo x > victim.txt'"],
+    ["git bisect run sh -c 'echo x > src/a.ts'"],
+    ["git grep --open-files-in-pager='echo x > src/a.ts; cat' needle"],
+    ["git log --ext-diff -p -1 'x > src/a.ts'"],
+    ["gh config set pager 'sh -c \"cat > src/a.ts\"'"],
     ["bash <<'EOF'\necho x > src/a.ts\nEOF"],
     // where a relative path lands must be certain
     ['echo x > out.txt'],
@@ -580,12 +590,18 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
       ['cd .loop/guard && echo x | tee loop/guard.mjs'],
       ['cd .loop && rm state.json'],
       ['cd .loop/guard/loop && cp /tmp/other.mjs guard.mjs'],
+      ['cd .loop && cp /tmp/s.json state.json'],
+      ['cd .loop && mv state.json /tmp/s.json'],
+      ['cd .loop && cp /tmp/state.json .'],
+      ['cp /tmp/state.json .loop/'],
+      ['mv /tmp/guard.mjs .loop/guard/loop'],
+      ['cp /tmp/x/.env.local config/'],
       ['cd .loop; echo "$(date)" > claude-settings.json'],
       ['printf x > claude-settings.json', '.loop'],
       ['rm -f guard/config.json', '.loop'],
       ['cd guard && echo x > config.json', '.loop'],
     ];
-    const reads = [['cd .loop && cat state.json'], ['cd .loop && ls guard && head -3 guard/config.json'], ['cd .loop/tmp/x && cp a.txt b.txt'], ['cd .loop && echo x > reviews/t.txt'], ['wc -l state.json', '.loop']];
+    const reads = [['cp .loop/state.json /tmp/'], ['cp docs/a.md docs/b.md .loop/tmp/'], ['cd .loop && cp state.json /tmp/state-backup.json'], ['cp guard/config.json /tmp/c.json', '.loop'], ['cd .loop && cat state.json'], ['cd .loop && ls guard && head -3 guard/config.json'], ['cd .loop/tmp/x && cp a.txt b.txt'], ['cd .loop && echo x > reviews/t.txt'], ['wc -l state.json', '.loop']];
     for (const phase of ['build', 'review']) {
       for (const [cmd, cwd] of writes) blocked(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }), phase === 'build' ? 'core:protected-path' : undefined);
       for (const [cmd, cwd] of reads) allowed(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }));
