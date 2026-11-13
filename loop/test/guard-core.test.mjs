@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { decide } from '../guard/core.mjs';
+import { decide, READ_ONLY_PHASES } from '../guard/core.mjs';
 import { repoRelative, globToRegExp } from '../guard/paths.mjs';
 import { compileRules } from '../guard/rules.mjs';
 import { DEFAULTS, deepMerge } from '../lib/config.mjs';
@@ -435,5 +435,176 @@ describe('a shell line that only names a harness path reads it', () => {
   test('a patch that is already on the base branch is not rewritten by a redirect', () => {
     blocked(sh('git diff > loop/patches/LEARN-1.patch', { onBase: ['loop/patches/LEARN-1.patch'] }), 'core:protected-path');
     blocked(sh('git apply loop/patches/LEARN-1.patch', { onBase: ['loop/patches/LEARN-1.patch'] }), 'core:protected-path');
+  });
+});
+
+// A read-only step keeps its evidence under .loop/. Most lines in `into` were refused in real
+// review and acceptance sessions although they only wrote there, or wrote nothing at all.
+describe('a read-only step writes under .loop/ and nowhere else', () => {
+  const wt = '.loop/review-wt';
+  const into = [
+    // an append is a redirect like any other
+    ['printf x >> .loop/reviews/M1/probe.txt'],
+    ['printf x >>.loop/p.txt'],
+    ['node x.mjs >> /dev/null'],
+    ['{ printf a; printf b; } >> /c/work/app/.loop/r/t.txt 2>&1'],
+    ['echo ok 2> .loop/err.txt'],
+    ['pnpm test &> .loop/t.txt'],
+    ['pnpm test > "$ROOT/.loop/shots/o.txt" 2>&1'],
+    // a > inside quotes or a here-document is text
+    ["grep '>>' docs/a.md"],
+    ['grep -n ">" src/a.ts | head -5'],
+    ['node -e "console.log([1, 2].map(x => x * 2))"'],
+    ['gh pr comment 3 --body "before -> after"'],
+    ["git log --format='%h > %s' -3"],
+    ["git -C .loop/review-wt --no-pager show -s --format='%an > %s' HEAD"],
+    ["git grep -n '=>' -- src"],
+    ['gh -R acme/app pr view 3 --json title --jq \'select(.title > "a")\''],
+    ["cat > .loop/reviews/rec.mjs <<'EOF'\nconst big = (a) => a > 1;\nconsole.log(big(2));\nEOF"],
+    ["printf '%s' \"exit 0 > expected\" > .loop/reviews/t.txt"],
+    // tee writes a file too
+    ['pnpm test 2>&1 | tee .loop/t.txt'],
+    ['pnpm test 2>&1 | tee -a .loop/t.txt | tail -3'],
+    // tee as an argument is a word like any other
+    ['echo tee src/a.ts'],
+    ['grep tee src/a.ts'],
+    ['grep -rn "tee" src'],
+    ['echo "$(date)" tee src/a.ts'],
+    // a relative path is judged where it lands: the session's folder, then every cd
+    ['pnpm test > out.txt 2>&1', wt],
+    ['pnpm test > ../shots/o.txt', wt],
+    ['cd packages/app && pnpm test > out.txt', wt],
+    ['cd .loop/review-wt && pnpm test > out.txt'],
+    ['cd .loop && cd review-wt && ls > files.txt'],
+    [`cd ${process.platform === 'win32' ? '/c/work/app' : '/work/app'}/.loop/review-wt && ls > files.txt`, 'src'],
+    ['ls | tee listing.txt', wt],
+    ['pnpm test > out.txt 2>&1 || true', wt],
+    ['pnpm lint || true; cd .loop/review-wt && pnpm test > out.txt'],
+    ['pnpm test > out.txt; echo done >> out.txt', wt],
+    ['cd packages/app | cat; ls > files.txt', wt],
+    // lines that are not plain shell: only a target that is spelled out
+    ['echo "$(date)" >> .loop/reviews/log.txt'],
+    ['out=$(pnpm test 2>&1); echo "$out" > .loop/t.txt'],
+  ];
+  const outside = [
+    ['printf x >> src/x.ts'],
+    ['echo hi>>src/x.ts'],
+    ['echo hi >> o.tmp'],
+    ['echo hi > src/x.ts'],
+    // a number before the redirect, and both streams at once, used to slip past
+    ['echo x 1>> src/x.ts'],
+    ['echo x 2> src/x.ts'],
+    ['echo x 1> src/x.ts'],
+    ['echo x &> src/x.ts'],
+    ['echo x >| src/x.ts'],
+    ['echo x | tee src/x.ts'],
+    ['echo x | tee -a src/x.ts'],
+    ['echo x | sudo tee src/x.ts'],
+    ['echo x | sudo -u root tee src/x.ts'],
+    ['echo x | env LC_ALL=C tee src/x.ts'],
+    ['LC_ALL=C tee src/x.ts < in.txt'],
+    ['echo "$(date)" | sudo tee src/x.ts'],
+    ['echo "$(date)"; LC_ALL=C tee src/x.ts < in.txt'],
+    // a path that only starts under .loop/
+    ['echo x > .loop/../src/x.ts'],
+    ['echo x > .loop/a/../../src/x.ts'],
+    // text that something on the line runs as shell is not text
+    ["echo 'echo x > src/a.ts' | bash"],
+    ['eval "echo x > src/a.ts"'],
+    ['bash -c "echo x > src/a.ts"'],
+    ["printf 'x > src/a.ts' | xargs -I{} sh -c {}"],
+    ["gh alias set w '!echo x > src/a.ts'"],
+    ["git -c alias.w='!echo x > src/a.ts' w"],
+    // git and gh run text in many subcommands: only the ones that print or search read it
+    ["git submodule foreach 'echo x > victim.txt'"],
+    ["git submodule foreach --recursive 'echo x > victim.txt'"],
+    ["git bisect run sh -c 'echo x > src/a.ts'"],
+    ["git grep --open-files-in-pager='echo x > src/a.ts; cat' needle"],
+    ["git log --ext-diff -p -1 'x > src/a.ts'"],
+    ["gh config set pager 'sh -c \"cat > src/a.ts\"'"],
+    ["bash <<'EOF'\necho x > src/a.ts\nEOF"],
+    // where a relative path lands must be certain
+    ['echo x > out.txt'],
+    ['cd src && echo x > out.txt'],
+    ['cd .loop/nope; echo x > out.txt'],
+    ['cd .loop/review-wt\necho x > out.txt'],
+    ['cd .loop/nope || echo x > out.txt'],
+    // the list ended: the cd before it may have failed or been skipped
+    ['cd .loop/nope && true; echo x > out.txt'],
+    // after `||` in the same list the cd may be skipped
+    ['true || cd .loop && echo x > out.txt'],
+    ['pnpm lint || cd .loop/review-wt && pnpm test > out.txt'],
+    ['true || false && cd .loop && echo x > out.txt'],
+    ['cd .loop && cd nope && true\necho x > out.txt'],
+    ['false && cd .loop/review-wt; echo x > out.txt'],
+    ['cd .loop/review-wt & echo x > out.txt'],
+    ['CDPATH=/elsewhere; cd .loop/review-wt && echo x > out.txt'],
+    ['Set-Location ../..; echo x > a.txt', wt],
+    // a folder change in quotes, or behind a variable, is still a folder change
+    ['cd .loop && "cd" .. && echo x > out.txt'],
+    ['cd .loop && c"d" .. && echo x > out.txt'],
+    ['cd .loop && "builtin" "cd" .. && echo x > out.txt'],
+    ['X=cd; $X ../.. && echo x > a.txt', wt],
+    ["trap 'cd ../..' DEBUG; echo x > a.txt", wt],
+    ['chdir ../.. && echo x > a.txt', wt],
+    ['cd "$D" && echo x > out.txt'],
+    ['echo x > ../../src/a.ts', wt],
+    ['cd ../.. && echo x > a.txt', wt],
+    ['if cd ../..; then echo x > a.txt; fi', wt],
+    ['pushd ../.. && echo x > a.txt', wt],
+    ['echo x > out.txt', null],
+    ['echo x > $S/o.txt'],
+    ['echo x > ~/o.txt'],
+    // not plain shell: every > counts, and the target must be spelled out
+    ['echo "$(date)" >> src/x.ts'],
+    ['echo "$(date)" 2> src/x.ts'],
+    ['echo x > >(tee src/x.ts)'],
+    ['echo "$(date)" | tee src/x.ts'],
+    ['node -e "a => b" $(echo x)'],
+  ];
+  for (const phase of [...READ_ONLY_PHASES]) {
+    test(`${phase}: writes under .loop/ pass`, () => {
+      for (const [cmd, cwd] of into) allowed(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }), cmd);
+    });
+    test(`${phase}: writes anywhere else are refused`, () => {
+      for (const [cmd, cwd] of outside) blocked(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }), 'core:read-only');
+    });
+  }
+  test('the refusal names the target and says how to write it', () => {
+    const d = sh('cd .loop/review-wt\npnpm test > out.txt', { phase: 'review' });
+    assert.match(d.reason, /redirect output only into \.loop\/\. "out\.txt" is not known to be there/);
+    assert.match(d.reason, /cd <folder> && …/);
+  });
+  test('a build session is not held to it', () => {
+    for (const cmd of ['echo hi > src/x.ts', 'pnpm test | tee out.txt', 'printf x >> notes.txt']) allowed(sh(cmd));
+  });
+  test('the harness files stay protected inside .loop/ as well', () => {
+    blocked(sh('echo {} > .loop/state.json', { phase: 'review' }), 'core:protected-path');
+    blocked(sh('echo x >> .loop/guard/loop/guard.mjs', { phase: 'review' }), 'core:protected-path');
+  });
+  test('a protected file is protected from whatever folder the line reaches it', () => {
+    const writes = [
+      ['cd .loop && printf "process.exit(0);" > guard/loop/guard.mjs'],
+      ['cd .loop && echo {} > state.json'],
+      ['cd .loop && cd guard && echo x > loop/guard.mjs'],
+      ['cd .loop/guard && echo x | tee loop/guard.mjs'],
+      ['cd .loop && rm state.json'],
+      ['cd .loop/guard/loop && cp /tmp/other.mjs guard.mjs'],
+      ['cd .loop && cp /tmp/s.json state.json'],
+      ['cd .loop && mv state.json /tmp/s.json'],
+      ['cd .loop && cp /tmp/state.json .'],
+      ['cp /tmp/state.json .loop/'],
+      ['mv /tmp/guard.mjs .loop/guard/loop'],
+      ['cp /tmp/x/.env.local config/'],
+      ['cd .loop; echo "$(date)" > claude-settings.json'],
+      ['printf x > claude-settings.json', '.loop'],
+      ['rm -f guard/config.json', '.loop'],
+      ['cd guard && echo x > config.json', '.loop'],
+    ];
+    const reads = [['cp .loop/state.json /tmp/'], ['cp docs/a.md docs/b.md .loop/tmp/'], ['cd .loop && cp state.json /tmp/state-backup.json'], ['cp guard/config.json /tmp/c.json', '.loop'], ['cd .loop && cat state.json'], ['cd .loop && ls guard && head -3 guard/config.json'], ['cd .loop/tmp/x && cp a.txt b.txt'], ['cd .loop && echo x > reviews/t.txt'], ['wc -l state.json', '.loop']];
+    for (const phase of ['build', 'review']) {
+      for (const [cmd, cwd] of writes) blocked(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }), phase === 'build' ? 'core:protected-path' : undefined);
+      for (const [cmd, cwd] of reads) allowed(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }));
+    }
   });
 });

@@ -189,6 +189,24 @@ every call, and the packs are part of the snapshot. Together they block:
 | Read-only steps | review, accept and packet: any write outside `.loop/`, any git write. These sessions also start without write tools |
 | Hosting | Vercel settings writes |
 
+**Where a read-only step may write.** A review, acceptance or packet session keeps its evidence
+under `.loop/`. A redirect (`>`, `>>`, `2>`, `&>`) or a `tee` passes when its target is there:
+
+| The line | Passes? | Why |
+| --- | --- | --- |
+| `pnpm test >> .loop/reviews/t.txt 2>&1` | yes | the target is spelled out under `.loop/` |
+| `cd .loop/review-wt && pnpm test > out.txt` | yes | `&&` makes it certain where `out.txt` lands |
+| `pnpm test > out.txt`, in a session whose folder is `.loop/review-wt` | yes | the guard knows the session's folder |
+| `grep '>>' docs/a.md`, `node -e "[1].map(x => x)"` | yes | a `>` inside quotes is text |
+| `cd .loop/review-wt; pnpm test > out.txt` | no | after `;` or a new line the `cd` may have failed |
+| `pnpm test > $OUT/t.txt`, `echo x > .loop/../src/a` | no | the target cannot be read, or does not stay under `.loop/` |
+| `echo 'echo x > src/a' \| bash` | no | text that a shell on the line runs is not text |
+
+On a line that is not plain shell (a backslash, a backtick, `$( … )`, a comment) the guard reads
+every `>` as a redirect and accepts only a target spelled out as the null device, a temp folder
+or a path through `.loop/`. What a program writes by itself (`node -e`, a script, `cp`) no command
+pattern can see: the check after the session, below, covers tracked files.
+
 **After every session** the runner checks what no command pattern can be trusted to catch, and
 stops the run (`.loop/STOP`, with an entry in `.loop/OWNER-ACTIONS.md`) if any fails:
 
