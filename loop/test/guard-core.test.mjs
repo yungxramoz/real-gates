@@ -530,6 +530,12 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
     ['cd .loop/review-wt & echo x > out.txt'],
     ['CDPATH=/elsewhere; cd .loop/review-wt && echo x > out.txt'],
     ['Set-Location ../..; echo x > a.txt', wt],
+    // a folder change in quotes, or behind a variable, is still a folder change
+    ['cd .loop && "cd" .. && echo x > out.txt'],
+    ['cd .loop && c"d" .. && echo x > out.txt'],
+    ['cd .loop && "builtin" "cd" .. && echo x > out.txt'],
+    ['X=cd; $X ../.. && echo x > a.txt', wt],
+    ["trap 'cd ../..' DEBUG; echo x > a.txt", wt],
     ['chdir ../.. && echo x > a.txt', wt],
     ['cd "$D" && echo x > out.txt'],
     ['echo x > ../../src/a.ts', wt],
@@ -565,5 +571,24 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
   test('the harness files stay protected inside .loop/ as well', () => {
     blocked(sh('echo {} > .loop/state.json', { phase: 'review' }), 'core:protected-path');
     blocked(sh('echo x >> .loop/guard/loop/guard.mjs', { phase: 'review' }), 'core:protected-path');
+  });
+  test('a protected file is protected from whatever folder the line reaches it', () => {
+    const writes = [
+      ['cd .loop && printf "process.exit(0);" > guard/loop/guard.mjs'],
+      ['cd .loop && echo {} > state.json'],
+      ['cd .loop && cd guard && echo x > loop/guard.mjs'],
+      ['cd .loop/guard && echo x | tee loop/guard.mjs'],
+      ['cd .loop && rm state.json'],
+      ['cd .loop/guard/loop && cp /tmp/other.mjs guard.mjs'],
+      ['cd .loop; echo "$(date)" > claude-settings.json'],
+      ['printf x > claude-settings.json', '.loop'],
+      ['rm -f guard/config.json', '.loop'],
+      ['cd guard && echo x > config.json', '.loop'],
+    ];
+    const reads = [['cd .loop && cat state.json'], ['cd .loop && ls guard && head -3 guard/config.json'], ['cd .loop/tmp/x && cp a.txt b.txt'], ['cd .loop && echo x > reviews/t.txt'], ['wc -l state.json', '.loop']];
+    for (const phase of ['build', 'review']) {
+      for (const [cmd, cwd] of writes) blocked(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }), phase === 'build' ? 'core:protected-path' : undefined);
+      for (const [cmd, cwd] of reads) allowed(sh(cmd, { phase, ...(cwd === undefined ? {} : { cwd }) }));
+    }
   });
 });

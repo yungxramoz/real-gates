@@ -342,16 +342,40 @@ export function shellWritesProtected(cmd, ctx) {
   // left once the here-document bodies that are data are gone.
   const said = plain ? plain.map((c) => [...c.words.map((w) => w.text), ...c.targets.map((t) => `> ${t}`)].join(' ')).join(' ; ') : String(cmd).replace(/\\\r?\n/g, '').replace(/["'`]/g, ''); // lo"op"/run.mjs is loop/run.mjs, and so is lo\⏎op/run.mjs
   const flat = normalizeShell(said); // `git -C dir restore` is `git restore` here
+  const targets = plain ? plain.flatMap((c) => [...c.targets.filter((t) => !noFile(t)), ...c.words.filter((w) => w.quoted).flatMap((w) => redirectsIn(w.text))]) : redirectsIn(flat);
+  const anyVerb = WRITE_VERB.test(flat);
+
+  // A relative path means a file in the folder the command runs in: after `cd .loop`,
+  // `state.json` is .loop/state.json and `guard/loop/guard.mjs` is the guard itself. So every
+  // path a redirect or a write verb could touch is also read from each folder the line could be
+  // in: the session's own, and every cd on the line, from each folder before it. Too many folders
+  // rather than too few; a read (`cd .loop && cat state.json`) is not looked at.
+  if (targets.length || anyVerb) {
+    const folders = new Set(ctx.cwd ? [ctx.cwd] : []);
+    for (const cd of flat.matchAll(CD)) {
+      const to = cd[1].replace(/[)}]+$/, '');
+      if (unreadable(to)) continue;
+      if (isRelative(to)) for (const f of ['', ...folders]) folders.add(cleanPath(path.posix.join(f, to)));
+      else if (ctx.rel(to.replace(/^\/([A-Za-z])\//, '$1:/'))) folders.add(ctx.rel(to.replace(/^\/([A-Za-z])\//, '$1:/')));
+    }
+    const words = [...targets, ...(anyVerb ? said.split(FRAGMENTS) : [])].filter((w) => w && isRelative(w));
+    for (const f of folders) {
+      if (!f || f === '.' || f.startsWith('..')) continue;
+      for (const w of words) {
+        const rel = cleanPath(path.posix.join(f, w));
+        if (!rel.startsWith('..') && isProtected(rel, ctx)) return rel;
+      }
+    }
+  }
+
   const mentioned = anyProtected(said) || anyProtected(flat);
   if (!mentioned) return null;
 
-  const targets = plain ? plain.flatMap((c) => [...c.targets.filter((t) => !noFile(t)), ...c.words.filter((w) => w.quoted).flatMap((w) => redirectsIn(w.text))]) : redirectsIn(flat);
   for (const t of targets) {
     if (unreadable(t)) return mentioned;
     const hit = protectedWord(t) || protectedWord(t.replace(/\\/g, ''));
     if (hit) return hit;
   }
-  const anyVerb = WRITE_VERB.test(flat);
   for (const cd of [...flat.matchAll(CD), ...said.matchAll(GIT_DIR)]) {
     const into = unreadable(cd[1]) ? mentioned : protectedWord(cd[1]);
     if (into && (targets.length || anyVerb)) return into;
@@ -399,7 +423,7 @@ export function shellWritesProtected(cmd, ctx) {
 /** Commands that print or search the text they are given and never run it as shell. */
 const READS_TEXT = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'cat', 'head', 'tail', 'wc', 'sort', 'uniq', 'jq', 'test', '[', 'cd', 'ls', 'diff', 'node', 'gh', 'git']);
 /** After one of these the working folder is anyone's guess. */
-const MOVES = new Set(['source', '.', 'eval', 'builtin', 'command']);
+const MOVES = new Set(['source', '.', 'eval', 'builtin', 'command', 'trap', 'alias', 'shopt', 'enable']);
 /** A word that changes the working folder, in bash or PowerShell, wherever it stands in a command. */
 const CHANGES_FOLDER = /^(cd|chdir|pushd|popd|Set-Location|sl|Push-Location|Pop-Location)$/i;
 /** Words that run the command after them: \`sudo tee f\` writes f as much as \`tee f\` does. */
@@ -465,6 +489,7 @@ export function shellWritesOutsideLoop(cmd, ctx) {
       }
     }
     // Where the next command runs.
+    const runs = words.find((w) => w.quoted || !ASSIGNMENT.test(w.text)); // the command, past VAR=value words
     if (name === 'cd') {
       const args = words.slice(1).filter((w) => w.quoted || !w.text.startsWith('-')).map((w) => w.text);
       const to = args.length === 1 && !unreadable(args[0]) && args[0] !== '-' ? args[0] : null;
@@ -481,7 +506,9 @@ export function shellWritesOutsideLoop(cmd, ctx) {
       // In a pipe the cd runs in a subshell and changes nothing for what follows. After a `||` in
       // the same list it may have been skipped (`true || cd x && …`): both folders are possible.
       if (c.after === '&&' && !c.piped) dirs = skippable ? [...new Set([...dirs, ...there])] : there;
-    } else if (MOVES.has(name) || words.some((w) => !w.quoted && CHANGES_FOLDER.test(w.text))) {
+    } else if (runs && (MOVES.has(runs.text) || runs.text.includes('$') || words.some((w) => CHANGES_FOLDER.test(w.text)))) {
+      // Quoted or not: "cd" .. changes the folder as cd .. does, and so may a command that is
+      // only known as a variable ($X ..). A word like these as an argument costs the certainty too.
       dirs = [null];
       passed.add(null);
     }
