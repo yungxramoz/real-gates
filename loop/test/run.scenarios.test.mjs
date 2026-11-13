@@ -55,7 +55,7 @@ test('red CI gets a fix round with the failing log', async () => {
   assert.match(sb.file('.loop/PROGRESS.md'), /CI on PR #1: red \(unit tests\)/);
 });
 
-test('review changes three times → needs_human, and the repeated finding queues a LEARN item first', async () => {
+test("review changes three times → needs_human; one item's own rounds call no retro", async () => {
   const sb = box();
   const [build] = happyItem('A1');
   sb.queue(smokeStep(), build, changes(), fixRound('A1'), changes(), fixRound('A1'), changes());
@@ -63,19 +63,22 @@ test('review changes three times → needs_human, and the repeated finding queue
   assert.equal(r.code, 0, r.stderr);
   const st = sb.state();
   assert.equal(st.items.A1.status, 'needs_human');
-  const learn = st.extra.filter((e) => e.kind === 'learn');
-  assert.equal(learn.length, 1);
-  assert.equal(learn[0].signature, 'review:tests:untested-branch');
-  assert.match(sb.file('.loop/PROGRESS.md'), /keeps recurring → LEARN-1 queued first in line/);
+  assert.equal(st.learn['review:tests:untested-branch'].count, 3);
+  assert.deepEqual(st.learn['review:tests:untested-branch'].items, ['A1']);
+  assert.equal(st.retro.due, null);
+  assert.equal(st.extra.filter((e) => e.kind === 'learn').length, 0);
 });
 
-test('a LEARN item gets the learning ladder in its task', async () => {
+test('a LEARN item is told to carry out its retro', async () => {
   const sb = box({ backlog: { milestones: ['M1'], items: [] } });
   sb.queue(smokeStep(), { text: 'no result' });
   fs.mkdirSync(path.join(sb.root, '.loop'), { recursive: true });
-  fs.writeFileSync(path.join(sb.root, '.loop', 'state.json'), JSON.stringify({ items: {}, extra: [{ kind: 'learn', id: 'LEARN-1', milestone: 'M1', title: 'Stop "review:tests" from recurring', scope: 'cases', refs: [], ui: false, dependsOn: [] }], packed: [], accept: {}, learn: {}, iterations: 0, noProgress: 0 }));
+  fs.writeFileSync(path.join(sb.root, '.loop', 'state.json'), JSON.stringify({ items: {}, extra: [{ kind: 'learn', id: 'LEARN-1', milestone: 'M1', retro: 'R-03', title: 'Retro R-03: a test per new branch', scope: 'the action items', refs: [], ui: false, dependsOn: [] }], packed: [], accept: {}, learn: {}, iterations: 0, noProgress: 0 }));
   await sb.run(['--once']);
-  assert.match(sb.file('.loop/current-task.md'), /This is a LEARN item: remove the cause/);
+  const task = sb.file('.loop/current-task.md');
+  assert.match(task, /This is a LEARN item: carry out a retro's action items/);
+  assert.match(task, /\.loop\/retros\/R-03\.md/);
+  assert.match(task, /Impediments are not yours/);
 });
 
 test('post-merge unverified → held, the run stops, and a resumed run verifies and finishes', async () => {
@@ -573,7 +576,7 @@ test('the event file says what happened in fields a program can read', async () 
   assert.ok(ev.findIndex((e) => e.type === 'item.merged') < ev.findIndex((e) => e.type === 'item.finished'));
   assert.deepEqual(ev.filter((e) => e.type === 'milestone.packed').map((e) => e.milestone), ['M1']);
 
-  // a review that never approves: each verdict, each send-back, the LEARN item and the outcome
+  // a review that never approves: each verdict, each send-back and the outcome
   const stuck = box();
   stuck.queue(smokeStep(), happyItem('A1')[0], changes(), fixRound('A1'), changes(), fixRound('A1'), changes());
   assert.equal((await stuck.run(['--once'])).code, 0);
@@ -581,7 +584,7 @@ test('the event file says what happened in fields a program can read', async () 
   const verdicts = sv.filter((e) => e.type === 'review.verdict');
   assert.deepEqual(verdicts.map((e) => [e.round, e.verdict, e.blocking[0].category]), [[1, 'changes', 'tests'], [2, 'changes', 'tests'], [3, 'changes', 'tests']]);
   assert.equal(sv.filter((e) => e.type === 'check.sent_back' && e.check === 'review').length, 3);
-  assert.deepEqual(sv.filter((e) => e.type === 'learn.queued').map((e) => [e.signature, e.learn]), [['review:tests:untested-branch', 'LEARN-1']]);
+  assert.ok(!sv.some((e) => e.type === 'retro.called' || e.type === 'learn.queued'), 'one item on its own calls no retro');
   assert.equal(sv.find((e) => e.type === 'item.finished').status, 'needs_human');
   assert.ok(!sv.some((e) => e.type === 'item.merged'));
 
@@ -589,4 +592,107 @@ test('the event file says what happened in fields a program can read', async () 
   const dry = box();
   await dry.run(['--dry-run']);
   assert.equal(dry.file('.loop/events.jsonl'), null);
+});
+
+// ------------------------------------------------------------------------------------- the retro
+const retroResult = (over = {}) => ({ structured: { summary: 'How the stretch went.', went_well: [], problems: [], checks: [], actions: [], impediments: [], ...over } });
+
+test('the same review finding in two items calls a retro early; its action items are built first, as one LEARN item', async () => {
+  const backlog = { milestones: ['M1'], items: ['A1', 'A2', 'A3'].map((id) => ({ id, milestone: 'M1', title: `item ${id}`, refs: [], scope: 's', ui: false, dependsOn: [] })) };
+  const sb = box({ backlog, config: { retro: { enabled: true }, milestonePackets: false } });
+  const sentBackOnce = (id) => {
+    const [build, review] = happyItem(id);
+    return [build, changes(), fixRound(id), review];
+  };
+  const retro = retroResult({
+    went_well: [{ practice: 'Small pull requests', evidence: 'A1 and A2 were fixed in one round', keep: false }],
+    problems: [{ title: 'New branches ship without a test', evidence: 'PR 1, PR 2', cause: 'the contract asks for no proof per branch', owner: 'practice', signal: 'review:tests:untested-branch' }],
+    actions: [{ title: 'A test per new branch', rung: 'lesson', what: 'Add the lesson row.', expect: 'no review:tests:untested-branch in the next five items', done_when: 'the row is in docs/LESSONS.md', signal: 'review:tests:untested-branch' }],
+  });
+  sb.queue(smokeStep(), sentBackOnce('A1'), sentBackOnce('A2'), retro, happyItem('LEARN-1'), happyItem('A3'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const calls = sb.calls();
+  assert.deepEqual(calls.map((c) => `${c.phase}:${c.item}`), ['smoke:preflight', 'build:A1', 'review:A1', 'build:A1', 'review:A1', 'build:A2', 'review:A2', 'build:A2', 'review:A2', 'retro:R-01', 'build:LEARN-1', 'review:LEARN-1', 'build:A3', 'review:A3']);
+  // the retro session is read-only, returns a structured result, and is given the numbers
+  const session = calls[9];
+  assert.ok(session.args.includes('--disallowedTools') && session.args.includes('--json-schema'));
+  assert.match(session.task, /It was called early: `review:tests:untested-branch`/);
+  assert.match(session.task, /\| `review:tests:untested-branch` \| A1, A2 \| 2 \|.*calls this retro/);
+  assert.match(session.task, /\| A1 \| backlog \| done \| 2 \| review ×1 \|/);
+  assert.match(sb.file('.loop/retros/R-01-data.md'), /## The numbers/);
+  // the minutes, and the LEARN item that carries them out
+  const minutes = sb.file('.loop/retros/R-01.md');
+  assert.match(minutes, /# Retro R-01, called early/);
+  assert.match(minutes, /\| A-1 A test per new branch \| lesson \|/);
+  assert.match(minutes, /\| New branches ship without a test \|.*\| how we work \|/);
+  assert.match(calls[10].task, /carry out a retro's action items/);
+  assert.match(calls[10].task, /\.loop\/retros\/R-01\.md/);
+  assert.match(calls[11].task, /This is a \*\*LEARN item\*\*: it carries out the action items of retro R-01/);
+  const st = sb.state();
+  assert.equal(st.items['LEARN-1'].status, 'done');
+  // the action item is measured from the moment its LEARN item merged
+  const [action] = st.retro.actions;
+  assert.deepEqual([action.id, action.learn, action.status, action.signal, action.itemsSince, action.hits], ['A-1', 'LEARN-1', 'open', 'review:tests:untested-branch', ['A3'], []]);
+  assert.ok(action.since);
+  assert.equal(st.retro.sessions, 3, 'the retro and the two sessions of its LEARN item');
+  const ev = sb.file('.loop/events.jsonl').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(ev.filter((e) => e.type === 'retro.called').map((e) => [e.item, e.signature]), [['A2', 'review:tests:untested-branch']]);
+  const held = ev.find((e) => e.type === 'retro.held');
+  assert.deepEqual([held.retro, held.kind, held.actions, held.learn, held.problems, held.wentWell], ['R-01', 'early', ['A-1'], 'LEARN-1', 1, 1]);
+  assert.deepEqual(ev.filter((e) => e.type === 'learn.queued').map((e) => [e.learn, e.retro]), [['LEARN-1', 'R-01']]);
+  const report = sb.file('.loop/REPORT.md');
+  assert.match(report, /## Retros \(1\)\n\n- \*\*R-01\*\* called early: 1 action item\(s\) → LEARN-1/);
+  assert.match(report, /- A-1 A test per new branch: 1 item\(s\) since, still happened in 0/);
+});
+
+test('every milestone ends with a retro: minutes, what to keep, an impediment for the owner, and its LEARN item before the packet', async () => {
+  const sb = box({ config: { retro: { enabled: true } } });
+  const retro = retroResult({
+    went_well: [{ practice: 'The contract named a proof for every criterion', evidence: 'A1 merged at the first attempt', keep: true }],
+    problems: [
+      { title: 'The guard refused a harmless append', evidence: 'the guard log', cause: 'the read-only rule takes every append for a write outside .loop/', owner: 'harness' },
+      { title: 'No licence was chosen', evidence: 'README.md', cause: 'Pick one and say which.', owner: 'owner' },
+    ],
+    impediments: [{ title: 'The read-only rule refuses every append', part: 'guard', evidence: 'nine refused calls in one session', example: 'printf x >> .loop/reviews/a.txt', wanted: 'Allow an append into .loop/.' }],
+  });
+  sb.queue(smokeStep(), happyItem('A1'), retro, happyItem('LEARN-1'));
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const calls = sb.calls();
+  assert.deepEqual(calls.map((c) => `${c.phase}:${c.item}`), ['smoke:preflight', 'build:A1', 'review:A1', 'retro:R-01', 'build:LEARN-1', 'review:LEARN-1', 'packet:M1']);
+  assert.match(calls[3].task, /Milestone \*\*M1\*\* is built: this is its retro/);
+  assert.match(calls[3].task, /### Merged at the first attempt, sent back by nothing\n\nA1/);
+  const st = sb.state();
+  assert.equal(st.retro.milestones.M1, 'R-01');
+  assert.deepEqual(st.packed, ['M1']);
+  const learn = st.extra.find((e) => e.id === 'LEARN-1');
+  assert.match(learn.title, /Retro R-01: file the minutes and update the lessons/);
+  assert.match(learn.scope, /Practices to write down under "Keep doing":\n- The contract named a proof for every criterion/);
+  const minutes = sb.file('.loop/retros/R-01.md');
+  assert.match(minutes, /# Retro R-01, after milestone M1/);
+  assert.match(minutes, /\| IMP-1 The read-only rule refuses every append \| guard \|/);
+  // the impediment and the owner's own question are put in front of the owner, once
+  assert.match(sb.file('.loop/IMPEDIMENTS.md'), /\| IMP-1 \| open \| guard \| The read-only rule refuses every append \|/);
+  const asks = sb.file('.loop/OWNER-ACTIONS.md');
+  assert.match(asks, /\*\*IMP-1\*\* — Impediment in the harness \(guard\): The read-only rule refuses every append\. Example: `printf x >> \.loop\/reviews\/a\.txt`/);
+  assert.match(asks, /\*\*R-01\*\* — The retro found something only you can settle: No licence was chosen/);
+  // the packet is about what the milestone delivers, and points the owner at the retro
+  const packet = calls[6].task;
+  assert.match(packet, /\.loop\/retros\/R-01\.md/);
+  assert.match(packet, /- A1 · First item · done/);
+  assert.ok(!/LEARN-1 ·/.test(packet), 'a LEARN item is not part of what the milestone delivers');
+  // the guard log says what was refused
+  assert.match(sb.file('.loop/logs/guard.log'), /\tpreflight\tsmoke\tcore:add-all\t[^\t]+\tgit add -A --dry-run\n/);
+});
+
+test('a retro session that returns nothing does not hold the milestone up', async () => {
+  const sb = box({ config: { retro: { enabled: true } } });
+  sb.queue(smokeStep(), happyItem('A1'), { text: 'I looked around.' });
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'retro', 'packet']);
+  assert.equal(sb.state().retro.milestones.M1, 'none');
+  assert.deepEqual(sb.state().packed, ['M1']);
+  assert.match(sb.file('.loop/PROGRESS.md'), /the retro session gave no result; the milestone is packed without one/);
 });
