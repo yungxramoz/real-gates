@@ -54,4 +54,31 @@ export const PACKET_SCHEMA = {
   required: ['markdown'],
 };
 
+const str = { type: 'string' };
+/** What a retro session returns (loop/prompts/retro.md says what each part means). */
+export const RETRO_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: str,
+    went_well: { type: 'array', items: { type: 'object', properties: { practice: str, evidence: str, keep: { type: 'boolean' } }, required: ['practice', 'evidence'] } },
+    problems: {
+      type: 'array',
+      items: { type: 'object', properties: { title: str, evidence: str, cause: str, owner: { type: 'string', enum: ['product', 'practice', 'harness', 'owner'] }, signal: str }, required: ['title', 'evidence', 'cause', 'owner'] },
+    },
+    checks: {
+      type: 'array',
+      items: { type: 'object', properties: { action: str, verdict: { type: 'string', enum: ['worked', 'no_effect', 'too_early'] }, decision: { type: 'string', enum: ['keep', 'revise', 'retire'] }, note: str }, required: ['action', 'verdict', 'decision'] },
+    },
+    actions: {
+      type: 'array',
+      items: { type: 'object', properties: { title: str, rung: { type: 'string', enum: ['lesson', 'test', 'rule', 'tool'] }, what: str, expect: str, done_when: str, signal: str }, required: ['title', 'rung', 'what', 'expect', 'done_when'] },
+    },
+    impediments: {
+      type: 'array',
+      items: { type: 'object', properties: { title: str, part: { type: 'string', enum: ['guard', 'runner', 'prompt', 'ci', 'profile', 'other'] }, evidence: str, example: str, wanted: str, signal: str }, required: ['title', 'part', 'evidence', 'wanted'] },
+    },
+  },
+  required: ['summary', 'went_well', 'problems', 'checks', 'actions', 'impediments'],
+};
+
 export const SMOKE_SCHEMA = null; // the smoke step needs no verdict: the guard log is the evidence

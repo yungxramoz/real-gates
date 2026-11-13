@@ -14,6 +14,9 @@ loop
 .loop
 .claude
 
+# Retro minutes are written by the runner and filed as they are.
+docs/retros/R-*.md
+
 # Another stack's skeleton: it follows its own conventions, and scripts/apply-preset.mjs copies it as it is.
 presets
 

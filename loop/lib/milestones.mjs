@@ -11,14 +11,19 @@ import { deployAdapter } from '../adapters/index.mjs';
 import { acceptMode, acceptTypeName } from './worktypes.mjs';
 import { ACCEPT_SCHEMA, PACKET_SCHEMA } from './schemas.mjs';
 import { writeJson, readJson } from './state.mjs';
+import { retroState } from './learn.mjs';
+import { holdRetro } from './retro.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
 
 /** The deployed site this project's acceptance runs on, behind the deploy adapter the config names. */
 const deploy = (L) => deployAdapter(L.cfg.deploy?.adapter);
 
+/** What a milestone delivers: its items without the loop's own LEARN items, which are not the product. */
+const delivered = (L, m) => L.store.allItems().filter((i) => i.milestone === m && i.kind !== 'learn');
+
 async function acceptSession(L, m, round, sha, mode) {
-  const items = L.store.allItems().filter((i) => i.milestone === m);
+  const items = delivered(L, m);
   const prevFile = path.join(L.paths.run, `accept-${m}.json`);
   const prev = readJson(prevFile, null);
   fs.writeFileSync(L.paths.task, L.render('accept.md', {
@@ -47,7 +52,8 @@ async function acceptSession(L, m, round, sha, mode) {
 }
 
 async function packetSession(L, m, mode) {
-  const items = L.store.allItems().filter((i) => i.milestone === m);
+  const items = delivered(L, m);
+  const retro = retroState(L.store.S).milestones[m];
   fs.mkdirSync(path.join(L.paths.reviews, m), { recursive: true });
   fs.writeFileSync(L.paths.task, L.render('packet.md', {
     MILESTONE: m,
@@ -56,6 +62,7 @@ async function packetSession(L, m, mode) {
     BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status}${L.store.st(i.id).prs?.length ? ` · PR ${L.store.st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}`).join('\n'),
     OWNER_ACTIONS: L.ownerActionsTail(60),
+    RETRO: retro && retro !== 'none' ? `The loop's retro for this milestone is in \`.loop/retros/${retro}.md\`: what went well, what went wrong, the action items and the impediments that wait for the owner (\`.loop/IMPEDIMENTS.md\`).` : 'No retro was held for this milestone.',
     ACCEPT_JSON: JSON.stringify({ ...readJson(path.join(L.paths.run, `accept-${m}.json`), { note: 'no acceptance run (no item of an accepted work type)' }), ...(L.store.S.accept[m]?.unverified ? { fixesNotReAccepted: 'These failures are from the last acceptance round. Their fix items merged through CI and review but were not re-tested: say so in the packet.' } : {}) }, null, 2),
   }, { variant: mode }));
   L.setStatus('packet', { id: m, title: `packet ${m}` });
@@ -88,7 +95,7 @@ export async function packMilestones(L, only) {
     const a = (S.accept[m] ||= { rounds: 0, passed: false });
     // How this milestone is accepted follows from its items' work types: on the deployed site,
     // on the merged base itself, or not at all.
-    const mode = acceptMode(L.cfg, inM);
+    const mode = acceptMode(L.cfg, delivered(L, m));
     const where = mode === 'site' ? 'on dev' : `on ${L.cfg.base}`;
     if (mode !== 'none' && !a.passed && a.rounds < L.cfg.maxAcceptRounds) {
       L.proc.git('fetch', 'origin', '--prune');
@@ -113,7 +120,7 @@ export async function packMilestones(L, only) {
         const failures = (res?.failures || []).slice(0, 8);
         if (!res) failures.push({ title: `Acceptance run for ${m} produced no verdict`, scope: mode === 'site' ? 'Re-run the milestone acceptance; check the dev deployment and the health endpoint first.' : 'Re-run the milestone acceptance; check that the merged base installs and starts first.' });
         failures.forEach((f, i) =>
-          L.store.addExtra({ kind: 'fix', id: `ACC-${m}-${a.rounds}-${i + 1}`, milestone: m, title: short(f.title || 'acceptance failure', 120), scope: short(`${f.scope || ''} Evidence: ${f.evidence || '-'}${f.relatedItem ? ` (related: ${f.relatedItem})` : ''}`, 1200), refs: [`.loop/accept-${m}.json`, 'docs/REQUIREMENTS.md', 'loop/prompts/learn.md'], type: acceptTypeName(L.cfg, inM), dependsOn: [] }),
+          L.store.addExtra({ kind: 'fix', id: `ACC-${m}-${a.rounds}-${i + 1}`, milestone: m, title: short(f.title || 'acceptance failure', 120), scope: short(`${f.scope || ''} Evidence: ${f.evidence || '-'}${f.relatedItem ? ` (related: ${f.relatedItem})` : ''}`, 1200), refs: [`.loop/accept-${m}.json`, 'docs/REQUIREMENTS.md', 'loop/prompts/learn.md'], type: acceptTypeName(L.cfg, delivered(L, m)), dependsOn: [] }),
         );
         for (const x of res?.owner || []) L.ownerAction(m, x);
         L.progress(`${m} · acceptance round ${a.rounds} ${where}: **${failures.length} failure(s)** → fix items queued first in line`);
@@ -123,6 +130,18 @@ export async function packMilestones(L, only) {
         // round: a packet written before its fixes were built would describe a site that is gone.
         return {};
       }
+    }
+    // The retro, once per milestone: what the stretch taught. Its LEARN item is built before the
+    // packet, so the packet can say what changed.
+    const R = retroState(S);
+    if (L.cfg.retro?.enabled !== false && !R.milestones[m]) {
+      const res = await holdRetro(L, { kind: 'milestone', milestone: m });
+      if (L.stopRequested() || L.budgetExceeded()) return {};
+      if (!res) {
+        R.milestones[m] = 'none';
+        L.progress(`${m} · the retro session gave no result; the milestone is packed without one`);
+        L.store.save();
+      } else if (res.learn) return {};
     }
     if (mode !== 'none' && a.rounds > 0 && !a.passed) {
       a.unverified = true;

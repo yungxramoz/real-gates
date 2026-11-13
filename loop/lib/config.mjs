@@ -63,8 +63,17 @@ export const DEFAULTS = Object.freeze({
   maxAcceptRounds: 2, // milestone acceptance passes on the dev site before the packet
   maxNoProgress: 3, // items in a row that end without merging anything → circuit breaker
   maxFollowups: 15,
-  learnThreshold: 2, // the same failure this many times → a LEARN item that fixes the cause
-  learnCategoryThreshold: 4, // review findings that share only a category (different causes) need this many
+  // How the loop learns (loop/lib/learn.mjs). A retro is held at the end of every milestone, and
+  // early when one signal shows up in this many different items.
+  learnThreshold: 2, // a cause the reviewer named, a red CI job, a failing gate
+  learnCategoryThreshold: 4, // a bare review category or a guard rule: coarse, so it needs more items
+  retro: {
+    enabled: true,
+    maxActions: 3, // action items one retro may hand out; one LEARN item carries them out
+    checkAfterItems: 5, // an action item is judged once this many items were built after it merged
+    maxShare: 0.2, // early retros stop once learning used this share of all sessions; the backlog comes first
+    maxLessons: 20, // rows in docs/LESSONS.md; at the limit a retro merges or retires rows before it adds one
+  },
   // 'unless-tree-equal': when the landed check proved the merge commit has exactly the tree PR CI
   // passed on, the next item starts while base CI runs; a red result still queues a FIX item first
   // and a missing verdict still stops the run. 'always': every merge waits for base CI.
@@ -74,7 +83,7 @@ export const DEFAULTS = Object.freeze({
   // its migration is the outage the hold gate exists for. 'wait': run them only once the FIX item
   // is done, for steps that must never act on a red base (a release, a publish).
   postMergeOnRedBase: 'apply',
-  timeouts: { sessionMin: 150, reviewMin: 60, acceptMin: 120, packetMin: 60, ciMin: 45, smokeMin: 5 },
+  timeouts: { sessionMin: 150, reviewMin: 60, acceptMin: 120, packetMin: 60, retroMin: 45, ciMin: 45, smokeMin: 5 },
   pollMs: 30_000,
   usageLimit: { sleepMin: 30, maxWaitHours: 96 },
   goalMaxTurns: 120,

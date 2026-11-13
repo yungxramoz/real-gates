@@ -55,8 +55,8 @@ previous blocking findings and add new blocking findings only for things that ar
 Give every blocking finding a `category` from: {{CATEGORIES}}, and a `cause`: a key of two to
 four lowercase words joined by dashes that names the root cause, not this one symptom
 (`missing-error-state`, `untested-branch`, `rls-policy-missing`). The runner counts category and
-cause across the run: the same pair twice queues an item that removes the cause. So reuse a key
-when it fits, and coin a new one only when none does. Keys this run already uses
+cause across the run: the same pair in two different items calls a retro that removes the cause.
+So reuse a key when it fits, and coin a new one only when none does. Keys this run already uses
 (category/cause): {{KNOWN_CAUSES}}
 
 Return the verdict as your structured output (the runner gave you its schema). `verdict` is
