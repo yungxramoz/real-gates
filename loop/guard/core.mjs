@@ -7,6 +7,8 @@
 // can switch a rule here off: packs and project rules can only add blocks. Every rule has a block
 // case and an allow case in loop/test/guard-core.test.mjs.
 
+import path from 'node:path';
+
 import { matchesAny } from './paths.mjs';
 import { matchRules } from './rules.mjs';
 import { loadPacks } from './packs/index.mjs';
@@ -19,7 +21,9 @@ const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 /**
  * Decide one PreToolUse event.
  * ctx: { phase, item, branch, cfg, rel(path) -> repo-relative path | null, isOnBase(rel) -> bool,
- *        projectRules: compiled rows, packs?: pack modules (default: the ones cfg.guard.packs names) }
+ *        projectRules: compiled rows, packs?: pack modules (default: the ones cfg.guard.packs names),
+ *        cwd?: the session's working folder relative to the repository ('' at its root, null when
+ *        outside it; left out means the root) }
  */
 export function decide(event, ctx) {
   const tool = String(event?.tool_name || '');
@@ -91,7 +95,9 @@ function decideShell(cmd, ctx) {
   for (const ref of g.forbiddenRefs || []) if (ref && c.includes(ref)) return no('core:forbidden-ref', `project ${ref} is out of bounds.`);
   if (READ_ONLY_PHASES.has(ctx.phase)) {
     if (/\bgit\s+(commit|push|merge|rebase|reset|cherry-pick|revert|tag|am|apply|stash|restore|rm|mv|update-ref|commit-tree|checkout\s+(-b|-B|--|\.)|switch\s+-c|branch\s+-[dDmMcC])(?=\s|$|;|&|\|)/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: no commits, pushes or branch changes.`);
-    if (/(^|[^0-9&>])>{1,2}\s*(?!&|\/dev\/null|\$null|NUL\b|\/tmp\/|\$TMPDIR|\$env:TEMP|%TEMP%|\.loop\/|\S*[\\/]\.loop[\\/])\S/i.test(c) || /\b(sed\s+-i|perl\s+-p?i|Set-Content|Add-Content|Out-File)\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: redirect output only into .loop/.`);
+    const outside = shellWritesOutsideLoop(cmd, ctx);
+    if (outside !== null) return no('core:read-only', `the ${ctx.phase} step is read-only: redirect output only into .loop/. "${String(outside).slice(0, 80)}" is not known to be there: write the path out from the repository root (.loop/…), or use \`cd <folder> && …\` so the folder is certain.`);
+    if (/\b(sed\s+-i|perl\s+-p?i|Set-Content|Add-Content|Out-File)\b/i.test(c)) return no('core:read-only', `the ${ctx.phase} step is read-only: redirect output only into .loop/.`);
   }
   // Shell writes into protected files. The pre-merge check is the hard stop; this catches the obvious ones early.
   const protectedHit = shellWritesProtected(cmd, ctx);
@@ -137,7 +143,8 @@ const takesText = (words) => {
 };
 
 /**
- * A line of plain shell as its commands, each with its words and the targets of its redirects, or
+ * A line of plain shell as its commands, each with its words, the targets of its redirects and
+ * what follows it (`after`: '&&', '||', ';', '|', '&', a line break or '' at the end), or
  * null when the line holds anything this does not read with certainty. Quoted words keep their
  * text. The body of a here-document is left out where it is data (see takesText); every other
  * here-document makes the line not plain.
@@ -166,6 +173,7 @@ export function readPlainShell(source) {
     if (target) return false; // a redirect without a target
     if (sep === '|') cur.piped = true;
     if (afterPipe) cur.piped = true;
+    cur.after = sep;
     if (cur.words.length || cur.targets.length) commands.push(cur);
     else if (sep === '|' || afterPipe) return false;
     afterPipe = sep === '|';
@@ -252,7 +260,7 @@ export function readPlainShell(source) {
         target = { amp: false };
       } else {
         if (next === '&') i++;
-        if (!commandEnd('&')) return null;
+        if (!commandEnd(next === '&' ? '&&' : '&')) return null;
       }
     } else if (ch === '|') {
       if (next === '&') return null;
@@ -364,6 +372,112 @@ export function shellWritesProtected(cmd, ctx) {
       if (unreadable(w)) return mentioned;
       const hit = protectedWord(w);
       if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+// ------------------------------------------------------- shell writes in a read-only step
+//
+// A read-only step (review, acceptance, the packet, a retro) keeps its evidence under .loop/ and
+// writes nowhere else. The question "where does this line write?" gets the same two answers as the
+// one about protected paths further down.
+//
+// The exact answer is for plain shell (readPlainShell): each redirect has a target, and the
+// target is judged where it will land. The folder a relative target is written in is known from
+// the session's working folder and from every `cd` on the line; where that is not certain (a cd
+// that may fail, one inside an `if`), the target must be allowed in every folder it could mean.
+// A `>` inside quotes or inside a here-document handed to cat is text, as long as nothing on the
+// line could run that text as shell.
+//
+// The coarse answer, for every other line, reads each `>` anywhere as a redirect and allows only
+// a target that is spelled out as the null device, a temp folder or a path through .loop/.
+//
+// Not looked at: what a program does itself (`node -e`, a script, `cp`). The runner checks after
+// every read-only session that no tracked file changed.
+
+/** Commands that print or search the text they are given and never run it as shell. */
+const READS_TEXT = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'cat', 'head', 'tail', 'wc', 'sort', 'uniq', 'jq', 'test', '[', 'cd', 'ls', 'diff', 'node', 'gh', 'git']);
+/** After one of these the working folder is anyone's guess. */
+const MOVES = new Set(['source', '.', 'eval', 'builtin', 'command']);
+/** A word that changes the working folder, in bash or PowerShell, wherever it stands in a command. */
+const CHANGES_FOLDER = /^(cd|chdir|pushd|popd|Set-Location|sl|Push-Location|Pop-Location)$/i;
+const TEMP_DIR = /^(\/tmp\/|\$TMPDIR\b|\$env:TEMP\b|%TEMP%)/i;
+const cleanPath = (t) => path.posix.normalize(String(t).replace(/\\/g, '/'));
+/** Spelled out as a place a read-only step may write, wherever the line runs. */
+const namesLoop = (t) => noFile(t) || TEMP_DIR.test(t) || /(^|\/)\.loop\//.test(cleanPath(t));
+const isRelative = (t) => !/^([\\/]|[A-Za-z]:)/.test(t) && !unreadable(t);
+
+/**
+ * Does a shell line in a read-only step write outside .loop/? Returns the target, or null.
+ * ctx.cwd: the session's working folder, relative to the repository ('' at its root, null when
+ * it is outside or unknown).
+ */
+export function shellWritesOutsideLoop(cmd, ctx) {
+  const plain = readPlainShell(cmd);
+  if (!plain) {
+    const flat = normalizeShell(cmd);
+    // `$(cmd 2>&1)`: the bracket that closes a substitution is not part of the target
+    const targets = [...flat.matchAll(REDIRECT)].map((m) => [m[1], m[2].replace(/\)+$/, '')]).filter(([op, t]) => !(op.endsWith('&') && /^(\d+|-)$/.test(t))).map(([, t]) => t);
+    for (const m of flat.matchAll(/\btee\s+((?:[^\s|;&<>]+\s*)+)/gi)) targets.push(...m[1].trim().split(/\s+/).filter((a) => !a.startsWith('-')));
+    return targets.find((t) => !namesLoop(t)) ?? null;
+  }
+
+  const lead = (c) => c.words.filter((w) => w.text !== '{' && w.text !== '}');
+  const first = (c) => (lead(c)[0] && !lead(c)[0].quoted ? lead(c)[0].text : null);
+  // Text is only text when no command on the line could run it: every command is one that reads.
+  const textIsText = plain.every((c) => {
+    const w = lead(c).map((x) => x.text);
+    if (!w.length) return true;
+    if (!READS_TEXT.has(first(c))) return false;
+    if (w[0] === 'git') return !w.some((x) => /^(-c|--config-env|--exec-path)/.test(x));
+    if (w[0] === 'gh') return !w.some((x) => /^(alias|extension|ext)$/.test(x));
+    return true;
+  });
+
+  // The folders the next relative path could be written in; null stands for "not known". Within
+  // \`cd x && …\` the rest runs in x for certain. Once that list ends (\`;\`, a new line, \`||\`,
+  // \`&\`), a cd in it may have failed or been skipped, so every folder the list passed through is
+  // possible, and a target must be under .loop/ in each of them.
+  const start = ctx.cwd === undefined ? '' : ctx.cwd;
+  let dirs = [/\bCDPATH\b/.test(cmd) ? null : start]; // with CDPATH set, cd goes somewhere this cannot see
+  let passed = new Set(dirs);
+  const lands = (t) => namesLoop(t) || (isRelative(t) && dirs.every((d) => d !== null && /^\.loop\//.test(cleanPath(path.posix.join(d, t)))));
+  for (const c of plain) {
+    for (const t of c.targets) if (!lands(t)) return t;
+    const words = lead(c);
+    const name = first(c);
+    const tee = words.findIndex((w) => !w.quoted && w.text === 'tee');
+    if (tee >= 0) for (const a of words.slice(tee + 1).filter((w) => w.quoted || !w.text.startsWith('-'))) if (!lands(a.text)) return a.text;
+    if (!textIsText) {
+      for (const w of words.filter((x) => x.quoted)) {
+        const hit = [...w.text.matchAll(REDIRECT)].filter((m) => !(m[1].endsWith('&') && /^(\d+|-)$/.test(m[2]))).map((m) => m[2]).find((t) => !namesLoop(t));
+        if (hit) return hit;
+      }
+    }
+    // Where the next command runs.
+    if (name === 'cd') {
+      const args = words.slice(1).filter((w) => w.quoted || !w.text.startsWith('-')).map((w) => w.text);
+      const to = args.length === 1 && !unreadable(args[0]) && args[0] !== '-' ? args[0] : null;
+      const into = (d) => {
+        if (to === null || d === null) return null;
+        if (isRelative(to)) {
+          const r = cleanPath(path.posix.join(d, to));
+          return r === '.' ? '' : r.startsWith('..') ? null : r;
+        }
+        return ctx.rel(to.replace(/^\/([A-Za-z])\//, '$1:/')); // /c/Users/… is C:/Users/… in Git Bash
+      };
+      const there = dirs.map(into);
+      for (const d of there) passed.add(d);
+      // In a pipe the cd runs in a subshell and changes nothing for what follows.
+      if (c.after === '&&' && !c.piped) dirs = there;
+    } else if (MOVES.has(name) || words.some((w) => !w.quoted && CHANGES_FOLDER.test(w.text))) {
+      dirs = [null];
+      passed.add(null);
+    }
+    if (c.after !== '&&' && c.after !== '|') {
+      dirs = [...passed];
+      passed = new Set(dirs);
     }
   }
   return null;
