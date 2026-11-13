@@ -402,6 +402,11 @@ const READS_TEXT = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'c
 const MOVES = new Set(['source', '.', 'eval', 'builtin', 'command']);
 /** A word that changes the working folder, in bash or PowerShell, wherever it stands in a command. */
 const CHANGES_FOLDER = /^(cd|chdir|pushd|popd|Set-Location|sl|Push-Location|Pop-Location)$/i;
+/** Words that run the command after them: \`sudo tee f\` writes f as much as \`tee f\` does. */
+const RUNS_NEXT = new Set(['sudo', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'stdbuf', 'timeout', 'xargs']);
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** tee where a command starts in a line without its quote marks, alone or behind one of the words above. */
+const TEE_RUN = new RegExp(String.raw`(?:^|[|;&(]\s*)(?:[A-Za-z_]\w*=\S*\s+)*(?:(?:${[...RUNS_NEXT].join('|')})\b[^|;&]*?\s)?tee\s+((?:[^\s|;&<>]+\s*)+)`, 'gi');
 const TEMP_DIR = /^(\/tmp\/|\$TMPDIR\b|\$env:TEMP\b|%TEMP%)/i;
 const cleanPath = (t) => path.posix.normalize(String(t).replace(/\\/g, '/'));
 /** Spelled out as a place a read-only step may write, wherever the line runs. */
@@ -419,7 +424,7 @@ export function shellWritesOutsideLoop(cmd, ctx) {
     const flat = normalizeShell(cmd);
     // `$(cmd 2>&1)`: the bracket that closes a substitution is not part of the target
     const targets = [...flat.matchAll(REDIRECT)].map((m) => [m[1], m[2].replace(/\)+$/, '')]).filter(([op, t]) => !(op.endsWith('&') && /^(\d+|-)$/.test(t))).map(([, t]) => t);
-    for (const m of flat.matchAll(/\btee\s+((?:[^\s|;&<>]+\s*)+)/gi)) targets.push(...m[1].trim().split(/\s+/).filter((a) => !a.startsWith('-')));
+    for (const m of flat.matchAll(TEE_RUN)) targets.push(...m[1].trim().split(/\s+/).filter((a) => !a.startsWith('-')));
     return targets.find((t) => !namesLoop(t)) ?? null;
   }
 
@@ -442,13 +447,17 @@ export function shellWritesOutsideLoop(cmd, ctx) {
   const start = ctx.cwd === undefined ? '' : ctx.cwd;
   let dirs = [/\bCDPATH\b/.test(cmd) ? null : start]; // with CDPATH set, cd goes somewhere this cannot see
   let passed = new Set(dirs);
+  let skippable = false; // a `||` earlier in this list: what follows it may not run at all
   const lands = (t) => namesLoop(t) || (isRelative(t) && dirs.every((d) => d !== null && /^\.loop\//.test(cleanPath(path.posix.join(d, t)))));
   for (const c of plain) {
     for (const t of c.targets) if (!lands(t)) return t;
     const words = lead(c);
     const name = first(c);
-    const tee = words.findIndex((w) => !w.quoted && w.text === 'tee');
-    if (tee >= 0) for (const a of words.slice(tee + 1).filter((w) => w.quoted || !w.text.startsWith('-'))) if (!lands(a.text)) return a.text;
+    // tee writes the files it is given, where it is the command that runs: `tee f`, `sudo tee f`.
+    // As an argument (`echo tee f`, `grep tee f`) it is a word like any other.
+    const run = words.slice(words.findIndex((w) => w.quoted || !ASSIGNMENT.test(w.text)));
+    const tee = run[0] && !run[0].quoted && (run[0].text === 'tee' || RUNS_NEXT.has(run[0].text)) ? run.findIndex((w) => !w.quoted && w.text === 'tee') : -1;
+    if (tee >= 0) for (const a of run.slice(tee + 1).filter((w) => w.quoted || !w.text.startsWith('-'))) if (!lands(a.text)) return a.text;
     if (!textIsText) {
       for (const w of words.filter((x) => x.quoted)) {
         const hit = [...w.text.matchAll(REDIRECT)].filter((m) => !(m[1].endsWith('&') && /^(\d+|-)$/.test(m[2]))).map((m) => m[2]).find((t) => !namesLoop(t));
@@ -469,8 +478,9 @@ export function shellWritesOutsideLoop(cmd, ctx) {
       };
       const there = dirs.map(into);
       for (const d of there) passed.add(d);
-      // In a pipe the cd runs in a subshell and changes nothing for what follows.
-      if (c.after === '&&' && !c.piped) dirs = there;
+      // In a pipe the cd runs in a subshell and changes nothing for what follows. After a `||` in
+      // the same list it may have been skipped (`true || cd x && …`): both folders are possible.
+      if (c.after === '&&' && !c.piped) dirs = skippable ? [...new Set([...dirs, ...there])] : there;
     } else if (MOVES.has(name) || words.some((w) => !w.quoted && CHANGES_FOLDER.test(w.text))) {
       dirs = [null];
       passed.add(null);
@@ -478,6 +488,7 @@ export function shellWritesOutsideLoop(cmd, ctx) {
     if (c.after !== '&&' && c.after !== '|') {
       dirs = [...passed];
       passed = new Set(dirs);
+      skippable = c.after === '||';
     }
   }
   return null;

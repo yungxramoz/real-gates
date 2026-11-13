@@ -462,6 +462,11 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
     // tee writes a file too
     ['pnpm test 2>&1 | tee .loop/t.txt'],
     ['pnpm test 2>&1 | tee -a .loop/t.txt | tail -3'],
+    // tee as an argument is a word like any other
+    ['echo tee src/a.ts'],
+    ['grep tee src/a.ts'],
+    ['grep -rn "tee" src'],
+    ['echo "$(date)" tee src/a.ts'],
     // a relative path is judged where it lands: the session's folder, then every cd
     ['pnpm test > out.txt 2>&1', wt],
     ['pnpm test > ../shots/o.txt', wt],
@@ -471,6 +476,7 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
     [`cd ${process.platform === 'win32' ? '/c/work/app' : '/work/app'}/.loop/review-wt && ls > files.txt`, 'src'],
     ['ls | tee listing.txt', wt],
     ['pnpm test > out.txt 2>&1 || true', wt],
+    ['pnpm lint || true; cd .loop/review-wt && pnpm test > out.txt'],
     ['pnpm test > out.txt; echo done >> out.txt', wt],
     ['cd packages/app | cat; ls > files.txt', wt],
     // lines that are not plain shell: only a target that is spelled out
@@ -491,6 +497,11 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
     ['echo x | tee src/x.ts'],
     ['echo x | tee -a src/x.ts'],
     ['echo x | sudo tee src/x.ts'],
+    ['echo x | sudo -u root tee src/x.ts'],
+    ['echo x | env LC_ALL=C tee src/x.ts'],
+    ['LC_ALL=C tee src/x.ts < in.txt'],
+    ['echo "$(date)" | sudo tee src/x.ts'],
+    ['echo "$(date)"; LC_ALL=C tee src/x.ts < in.txt'],
     // a path that only starts under .loop/
     ['echo x > .loop/../src/x.ts'],
     ['echo x > .loop/a/../../src/x.ts'],
@@ -510,6 +521,10 @@ describe('a read-only step writes under .loop/ and nowhere else', () => {
     ['cd .loop/nope || echo x > out.txt'],
     // the list ended: the cd before it may have failed or been skipped
     ['cd .loop/nope && true; echo x > out.txt'],
+    // after `||` in the same list the cd may be skipped
+    ['true || cd .loop && echo x > out.txt'],
+    ['pnpm lint || cd .loop/review-wt && pnpm test > out.txt'],
+    ['true || false && cd .loop && echo x > out.txt'],
     ['cd .loop && cd nope && true\necho x > out.txt'],
     ['false && cd .loop/review-wt; echo x > out.txt'],
     ['cd .loop/review-wt & echo x > out.txt'],
