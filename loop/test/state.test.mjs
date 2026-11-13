@@ -269,6 +269,25 @@ test('a retro inside the recheck window does not wipe out that the signal came b
   assert.equal(S.retro.impediments[0].status, 'open', 'still open after the window');
 });
 
+test('a second harness change before the next retro starts the recheck again', () => {
+  const S = { extra: [], items: {}, iterations: 10 };
+  harnessChanged(S, 'v1');
+  for (const id of ['A', 'B']) recordFailure(S, { signature: 'guard:core:read-only', item: { id } });
+  applyRetro(S, retroOut({ impediments: [{ title: 't', part: 'guard', evidence: 'e', wanted: 'w', signal: 'guard:core:read-only' }] }), { id: 'R-01', kind: 'early', cfg });
+  harnessChanged(S, 'v2');
+  S.iterations = 13;
+  recordFailure(S, { signature: 'guard:core:read-only', item: { id: 'C' } }); // still there on v2
+  assert.deepEqual(harnessChanged(S, 'v3').map((i) => i.id), ['IMP-1'], 'v3 is judged on its own');
+  assert.deepEqual([S.retro.impediments[0].back, S.retro.impediments[0].recheckAt], [[], 13]);
+  S.iterations = 16;
+  applyRetro(S, retroOut(), { id: 'R-02', kind: 'early', cfg });
+  assert.equal(S.retro.impediments[0].status, 'recheck', 'three sessions on v3 are too few to close it, and nothing reopens it');
+  S.iterations = 20;
+  applyRetro(S, retroOut(), { id: 'R-03', kind: 'early', cfg });
+  assert.equal(S.retro.impediments[0].status, 'closed');
+  assert.equal(S.learn['guard:core:read-only'].muted, undefined);
+});
+
 test('a state written before retros existed is read as it is', () => {
   const S = { extra: [{ kind: 'learn', id: 'LEARN-2' }], items: { 'LEARN-2': { status: 'done' } }, learn: { 'guard:core:read-only': { count: 5, sinceLearn: 0, details: ['x'], queued: ['LEARN-2'] } } };
   assert.equal(nextLearnId(S), 'LEARN-3');

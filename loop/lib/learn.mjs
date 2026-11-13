@@ -211,7 +211,7 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
       actions.length ? `Action items:\n${actions.map((a) => `- ${a.id} (${a.rung}): ${a.title}. ${a.what} Done when: ${a.doneWhen}`).join('\n')}` : 'This retro handed out no action items.',
       changes.length ? `Earlier action items to change:\n${changes.map((c) => `- ${c.action} "${c.title}": ${c.status === 'retired' ? 'take it back' : 'replace it as the new action items say'}. ${c.note}`).join('\n')}` : '',
       keeps.length ? `Practices to write down under "Keep doing":\n${keeps.map((k) => `- ${k.practice} (${k.evidence})`).join('\n')}` : '',
-      'File the minutes: every .loop/retros/R-*.md that is not in docs/retros/ yet goes there, word for word.',
+      'File the minutes: every .loop/retros/R-<number>.md that is not in docs/retros/ yet goes there, word for word. Nothing from .loop/retros/data/ is ever filed.',
     ];
     learn = { kind: 'learn', id: learnId, milestone, retro: id, title: actions.length ? `Retro ${id}: ${actions.map((a) => a.title).join('; ')}`.slice(0, 160) : `Retro ${id}: file the minutes${changes.length || keeps.length ? ' and update the lessons' : ''}`, scope: lines.filter(Boolean).join('\n\n'), refs: [`.loop/retros/${id}.md`, 'loop/prompts/learn.md', 'docs/LESSONS.md', 'loop/rules/project-rules.json'], ui: false, dependsOn: [] };
   }
@@ -239,7 +239,8 @@ export function harnessChanged(S, version) {
   r.harness = version;
   if (first) return [];
   for (const e of Object.values(S.learn || {})) if (e.muted && e.muted.by !== 'owner') delete e.muted;
-  const open = r.impediments.filter((i) => i.status === 'open');
+  // Also the ones already waiting for a recheck: what they saw belongs to the harness before this one.
+  const open = r.impediments.filter((i) => i.status === 'open' || i.status === 'recheck');
   for (const i of open) Object.assign(i, { status: 'recheck', recheckAt: S.iterations || 0, back: [] });
   return open;
 }

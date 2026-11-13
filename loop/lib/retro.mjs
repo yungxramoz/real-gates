@@ -2,9 +2,10 @@
 // decides what the loop keeps doing, what it changes and what it hands to the owner. The rules and
 // the books are in learn.mjs; this file gathers the numbers, runs the session and files the result.
 //
-//   .loop/retros/R-01-data.md   the numbers the session is given
-//   .loop/retros/R-01.json      what it returned, as the runner took it
 //   .loop/retros/R-01.md        the minutes (the LEARN item files them in docs/retros/)
+//   .loop/retros/data/R-01.md   the numbers the session is given: refused commands and failure
+//                               details as they were logged. Never filed in the repository
+//   .loop/retros/data/R-01.json what it returned, as the runner took it
 //   .loop/IMPEDIMENTS.md        every open impediment, for the owner
 
 import fs from 'node:fs';
@@ -130,10 +131,11 @@ export async function holdRetro(L, { kind, milestone }) {
   const r = retroState(S);
   const id = retroId(r.n + 1);
   const dir = path.join(L.paths.run, 'retros');
-  fs.mkdirSync(dir, { recursive: true });
+  const data = path.join(dir, 'data'); // raw evidence stays out of the folder the minutes are filed from
+  fs.mkdirSync(data, { recursive: true });
   const called = r.due?.signals || [];
   const sheet = buildSheet(L, r.lastAt);
-  fs.writeFileSync(path.join(dir, `${id}-data.md`), `# Retro ${id}: the numbers\n\n${sheet.markdown}\n`);
+  fs.writeFileSync(path.join(data, `${id}.md`), `# Retro ${id}: the numbers\n\n${sheet.markdown}\n`);
   fs.writeFileSync(L.paths.task, L.render('retro.md', {
     RETRO_ID: id,
     BASE: L.cfg.base,
@@ -150,7 +152,7 @@ export async function holdRetro(L, { kind, milestone }) {
   if (run.gaveUp || !run.structured) return null;
 
   const res = applyRetro(S, run.structured, { id, kind, milestone, cfg: L.cfg, covers: sheet.covers });
-  writeJson(path.join(dir, `${id}.json`), res.retro);
+  writeJson(path.join(data, `${id}.json`), res.retro);
   fs.writeFileSync(path.join(dir, `${id}.md`), renderMinutes(res.retro));
   fs.writeFileSync(path.join(L.paths.run, 'IMPEDIMENTS.md'), renderImpediments(S));
   if (res.learn) L.store.addExtra(res.learn);

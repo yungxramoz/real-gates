@@ -632,7 +632,9 @@ test('the same review finding in two items calls a retro early; its action items
   assert.match(session.task, /It was called early: `review:tests:untested-branch`/);
   assert.match(session.task, /\| `review:tests:untested-branch` \| A1, A2 \| 2 \|.*calls this retro/);
   assert.match(session.task, /\| A1 \| backlog \| done \| 2 \| review ×1 \|/);
-  assert.match(sb.file('.loop/retros/R-01-data.md'), /## The numbers/);
+  assert.match(sb.file('.loop/retros/data/R-01.md'), /## The numbers/);
+  assert.deepEqual(fs.readdirSync(path.join(sb.root, '.loop', 'retros')).sort(), ['R-01.md', 'data'], 'only the minutes lie where they are filed from');
+  assert.match(calls[10].task, /Nothing from \.loop\/retros\/data\/ is ever filed/);
   // the minutes, and the LEARN item that carries them out
   const minutes = sb.file('.loop/retros/R-01.md');
   assert.match(minutes, /# Retro R-01, called early/);

@@ -19,7 +19,7 @@ files; do not infer numbers from the chat.
 | `.loop/OWNER-ACTIONS.md` | asks raised during the run |
 | `.loop/reviews/<milestone>.md` | milestone packets with follow-ups and screenshots |
 | `.loop/logs/guard.log` | one line per blocked action: time, item, phase, rule id, reason, what was refused |
-| `.loop/retros/R-<n>.md` | the minutes of each retro (`R-<n>-data.md`: the numbers it was given) |
+| `.loop/retros/R-<n>.md` | the minutes of each retro (`data/R-<n>.md`: the numbers it was given, never committed) |
 | `.loop/IMPEDIMENTS.md` | causes in the harness the retros reported, with status and example |
 | `.loop/logs/NNN-<item>-<phase>.jsonl` | every session in full |
 | `docs/contracts/<item>.md` | the contract each build wrote first (committed with its PR) |

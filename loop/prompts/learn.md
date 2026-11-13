@@ -7,10 +7,11 @@ by the numbers whether your change did what it promised.
 
 Do exactly what the minutes say, in one pull request:
 
-1. **File the minutes.** Copy every `.loop/retros/R-*.md` that is not in `docs/retros/` yet to
-   `docs/retros/`. They are the record of what was decided and why: change no word in them. If
-   the project formats Markdown (a format check in CI), run its formatter over them; that is the
-   only change allowed.
+1. **File the minutes.** Copy every `.loop/retros/R-<number>.md` (`R-01.md`, `R-02.md`) that
+   is not in `docs/retros/` yet to `docs/retros/`. They are the record of what was decided and
+   why: change no word in them. If the project formats Markdown (a format check in CI), run its
+   formatter over them; that is the only change allowed. Never file anything from
+   `.loop/retros/data/`: those are the raw numbers, with refused commands as they were logged.
 
 2. **Carry out each action item** at the rung the retro chose:
    - `lesson`: one row in the rules table of `docs/LESSONS.md`: the rule in bold with **the

@@ -354,7 +354,7 @@ The retro at the end of the milestone is always held and takes every waiting sig
 ### What a retro does
 
 One read-only session gets the numbers for the stretch since the last retro
-(`.loop/retros/R-<n>-data.md`): every item with its build rounds, send-backs and cost, the
+(`.loop/retros/data/R-<n>.md`): every item with its build rounds, send-backs and cost, the
 signals, the refused commands, the open action items and the size of `docs/LESSONS.md`. It reads
 the sessions behind them and returns five things:
 
@@ -424,7 +424,7 @@ when it is still there.
 
 | What | Where |
 | --- | --- |
-| The numbers a retro was given | `.loop/retros/R-<n>-data.md` |
+| The numbers a retro was given | `.loop/retros/data/R-<n>.md` (raw: refused commands as logged; never filed in the repository) |
 | The minutes | `.loop/retros/R-<n>.md`, filed in `docs/retros/` by the LEARN item |
 | Impediments that wait for you | `.loop/IMPEDIMENTS.md` |
 | Rules and practices in force | `docs/LESSONS.md` |
