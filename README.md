@@ -35,18 +35,26 @@ flowchart TD
   ms -- "no" --> pick
   ms -- "yes" --> accept{"Acceptance on the deployed dev site"}
   accept -- "failures" --> acc["ACC fix items, first in line"] --> pick
-  accept -- "pass, or 2 rounds done" --> packet["Milestone packet for the owner"] --> pick
+  accept -- "pass, or 2 rounds done" --> retro["Retro<br/>keep, change, impediments"]
+  retro -- "action items and minutes" --> learn["LEARN item, first in line<br/>lesson, test, rule or tool"] --> pick
+  retro -- "once its LEARN item is merged" --> packet["Milestone packet for the owner"] --> pick
 
-  build -. "same guard block twice" .-> count[("Failure counter")]
-  ci -. "same CI fix twice" .-> count
-  review -. "same cause twice" .-> count
-  accept -. "any failure" .-> count
-  count -. "threshold" .-> learn["LEARN item, first in line<br/>lesson, test or stricter rule"] -.-> pick
+  build -. "guard block" .-> count[("Signals, counted per item")]
+  ci -. "red CI job" .-> count
+  review -. "finding with its cause" .-> count
+  count -. "same signal in several items" .-> retro
+  learn -. "measured: did the signal stop?" .-> retro
 ```
 
 Every box with a question mark is a gate. A gate either passes, sends the item back for a fix, or
-holds the run. The LEARN edge is how the loop learns: a repeated failure becomes an item that
-fixes its cause, and that item goes through the same gates.
+holds the run.
+
+The retro is how the loop learns. At the end of every milestone, and early when one signal shows
+up in several items, a read-only session says what went well, what went wrong and why. Its action
+items become one LEARN item that goes through the same gates, and the next retro checks by the
+numbers whether they worked. A cause in the harness itself goes to you as an impediment: the loop
+does not fix its own guard and does not work around it
+([how the loop learns](loop/README.md#how-the-loop-learns-the-retro)).
 
 ## Quick start
 
@@ -62,7 +70,7 @@ fixes its cause, and that item goes through the same gates.
 You need Node 22 or newer, pnpm, `gh` logged in, and Claude Code logged in. The preflight checks
 the versions and tells you what is missing. Details: [loop/README.md](loop/README.md).
 
-After the app is done, `/run-retro` carries what the run learned back into the template, and
+After the app is done, `/run-retro` carries what the run learned and the impediments it reported back into the template, and
 `/sync-arc42` keeps `docs/architecture/` true once per milestone.
 
 ## Taking a later template version
