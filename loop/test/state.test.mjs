@@ -248,6 +248,27 @@ test('after a sync from the template the reported signals count again, and the n
   assert.deepEqual(S.learn['guard:core:protected-path'].muted, { by: 'IMP-2' });
 });
 
+test('a retro inside the recheck window does not wipe out that the signal came back', () => {
+  const S = { extra: [], items: {}, iterations: 10 };
+  harnessChanged(S, 'aaa');
+  for (const id of ['A', 'B']) recordFailure(S, { signature: 'guard:core:read-only', item: { id } });
+  applyRetro(S, retroOut({ impediments: [{ title: 't', part: 'guard', evidence: 'e', wanted: 'w', signal: 'guard:core:read-only' }] }), { id: 'R-01', kind: 'early', cfg });
+  harnessChanged(S, 'bbb');
+  // it comes back on the new harness, in one item and in a LEARN item (which does not count)
+  S.iterations = 12;
+  recordFailure(S, { signature: 'guard:core:read-only', item: { id: 'C' } });
+  recordFailure(S, { signature: 'guard:core:read-only', item: { id: 'LEARN-1', kind: 'learn' } });
+  assert.deepEqual(S.retro.impediments[0].back, ['C']);
+  // a milestone retro before the window ends starts the per-signal count again, and reopens it at once
+  applyRetro(S, retroOut(), { id: 'R-02', kind: 'milestone', milestone: 'M1', cfg });
+  assert.deepEqual(S.learn['guard:core:read-only'].items, []);
+  assert.equal(S.retro.impediments[0].status, 'open');
+  assert.deepEqual(S.learn['guard:core:read-only'].muted, { by: 'IMP-1' });
+  S.iterations = 30;
+  applyRetro(S, retroOut(), { id: 'R-03', kind: 'early', cfg });
+  assert.equal(S.retro.impediments[0].status, 'open', 'still open after the window');
+});
+
 test('a state written before retros existed is read as it is', () => {
   const S = { extra: [{ kind: 'learn', id: 'LEARN-2' }], items: { 'LEARN-2': { status: 'done' } }, learn: { 'guard:core:read-only': { count: 5, sinceLearn: 0, details: ['x'], queued: ['LEARN-2'] } } };
   assert.equal(nextLearnId(S), 'LEARN-3');

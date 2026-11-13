@@ -67,6 +67,9 @@ export function recordFailure(S, { signature, detail, item, threshold = 2 }) {
   const r = retroState(S);
   // An action item that promised to stop this signal: every item it still shows up in is a hit.
   for (const a of r.actions) if (a.status === 'open' && a.since && a.signal === signature && !a.hits.includes(id)) a.hits.push(id);
+  // An impediment that waits for its recheck keeps its own record: a retro in between starts the
+  // per-signal count again, and must not wipe out that the signal came back on the new harness.
+  for (const i of r.impediments) if (i.status === 'recheck' && i.signal === signature && !(i.back ||= []).includes(id)) i.back.push(id);
   if (e.muted) return false;
   if (!e.items.includes(id)) e.items.push(id);
   if (e.items.length < threshold) return false;
@@ -150,12 +153,13 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
   }
 
   // 2. Impediments: causes in the harness. One per signal; that signal stops calling retros.
-  // One that waits for a recheck (the harness changed) is settled by the numbers, once a few
-  // sessions have run on the new harness: gone, or still there.
-  for (const i of r.impediments.filter((x) => x.status === 'recheck' && x.signal && (S.iterations || 0) - (x.recheckAt || 0) >= 6)) {
-    const back = (S.learn?.[i.signal]?.items || []).length > 0;
-    i.status = back ? 'open' : 'closed';
-    if (back) S.learn[i.signal].muted = { by: i.id };
+  // One that waits for a recheck (the harness changed) is settled by the numbers: open again as
+  // soon as its signal came back on the new harness, closed once a few sessions ran without it.
+  for (const i of r.impediments.filter((x) => x.status === 'recheck' && x.signal)) {
+    if ((i.back || []).length) {
+      i.status = 'open';
+      if (S.learn?.[i.signal]) S.learn[i.signal].muted = { by: i.id };
+    } else if ((S.iterations || 0) - (i.recheckAt || 0) >= 6) i.status = 'closed';
   }
   const impediments = [];
   for (const x of Array.isArray(out.impediments) ? out.impediments : []) {
@@ -236,7 +240,7 @@ export function harnessChanged(S, version) {
   if (first) return [];
   for (const e of Object.values(S.learn || {})) if (e.muted && e.muted.by !== 'owner') delete e.muted;
   const open = r.impediments.filter((i) => i.status === 'open');
-  for (const i of open) Object.assign(i, { status: 'recheck', recheckAt: S.iterations || 0 });
+  for (const i of open) Object.assign(i, { status: 'recheck', recheckAt: S.iterations || 0, back: [] });
   return open;
 }
 

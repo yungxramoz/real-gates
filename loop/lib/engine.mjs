@@ -93,6 +93,17 @@ function fixContextText(L, fix) {
   return head + (fix.text || 'See the loop log.');
 }
 
+/**
+ * A LEARN item queued before retros existed: it has a failure and its cases in `scope`, and no
+ * minutes. It keeps the brief it was queued with.
+ */
+const LEGACY_LEARN = [
+  '## This is a LEARN item: remove the cause, not the symptom',
+  "The run kept hitting the same failure (the item's `scope` lists the cases). Remove its cause with the lowest rung that will actually hold, and say in the PR why that rung:",
+  '1. **A lesson** in `docs/LESSONS.md`: one row that states the general rule and names the command that proves it.\n2. **A test** in the existing suites that fails when the mistake comes back.\n3. **A stricter guard rule**: a row in `loop/rules/project-rules.json` (run `node loop/scripts/check-rules.mjs`; rows can only be added).',
+  'If the cause is in the harness (the guard refuses harmless work, the runner or a prompt is wrong), it is not yours to fix or to work around: change nothing for it, put one exact line in `owner_actions` with a refused command as the example, and return `blocked` when nothing else is left to do.',
+].join('\n\n');
+
 async function buildSession(L, item, s, fix) {
   fs.rmSync(L.paths.result, { force: true });
   const mode = fix ? 'fix' : s.partials > 0 ? 'continue' : 'build';
@@ -115,10 +126,10 @@ async function buildSession(L, item, s, fix) {
       ? `Fix mode: \`git fetch origin && git checkout ${s.branch} && git merge --ff-only origin/${s.branch}\`.`
       : `\`git fetch origin && git checkout -b <type>/${slug}-<short-topic> origin/${base}\` (type: feat, fix, chore, docs, test, design). If a branch for this item from an earlier failed attempt exists remotely and is useful, you may continue it instead, merging \`origin/${base}\` in first.`,
     PR_INSTRUCTION: fix ? `PR #${s.pr} already exists: push to it, do not open another.` : '',
-    RETRO_ID: item.retro || 'R-00',
+    RETRO_ID: item.retro || '',
     MAX_LESSONS: L.cfg.retro?.maxLessons ?? 20,
   };
-  vars.LEARN = item.kind === 'learn' ? L.render('learn.md', vars) : item.kind === 'fix' && /^ACC-/.test(item.id) ? '## This is an acceptance fix\n\nFix what the evaluator found **and** the cause: add the test, check, lesson or project guard rule that would have caught it before acceptance (see `loop/prompts/learn.md` for the rungs).' : '';
+  vars.LEARN = item.kind === 'learn' ? (item.retro ? L.render('learn.md', vars) : LEGACY_LEARN) : item.kind === 'fix' && /^ACC-/.test(item.id) ? '## This is an acceptance fix\n\nFix what the evaluator found **and** the cause: add the test, check, lesson or project guard rule that would have caught it before acceptance (see `loop/prompts/learn.md` for the rungs).' : '';
   fs.writeFileSync(L.paths.task, L.render('build.md', vars));
   const condition = `Complete the unattended task in .loop/current-task.md for backlog item ${item.id} (read that file fully first and follow it). The goal is met only when .loop/result.json exists with "item": "${item.id}", its outcome is one of ready, partial, blocked or failed exactly as that file defines them, an open PR against ${base} exists for ready or partial, and you have printed the file with cat as your last step.`;
   L.setStatus(`build:${mode}`, item, { round: s.rounds });
@@ -161,8 +172,8 @@ async function reviewSession(L, item, s, headSha) {
     NOTES: [
       s.partials > 0 ? `${s.partials} earlier slice(s) of this item are already merged into ${L.cfg.base}.` : '',
       s.isPartial ? `The builder declared this PR a **partial** slice. What it says remains (a claim to check, not a fact): ${short(s.remaining || '(nothing listed)', 800)}` : '',
-      item.kind === 'learn'
-        ? `This is a **LEARN item**: it carries out the action items of retro ${item.retro || '(see the item)'}. Its brief is \`.loop/retros/${item.retro || 'R-00'}.md\`, not acceptance criteria. Check against it: every action item is carried out at its rung and its proof runs; a new test fails when the mistake comes back; what a check retired is gone; the minutes in \`docs/retros/\` say word for word what the files in \`.loop/retros/\` say (a formatter may have realigned the tables, nothing else); \`docs/LESSONS.md\` stays within ${L.cfg.retro?.maxLessons ?? 20} rows and each new row states a general rule with the command that proves it. Blocking: a lesson that only teaches how to phrase work around the guard or the runner, and any change that loosens a check.`
+      item.kind === 'learn' && item.retro
+        ? `This is a **LEARN item**: it carries out the action items of retro ${item.retro}. Its brief is \`.loop/retros/${item.retro}.md\`, not acceptance criteria. Check against it: every action item is carried out at its rung and its proof runs; a new test fails when the mistake comes back; what a check retired is gone; the minutes in \`docs/retros/\` say word for word what the files in \`.loop/retros/\` say (a formatter may have realigned the tables, nothing else); \`docs/LESSONS.md\` stays within ${L.cfg.retro?.maxLessons ?? 20} rows and each new row states a general rule with the command that proves it. Blocking: a lesson that only teaches how to phrase work around the guard or the runner, and any change that loosens a check.`
         : '',
     ].filter(Boolean).join('\n\n'),
     PREVIOUS_REVIEW: s.lastReview ? `## Your previous round's findings\n\n\`\`\`json\n${JSON.stringify(s.lastReview, null, 2)}\n\`\`\`` : '',

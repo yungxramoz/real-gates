@@ -81,6 +81,18 @@ test('a LEARN item is told to carry out its retro', async () => {
   assert.match(task, /Impediments are not yours/);
 });
 
+test('a LEARN item queued before retros existed keeps the brief it was queued with', async () => {
+  const sb = box({ backlog: { milestones: ['M1'], items: [] } });
+  sb.queue(smokeStep(), { text: 'no result' });
+  fs.mkdirSync(path.join(sb.root, '.loop'), { recursive: true });
+  fs.writeFileSync(path.join(sb.root, '.loop', 'state.json'), JSON.stringify({ items: {}, extra: [{ kind: 'learn', id: 'LEARN-6', milestone: 'M1', title: 'Stop "review:tests" from recurring', signature: 'review:tests', scope: 'The run hit "review:tests" 2 times. Recent cases:\n- A1: no test', refs: [], ui: false, dependsOn: [] }], packed: [], accept: {}, learn: {}, iterations: 0, noProgress: 0 }));
+  await sb.run(['--once']);
+  const task = sb.file('.loop/current-task.md');
+  assert.match(task, /This is a LEARN item: remove the cause, not the symptom/);
+  assert.match(task, /Recent cases:/);
+  assert.ok(!/\.loop\/retros\//.test(task), 'it is not sent to minutes that do not exist');
+});
+
 test('post-merge unverified → held, the run stops, and a resumed run verifies and finishes', async () => {
   const sb = box({ config: { postMerge: [{ adapter: 'supabase-cli', dbUrlEnv: 'TEST_DEV_DB_URL', migrationsDir: 'supabase/migrations', holdOnUnverified: true }] }, backlog: { milestones: ['M1'], items: [{ id: 'A1', milestone: 'M1', title: 'a', ui: false }, { id: 'A2', milestone: 'M1', title: 'b', ui: false }] } });
   delete sb.env.TEST_DEV_DB_URL;
