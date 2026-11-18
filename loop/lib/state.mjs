@@ -18,11 +18,27 @@ export function readJson(p, fallback) {
     return fallback;
   }
 }
+/** What a rename fails with while another process holds the target. */
+const HELD = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Writes the file whole or not at all: a temporary file beside it, then a rename. On Windows a
+ * virus scanner, the search indexer or a reader can hold the target for a moment, and the rename
+ * fails. That must not end an unattended run, so it is tried again for about a second.
+ */
 export function writeJson(p, v) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(v, null, 2));
-  fs.renameSync(tmp, p);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return fs.renameSync(tmp, p);
+    } catch (e) {
+      if (!HELD.has(e?.code) || attempt === 10) throw e;
+      pause(20 * attempt);
+    }
+  }
 }
 
 export function freshState() {
