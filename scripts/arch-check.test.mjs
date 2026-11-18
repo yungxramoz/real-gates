@@ -196,6 +196,30 @@ test('a relative link must lead to a file; web links, anchors and mail are not f
   ]);
 });
 
+test('a link destination may hold parentheses and, in angle brackets, spaces', () => {
+  const page = [
+    '# 2 · Context',
+    '',
+    '[group](../../src/app/(auth)/page.tsx) [nested](../../src/app/(a(b))/page.tsx) [angle](<../../src/app/(auth)/page.tsx>)',
+    "[spaced](<../../docs/with space.md>) [titled](../../src/app/(auth)/page.tsx 'the page') (see [goals](01-goals.md))",
+    '[dead group](../../src/app/(gone)/page.tsx) [dead spaced](<../../docs/no such.md>)',
+    '',
+  ].join('\n');
+  const root = repo({
+    'src/app/(auth)/page.tsx': '',
+    'src/app/(a(b))/page.tsx': '',
+    'docs/with space.md': '',
+    'docs/architecture/02-context.md': page,
+    'docs/architecture/04-building-blocks.md': `${BLOCKS_PAGE}| Routes | \`src/app/(auth)/\` | x | \`src/app/(a(b))/\` |\n`,
+  });
+  const r = checkArchitecture({ root, blocks: CLI });
+  assert.deepEqual(texts(r), [
+    'docs/architecture/02-context.md:5: the link `../../src/app/(gone)/page.tsx` leads to no file. Correct it or remove it.',
+    'docs/architecture/02-context.md:5: the link `../../docs/no such.md` leads to no file. Correct it or remove it.',
+  ]);
+  assert.equal(r.counts.links, 11, 'the three of the other pages and the eight here');
+});
+
 test('text in an HTML comment or a code block proves nothing either way', () => {
   // the page of every test above has a comment and a diagram that name things which do not exist
   assert.deepEqual(texts(checkArchitecture({ root: repo(), blocks: CLI })), []);

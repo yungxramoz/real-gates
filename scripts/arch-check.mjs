@@ -41,6 +41,13 @@ const DECISIONS = 'docs/DECISIONS.md';
 const SEGMENT = /^(?:\*|[\w.@()[\]+~-]+)$/;
 /** What a backticked text must look like to be read as a repository path. */
 const PATH_LIKE = /^[\w.@()[\]+~-]+(?:\/[\w.@()[\]+~-]+)*$/;
+/**
+ * A Markdown link, with its destination the way CommonMark reads one: in angle brackets (group 1,
+ * spaces and parentheses allowed), or bare (group 2) with parentheses as long as they pair up.
+ * A route group is such a path: `src/app/(auth)/page.tsx`.
+ */
+const LINK =
+  /\[[^\]\n]*\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+))(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g;
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '__mocks__', '__snapshots__']);
 const NOT_A_BLOCK = /(?:\.(?:test|spec)\.[cm]?[jt]sx?|\.d\.[cm]?ts)$/;
 
@@ -166,8 +173,8 @@ export function checkArchitecture({ root, blocks = [] }) {
     const file = `${PAGES}/${name}`;
     const clean = readable(readFileSync(join(dir, name), 'utf8'));
 
-    for (const m of clean.matchAll(/\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) {
-      const target = m[1];
+    for (const m of clean.matchAll(LINK)) {
+      const target = m[1] ?? m[2];
       if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#')) continue;
       counts.links++;
       let rel;
