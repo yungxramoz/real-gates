@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { HELD_PHASE, backlogProblems, createState, readJson, writeJson } from '../lib/state.mjs';
+import { noteHarness } from '../lib/retro.mjs';
 import { actionVerdict, applyRetro, earlyRetro, guardSignatures, harnessChanged, isCoarse, isGuard, nextLearnId, noteAcceptanceFailed, noteItemEnded, recordFailure, renderImpediments, renderMinutes, retroState, reviewSignatures, sameTitle } from '../lib/learn.mjs';
 
 const backlog = {
@@ -233,11 +234,76 @@ test('an impediment is recorded once: its signal stops calling retros, and meeti
   assert.doesNotMatch(renderMinutes(res.retro), /for the owner|Met again/);
 });
 
-test('two titles name the same thing when most of the shorter one is in the other', () => {
+test('two titles name the same thing only on strong evidence: three meaningful words, and most of the shorter title', () => {
   assert.ok(sameTitle('The runner crashes on a transient git fetch network error', 'Runner crash when git fetch fails with a network error'));
   assert.ok(sameTitle('Retro minutes cut off the action item text', 'The retro minutes cut off action item text and lose characters'));
+  assert.ok(sameTitle('The retro packet reports finished items as open', 'The retro packet reports finished items as open again'));
   assert.ok(!sameTitle('The retro packet reports finished items as open', 'Retro minutes lose invisible characters'));
-  assert.ok(!sameTitle('', 'x') && !sameTitle('a b c', 'a b c'), 'nothing to compare: short words carry no meaning');
+  // the same sentence about another thing is another defect
+  assert.ok(!sameTitle('The e2e job starts without a browser', 'The unit job starts without a database'));
+  assert.ok(!sameTitle('The runner crashes on a failed fetch', 'The runner crashes on a full disk'));
+  assert.ok(!sameTitle('', 'x') && !sameTitle('a b c', 'a b c') && !sameTitle('runner crash', 'runner crash'), 'too few words to tell');
+});
+
+test('two defects with a signal each are two causes, however alike their titles read', () => {
+  const S = { extra: [], items: {} };
+  for (const sig of ['ci:e2e', 'ci:unit']) for (const id of ['A', 'B']) recordFailure(S, { signature: sig, item: { id } });
+  const job = (name, needs, signal) => ({ title: `The ${name} job starts without the ${needs} it needs to run the suite`, part: 'ci', broke: 'two fix rounds for nothing', evidence: `${signal} in A and B`, example: `${needs} missing`, wanted: `start the ${needs} in the job`, signal });
+  assert.ok(sameTitle(job('e2e', 'browser').title, job('unit', 'database').title), 'the words alone would take them for one');
+  const res = applyRetro(S, retroOut({ impediments: [job('e2e', 'browser', 'ci:e2e'), job('unit', 'database', 'ci:unit')] }), { id: 'R-01', kind: 'early', cfg });
+  assert.deepEqual(res.impediments.map((i) => [i.id, i.signal, i.wanted]), [['IMP-1', 'ci:e2e', 'start the browser in the job'], ['IMP-2', 'ci:unit', 'start the database in the job']]);
+  assert.deepEqual(res.seenAgain, []);
+  assert.deepEqual([S.learn['ci:e2e'].muted, S.learn['ci:unit'].muted], [{ by: 'IMP-1' }, { by: 'IMP-2' }], 'both stop calling retros');
+  // an entry recorded before its signal was known takes the signal when it is met again by its words
+  const T = { extra: [], items: {} };
+  applyRetro(T, retroOut({ impediments: [{ ...job('e2e', 'browser'), signal: undefined }] }), { id: 'R-01', kind: 'early', cfg });
+  for (const id of ['A', 'B']) recordFailure(T, { signature: 'ci:e2e', item: { id } });
+  const again = applyRetro(T, retroOut({ impediments: [job('e2e', 'browser', 'ci:e2e')] }), { id: 'R-02', kind: 'early', cfg });
+  assert.deepEqual([again.impediments.length, T.retro.impediments[0].signal, T.retro.impediments[0].seen, T.learn['ci:e2e'].muted], [0, 'ci:e2e', 2, { by: 'IMP-1' }]);
+  // and one with another signal is still another cause
+  for (const id of ['A', 'B']) recordFailure(T, { signature: 'ci:unit', item: { id } });
+  assert.deepEqual(applyRetro(T, retroOut({ impediments: [job('unit', 'database', 'ci:unit')] }), { id: 'R-03', kind: 'early', cfg }).impediments.map((i) => i.id), ['IMP-2']);
+});
+
+test('at a run start on a new harness the impediment page says what the state says, also when entries were only closed', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-harness-'));
+  try {
+    fs.mkdirSync(path.join(root, 'loop'), { recursive: true });
+    fs.mkdirSync(path.join(root, '.loop'), { recursive: true });
+    const lock = (commit) => fs.writeFileSync(path.join(root, 'loop', 'template.lock.json'), JSON.stringify({ commit }));
+    const page = () => fs.readFileSync(path.join(root, '.loop', 'IMPEDIMENTS.md'), 'utf8');
+    const S = { extra: [], items: {}, iterations: 12, learn: { 'guard:core:read-only': { count: 9, items: [], muted: { by: 'IMP-1' } } } };
+    const r = retroState(S);
+    r.harness = 'old';
+    r.impediments.push({ id: 'IMP-1', retro: 'R-01', status: 'open', part: 'guard', title: 'The read-only rule refuses an append', signal: 'guard:core:read-only' }, { id: 'IMP-2', retro: 'R-01', status: 'open', part: 'guard', title: 'A relative path is not resolved', signal: null });
+    const said = [];
+    let saved = 0;
+    const L = { root, paths: { run: path.join(root, '.loop') }, store: { S, save: () => saved++ }, progress: (l) => said.push(l) };
+    fs.writeFileSync(path.join(root, '.loop', 'IMPEDIMENTS.md'), renderImpediments(S));
+    assert.match(page(), /\| IMP-1 \| open \| guard \|/);
+    // the only entries are for the guard: the change closes them, nothing waits, and the page is written again
+    lock('new');
+    noteHarness(L);
+    assert.deepEqual(r.impediments.map((i) => i.status), ['closed', 'closed']);
+    assert.doesNotMatch(page(), /IMP-1|IMP-2/);
+    assert.match(page(), /2 closed\./);
+    assert.deepEqual(said, ['the harness changed since the last run: IMP-1, IMP-2 are closed (a refusal is the guard working)']);
+    assert.equal(saved, 1);
+    // the same harness again: nothing is said and nothing is written
+    fs.rmSync(path.join(root, '.loop', 'IMPEDIMENTS.md'));
+    noteHarness(L);
+    assert.equal(said.length, 1);
+    assert.equal(fs.existsSync(path.join(root, '.loop', 'IMPEDIMENTS.md')), false);
+    // a defect waits for the numbers, and both kinds are said in one line
+    r.impediments.push({ id: 'IMP-3', retro: 'R-02', status: 'open', part: 'runner', title: 'The runner crashes when a fetch fails', signal: null }, { id: 'IMP-4', retro: 'R-02', status: 'open', part: 'guard', title: 'left by an older harness', signal: null });
+    lock('newer');
+    noteHarness(L);
+    assert.equal(said[1], 'the harness changed since the last run: IMP-3 waits for the numbers (closed when the cause stays away, open again when it comes back); IMP-4 is closed (a refusal is the guard working)');
+    assert.match(page(), /\| IMP-3 \| recheck \| runner \|/);
+    assert.match(page(), /3 closed\./);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('an action item is measured, and the next retro closes, revises or retires it', () => {

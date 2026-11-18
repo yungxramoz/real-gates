@@ -62,14 +62,25 @@ export const isGuard = (signal) => /^guard:/.test(String(signal ?? ''));
 /** Signals a bare review category gives (and a guard rule, which is only counted): coarse, so they need more items. */
 export const isCoarse = (signal) => isGuard(signal) || /^review:[^:]+$/.test(signal);
 
-/** Two titles that name the same thing: most of the shorter one's words are in the other. */
+/** Words that say nothing about which defect a title names. */
+const FILLER = new Set(['with', 'without', 'when', 'while', 'that', 'this', 'from', 'into', 'does', 'have', 'been', 'every', 'each', 'some', 'again', 'still', 'after', 'before', 'because', 'although', 'their', 'there', 'then', 'than', 'also', 'only', 'just', 'over', 'under', 'between']);
+
+/** The words of a title that carry its meaning, without their endings: "crashes" and "crash" are one word. */
+export function titleWords(t) {
+  const words = String(t ?? '').toLowerCase().match(/[a-z0-9]{4,}/g) || [];
+  return new Set(words.filter((w) => !FILLER.has(w)).map((w) => w.replace(/(?:ing|ed|es|s)$/, '')).filter((w) => w.length >= 3));
+}
+
+/**
+ * Two titles that name the same thing: at least three meaningful words in common, and most of the
+ * shorter title's words. Two sentences of the same shape about different things ("the e2e job
+ * starts without a browser", "the unit job starts without a database") share too little.
+ */
 export function sameTitle(a, b) {
-  const words = (t) => new Set(String(t ?? '').toLowerCase().match(/[a-z0-9]{4,}/g) || []);
-  const [A, B] = [words(a), words(b)];
-  if (!A.size || !B.size) return false;
+  const [A, B] = [titleWords(a), titleWords(b)];
   let both = 0;
   for (const w of A) if (B.has(w)) both++;
-  return both / Math.min(A.size, B.size) >= 0.6;
+  return both >= 3 && both / Math.min(A.size, B.size) >= 0.6;
 }
 
 /**
@@ -210,14 +221,18 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
     }
     const signal = S.learn?.[x.signal] ? x.signal : null;
     const live = (i) => i.status !== 'closed';
+    // By its words alone an entry is the same only in the same part and when the signals do not
+    // disagree: two defects with a signal each are two causes, however alike their titles read.
+    const alike = (i) => i.part === part && !(signal && i.signal && i.signal !== signal) && sameTitle(i.title, x.title);
     const known =
       r.impediments.find((i) => i.id === x.same_as) ||
       (signal && (r.impediments.find((i) => i.signal === signal && live(i)) || r.impediments.find((i) => i.signal === signal))) ||
-      r.impediments.find((i) => i.part === part && live(i) && sameTitle(i.title, x.title)) ||
-      r.impediments.find((i) => i.part === part && sameTitle(i.title, x.title));
+      r.impediments.find((i) => live(i) && alike(i)) ||
+      r.impediments.find(alike);
     if (known) {
       if (!seenAgain.includes(known)) {
         Object.assign(known, { seen: (known.seen || 1) + 1, lastRetro: id, status: 'open', back: [] });
+        known.signal ||= signal; // it was recorded before its signal was known
         if (x.example) known.example = text(x.example, 400);
         if (known.signal && S.learn?.[known.signal]) S.learn[known.signal].muted = { by: known.id };
         seenAgain.push(known);

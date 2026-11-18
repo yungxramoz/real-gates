@@ -41,9 +41,19 @@ export const harnessVersion = (root) => readJson(path.join(root, 'loop', 'templa
 
 /** At run start: after a sync from the template, the reported impediments are checked again. */
 export function noteHarness(L) {
+  const r = retroState(L.store.S);
+  const before = new Map(r.impediments.map((i) => [i.id, i.status]));
   const again = harnessChanged(L.store.S, harnessVersion(L.root));
-  if (again.length) {
-    L.progress(`the harness changed since the last run: ${again.map((i) => i.id).join(', ')} ${again.length === 1 ? 'waits' : 'wait'} for the numbers (closed when the cause stays away, open again when it comes back)`);
+  // entries an older harness recorded for the guard are closed by the change itself
+  const closed = r.impediments.filter((i) => i.status === 'closed' && before.get(i.id) !== 'closed');
+  if (again.length || closed.length) {
+    const parts = [
+      again.length ? `${again.map((i) => i.id).join(', ')} ${again.length === 1 ? 'waits' : 'wait'} for the numbers (closed when the cause stays away, open again when it comes back)` : '',
+      closed.length ? `${closed.map((i) => i.id).join(', ')} ${closed.length === 1 ? 'is' : 'are'} closed (a refusal is the guard working)` : '',
+    ];
+    L.progress(`the harness changed since the last run: ${parts.filter(Boolean).join('; ')}`);
+    // the page says what the state says: also when entries were only closed
+    fs.mkdirSync(L.paths.run, { recursive: true });
     fs.writeFileSync(path.join(L.paths.run, 'IMPEDIMENTS.md'), renderImpediments(L.store.S));
   }
   L.store.save();
