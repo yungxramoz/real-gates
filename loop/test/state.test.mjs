@@ -1,10 +1,10 @@
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { HELD_PHASE, backlogProblems, createState } from '../lib/state.mjs';
+import { HELD_PHASE, backlogProblems, createState, readJson, writeJson } from '../lib/state.mjs';
 import { actionVerdict, applyRetro, earlyRetro, guardSignatures, harnessChanged, isCoarse, nextLearnId, noteItemEnded, recordFailure, renderImpediments, renderMinutes, retroState, reviewSignatures } from '../lib/learn.mjs';
 
 const backlog = {
@@ -16,6 +16,36 @@ const backlog = {
   ],
 };
 const file = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rg-state-')), 'state.json');
+
+test('a state file another process holds for a moment is written on a later try', () => {
+  const target = file();
+  writeJson(target, { n: 1 });
+  const real = fs.renameSync;
+  let calls = 0;
+  const held = mock.method(fs, 'renameSync', (...args) => {
+    if (++calls <= 2) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    return real(...args);
+  });
+  try {
+    writeJson(target, { n: 2 });
+    assert.deepEqual([calls, readJson(target)], [3, { n: 2 }]);
+    // any other failure is not waited on, and one that never lets go is reported
+    held.mock.mockImplementation(() => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+    assert.throws(() => writeJson(target, { n: 3 }), { code: 'ENOENT' });
+    let tries = 0;
+    held.mock.mockImplementation(() => {
+      tries++;
+      throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+    });
+    assert.throws(() => writeJson(target, { n: 4 }), { code: 'EBUSY' });
+    assert.equal(tries, 10);
+  } finally {
+    held.mock.restore();
+  }
+  assert.deepEqual(readJson(target), { n: 2 }, 'a write that failed leaves the file as it was');
+});
 
 test('fix and learn items come before milestone items', () => {
   const s = createState(file(), backlog);
