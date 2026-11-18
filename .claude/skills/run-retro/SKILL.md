@@ -7,9 +7,11 @@ allowed-tools: Bash(node loop/run.mjs --status*) Bash(git log *) Bash(git diff *
 
 # Run the retro
 
-The loop learns during the run on its own (LEARN items, lessons, stricter rules). This skill does
-the two things the loop may not do: change its own runner, and carry lessons into the next
-project.
+The loop holds its own retros during the run: at the end of every milestone, and early when the
+same failure shows up in several items (`loop/README.md`, "How the loop learns"). Their minutes
+are in `docs/retros/`. This skill is the owner's turn after the run. It does the three things the
+loop may not do: change its own runner, clear the impediments the retros reported, and carry
+lessons into the next project.
 
 ## Rules
 
@@ -51,7 +53,11 @@ Every item is done, skipped or needs a human, and nothing is running. Otherwise 
 Read, in this order. Where to find each number: [reference/run-facts.md](reference/run-facts.md).
 
 - `.loop/state.json`: items by status, rounds, CI fixes, review rounds, held items, LEARN and fix
-  items, the failure counts per signature
+  items, the failure counts per signal, and under `retro` the retros held, every action item with
+  its status (open, worked, revised, retired, dropped) and every impediment
+- `docs/retros/R-*.md` (and `.loop/retros/` for minutes not filed yet): what each retro kept,
+  changed and checked
+- `.loop/IMPEDIMENTS.md`: causes in the harness that wait for the owner, each with an example
 - `.loop/PROGRESS.md` and `.loop/REPORT.md` (if present)
 - `.loop/logs/guard.log`: blocks per rule
 - `docs/LESSONS.md` and `docs/DECISIONS.md`: rows added during the run
@@ -70,7 +76,9 @@ One table, then the three biggest time sinks in one line each:
 | First-pass review (approved in round 1) | |
 | CI fix rounds, review rounds | |
 | Held items and why | |
+| Retros held; action items that worked / were revised / were retired | |
 | LEARN items and what each fixed | |
+| Impediments open, with the part of the harness each names | |
 | Guard blocks by rule | |
 | Pending runner patches | |
 
@@ -109,6 +117,11 @@ examples: [reference/template-lessons.md](reference/template-lessons.md#any-proj
   These go into `template-lessons.md`.
 - **This project**: about this app's domain, data, design or accounts. They stay where they are.
 
+Every impediment is **any project** by definition: it is a fault in the harness. It goes into
+`template-lessons.md` with its example line copied exactly, because that line becomes a test in
+the template. Rule 2 still holds: an impediment that asks for a looser guard is reported with its
+example and decided by the owner in the template, never applied here.
+
 Show the classification as one table and ask once: "Is this split right?" Also flag every row in
 `docs/LESSONS.md` that does not name the command or test that proves it, and propose that command.
 
@@ -142,5 +155,8 @@ the file and fix every finding.
   one issue there with the file as its body
   (`gh issue create --repo <template> --title "Lessons from a run" --body-file .loop/retro/template-lessons.md`);
   wait for a yes.
+- Impediments: say which ones the template fix will clear. After `node scripts/sync-template.mjs`
+  brought the fix in, the next run counts their signals again and a retro closes each one whose
+  signal is gone.
 - Summary: three lines on what went well, what the loop fixed by itself, and what the next project
   starts with.

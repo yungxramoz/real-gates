@@ -72,9 +72,11 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
 8. **Harness and gate changes.** `loop/`, `.github/`, `.claude/` and `.env*` are not yours, and
    neither is CI's wiring: {{>build-gate-files}} The guard
    blocks the edits and the runner refuses a PR that makes them. You may add dependencies, add rows
-   to `loop/rules/project-rules.json`, and write a new `loop/patches/<item>.patch` for a change the
-   owner applies later. If you need a wiring change, take a default that works without it and put
-   the ask in `owner_actions`.
+   to `loop/rules/project-rules.json`, and write a new `loop/patches/<item>-<what>.patch` for a
+   runner change your item needs and the owner applies later. If you need a wiring change, take a
+   default that works without it and put the ask in `owner_actions`. When the guard refuses a
+   harmless command, go another way and carry on: do not work on the guard. The retro reads the
+   guard log and reports it to the owner.
 
 9. **Commit and open the PR.** `git add` explicit paths only. Commit messages follow the repo style
    (`feat(…): …`). In the same PR, update `docs/BACKLOG.md` and add any decision rows. Push the

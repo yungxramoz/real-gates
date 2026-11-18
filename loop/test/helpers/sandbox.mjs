@@ -24,8 +24,9 @@ export const TEST_CONFIG = {
   review: { parallelWithCi: false },
   localGate: { commands: [] }, // the preset's own gate needs the app's toolchain; scenarios that test the gate set one
   baseCiWait: 'always',
+  retro: { enabled: false }, // the retro has scenarios of its own that switch it on
   pollMs: 5,
-  timeouts: { sessionMin: 1, reviewMin: 1, acceptMin: 1, packetMin: 1, ciMin: 0.003, smokeMin: 1 },
+  timeouts: { sessionMin: 1, reviewMin: 1, acceptMin: 1, packetMin: 1, retroMin: 1, ciMin: 0.003, smokeMin: 1 },
   usageLimit: { sleepMin: 0.0002, maxWaitHours: 1, minSleepMs: 1 },
 };
 

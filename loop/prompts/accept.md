@@ -24,5 +24,8 @@ Items in this milestone:
    **failure**. Write each one as a fix item a fresh build session can execute without you: what is
    wrong, where (the exact place and the evidence file), what "fixed" looks like. Things only the
    owner can do (accounts, legal text, real brand assets) are not failures: list them under `owner`.
+6. You judge the product, not the loop. A command of yours that the guard refuses, a slow step or
+   a lesson you find unclear is never a failure here: the loop's retro reads the logs and deals
+   with those. Go another way and carry on.
 
 Return the result as your structured output. `pass` is true exactly when `failures` is empty.

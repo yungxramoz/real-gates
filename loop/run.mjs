@@ -21,6 +21,8 @@ import { changedFiles, fingerprint, harnessFiles, snapshotGuard, writeSettings }
 import { countFailure, runItem, settleBaseCi } from './lib/engine.mjs';
 import { READ_ONLY_PHASES } from './guard/core.mjs';
 import { packMilestones } from './lib/milestones.mjs';
+import { earlyRetro, retroState } from './lib/learn.mjs';
+import { holdRetro, noteHarness } from './lib/retro.mjs';
 import { workTypeProblems } from './lib/worktypes.mjs';
 import { adapterProblems, forgeAdapter, notifyAdapter } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
@@ -272,6 +274,8 @@ function recordSession(res, phase, item) {
   const c = (store.S.cost ||= { totalUsd: 0, byItem: {} });
   c.totalUsd = cents(c.totalUsd + cost);
   c.byItem[id] = cents((c.byItem[id] || 0) + cost);
+  // what learning costs, for its share of the run (loop/lib/learn.mjs)
+  if (phase === 'retro' || item?.kind === 'learn') retroState(store.S).sessions++;
   store.save();
   fs.appendFileSync(paths.ledger, JSON.stringify({ at: new Date().toISOString(), session: path.basename(res.log || ''), item: id, phase, ok: !!res.ok, limited: !!res.limited, timedOut: !!res.timedOut, turns: res.turns ?? null, durationMs: res.durationMs ?? null, costUsd: cost }) + '\n');
 }
@@ -472,6 +476,7 @@ async function main() {
   }
   acquireLock();
   recordHeads();
+  noteHarness(L);
   await smokeTest();
   log(`loop starting — ${store.allItems().length} items, budget ${cfg.budgets.maxSessions} sessions / ${cfg.budgets.maxHours} h`);
   progress(`loop started (pid ${process.pid})`);
@@ -479,6 +484,7 @@ async function main() {
 
   let reason = 'backlog exhausted';
   let held = false;
+  let waitedFor = '';
   for (;;) {
     if (stopRequested()) {
       reason = `.loop/STOP exists: ${fs.readFileSync(paths.stop, 'utf8').trim() || '(no reason given)'}`;
@@ -496,6 +502,21 @@ async function main() {
     }
     syncBase();
     const next = store.pickNext({ item: args.item, only: args.only });
+    // A signal showed up in several items: the retro is called early, before the next item. With
+    // nothing left to build, the milestone's own retro is next and takes the signal with it.
+    const early = cfg.retro?.enabled !== false && !args.item && !next.none ? earlyRetro(store.S, cfg) : { due: false };
+    if (early.signals) {
+      const res = await holdRetro(L, { kind: 'early', milestone: next.milestone });
+      if (stopRequested() || budgetExceeded()) continue;
+      if (!res) {
+        // no result: the signals wait for the milestone's retro, or for the next time one recurs
+        retroState(store.S).due = null;
+        store.save();
+        progress('the early retro gave no result; its signals wait for the next retro');
+      }
+      continue;
+    }
+    if (early.wait && early.wait !== waitedFor) log(`a retro is due but waits: ${(waitedFor = early.wait)}`);
     if (next.none) {
       const last = await settleBaseCi(L, { wait: true });
       if (last.stop) {

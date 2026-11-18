@@ -14,6 +14,8 @@ The acceptance evaluator's latest result (scores, any unresolved failures):
 {{ACCEPT_JSON}}
 ```
 
+{{RETRO}}
+
 Open asks for the owner collected so far (`.loop/OWNER-ACTIONS.md`):
 
 ```
@@ -29,6 +31,8 @@ Open asks for the owner collected so far (`.loop/OWNER-ACTIONS.md`):
    - **What to check**: 3–8 concrete things only a person can judge (wording, look, flow)
    - **Evidence**: the file list
    - **Needs you**: the open asks for this milestone, copy-paste exact
+   - **How the loop is doing**: from the retro, in three lines: what it keeps doing, what it
+     changed, and which impediments wait for the owner
    - **Known gaps and risks**: honest and short
 
    and `screenshots`: the file paths. The runner writes `.loop/reviews/{{MILESTONE}}.md`.

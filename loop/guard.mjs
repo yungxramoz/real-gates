@@ -9,8 +9,11 @@
 // The runner starts sessions with a snapshot of this file and its modules taken from the base
 // branch (.loop/guard/), so a change in the working tree cannot switch a rule off mid-session.
 //
-// Environment (set by run.mjs): LOOP_ROOT, LOOP_PHASE (build | review | accept | packet | smoke),
-// LOOP_ITEM, LOOP_GUARD_LOG.
+// Environment (set by run.mjs): LOOP_ROOT, LOOP_PHASE (build | review | accept | packet | retro |
+// smoke), LOOP_ITEM, LOOP_GUARD_LOG.
+//
+// Every block is one line in the guard log: time, item, phase, rule, reason and what was refused
+// (the command or the file path, on one line, cut at 400 characters), tab-separated.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,11 +27,13 @@ import { loadConfig } from './lib/config.mjs';
 const PHASE = process.env.LOOP_PHASE || 'build';
 const ITEM = process.env.LOOP_ITEM || '-';
 
+let refused = ''; // the command or path of the call being judged
+
 function logBlock(root, rule, reason) {
   const file = process.env.LOOP_GUARD_LOG || path.join(root || '.', '.loop', 'logs', 'guard.log');
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.appendFileSync(file, `${new Date().toISOString()}\t${ITEM}\t${PHASE}\t${rule}\t${String(reason).replace(/\s+/g, ' ')}\n`);
+    fs.appendFileSync(file, `${new Date().toISOString()}\t${ITEM}\t${PHASE}\t${rule}\t${String(reason).replace(/\s+/g, ' ')}\t${refused}\n`);
   } catch {}
 }
 
@@ -66,6 +71,7 @@ try {
   } catch {
     block(root, 'core:unreadable', 'the guard could not read this tool call, so it refuses it.');
   }
+  refused = String(ev?.tool_input?.command ?? ev?.tool_input?.file_path ?? ev?.tool_input?.notebook_path ?? ev?.tool_name ?? '').replace(/\s+/g, ' ').trim().slice(0, 400);
   const cwd = ev.cwd && fs.existsSync(ev.cwd) ? ev.cwd : process.cwd();
   if (!root) root = git(cwd, ['rev-parse', '--show-toplevel']).out || cwd;
   // The runner hands over the config it loaded at start (LOOP_GUARD_CONFIG, in the protected

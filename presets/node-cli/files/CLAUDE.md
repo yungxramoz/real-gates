@@ -78,6 +78,11 @@ The backlog is built by a sequential loop (`npm run loop`): one item per fresh h
 3. Only then does the **script merge** (squash, `--match-head-commit`). The agent never merges.
 4. The script checks the merge landed, checks base CI, and accepts each milestone on the installed
    package.
+5. At the end of every milestone, and early when the same failure shows up in several items, the
+   script holds a **retro**: what went well, what went wrong and why. Its action items become one
+   `LEARN` item; the minutes are in `docs/retros/`. A cause in the harness is reported to the owner
+   as an impediment: never fix the guard or the runner, and never write a lesson that works around
+   them.
 
 If you are inside a loop session, the step prompt from the script (`loop/prompts/`) adds the rules
 for working unattended. Nobody can answer a question during a run: make small, reversible calls yourself and record them
