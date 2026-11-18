@@ -19,7 +19,7 @@ export function writeReport(L, reason, runSessions) {
   const retros = [
     R.held.map((h) => `- **${h.id}** ${h.kind === 'milestone' ? `after ${h.milestone}` : 'called early'}: ${h.actions.length} action item(s)${h.learn ? ` → ${h.learn}` : ''}, ${h.impediments.length} impediment(s) — .loop/retros/${h.id}.md`).join('\n') || '—',
     openActions.length ? `Action items being measured:\n${openActions.map((a) => `- ${a.id} ${a.title}: ${a.since ? `${a.itemsSince.length} item(s) since, still happened in ${a.hits.length}` : 'not merged yet'}`).join('\n')}` : '',
-    openImpediments.length ? `Impediments that wait for you (.loop/IMPEDIMENTS.md):\n${openImpediments.map((i) => `- ${i.id} (${i.part}, ${i.status}) ${i.title}`).join('\n')}` : '',
+    openImpediments.length ? `Defects in the harness the run recorded (.loop/IMPEDIMENTS.md; nothing waits for them):\n${openImpediments.map((i) => `- ${i.id} (${i.part}, ${i.status}) ${i.title}`).join('\n')}` : '',
   ].filter(Boolean).join('\n\n');
   const sections = [
     `# Loop report\n\n${new Date().toISOString()} — stopped because: **${reason}**\n\nSessions this run: ${runSessions} · total: ${L.store.S.iterations} · cost so far: ~$${(L.store.S.cost?.totalUsd || 0).toFixed(2)} (per session: .loop/ledger.jsonl)`,

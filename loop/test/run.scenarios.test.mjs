@@ -731,7 +731,7 @@ test('the same review finding in two items calls a retro early; its action items
   assert.match(report, /- A-1 A test per new branch: 1 item\(s\) since, still happened in 0/);
 });
 
-test('every milestone ends with a retro: minutes, what to keep, an impediment for the owner, and its LEARN item before the packet', async () => {
+test('every milestone ends with a retro: minutes, what to keep, a defect recorded without asking anyone, and its LEARN item before the packet', async () => {
   const sb = box({ config: { retro: { enabled: true } } });
   const retro = retroResult({
     went_well: [{ practice: 'The contract named a proof for every criterion', evidence: 'A1 merged at the first attempt', keep: true }],
@@ -739,7 +739,10 @@ test('every milestone ends with a retro: minutes, what to keep, an impediment fo
       { title: 'The guard refused a harmless append', evidence: 'the guard log', cause: 'the read-only rule takes every append for a write outside .loop/', owner: 'harness' },
       { title: 'No licence was chosen', evidence: 'README.md', cause: 'Pick one and say which.', owner: 'owner' },
     ],
-    impediments: [{ title: 'The read-only rule refuses every append', part: 'guard', evidence: 'nine refused calls in one session', example: 'printf x >> .loop/reviews/a.txt', wanted: 'Allow an append into .loop/.' }],
+    impediments: [
+      { title: 'The read-only rule refuses every append', part: 'guard', broke: 'nothing', evidence: 'nine refused calls in one session', example: 'printf x >> .loop/reviews/a.txt', wanted: 'Allow an append into .loop/.' },
+      { title: 'The runner crashes when a fetch fails', part: 'runner', broke: 'the run stopped for forty minutes', evidence: 'PROGRESS.md', example: 'git fetch origin --prune: exit 128', wanted: 'Try the fetch again.' },
+    ],
   });
   sb.queue(smokeStep(), happyItem('A1'), retro, happyItem('LEARN-1'));
   const r = await sb.run();
@@ -760,12 +763,26 @@ test('every milestone ends with a retro: minutes, what to keep, an impediment fo
   assert.match(learn.scope, /Practices to write down under "Keep doing":\n- The contract named a proof for every criterion/);
   const minutes = sb.file('.loop/retros/R-01.md');
   assert.match(minutes, /# Retro R-01, after milestone M1/);
-  assert.match(minutes, /\| IMP-1 The read-only rule refuses every append \| guard \|/);
-  // the impediment and the owner's own question are put in front of the owner, once
-  assert.match(sb.file('.loop/IMPEDIMENTS.md'), /\| IMP-1 \| open \| guard \| The read-only rule refuses every append \|/);
+  // a refusal is the guard working: the entry for it is not recorded. The defect is, once
+  assert.match(minutes, /\| IMP-1 The runner crashes when a fetch fails \| runner \|/);
+  assert.doesNotMatch(minutes, /refuses every append \| guard/);
+  const list = sb.file('.loop/IMPEDIMENTS.md');
+  assert.match(list, /\| IMP-1 \| open \| runner \| The runner crashes when a fetch fails \|/);
+  assert.doesNotMatch(list, /IMP-2|every append/);
+  assert.deepEqual(st.retro.impediments.map((i) => [i.id, i.part, i.seen]), [['IMP-1', 'runner', 1]]);
+  // nobody is asked about the harness: only the owner's own question is an owner action
   const asks = sb.file('.loop/OWNER-ACTIONS.md');
-  assert.match(asks, /\*\*IMP-1\*\* — Impediment in the harness \(guard\): The read-only rule refuses every append\. Example: `printf x >> \.loop\/reviews\/a\.txt`/);
+  assert.doesNotMatch(asks, /IMP-|Impediment|guard|fetch/i);
   assert.match(asks, /\*\*R-01\*\* — The retro found something only you can settle: No licence was chosen/);
+  assert.equal(asks.split('\n').filter((l) => l.startsWith('- [ ]')).length, 1);
+  // every read-only session was told the guard's rules for its step, with its own folder in them
+  for (const [n, folder] of [[2, 'A1/review'], [3, 'R-01/retro'], [5, 'LEARN-1/review'], [6, 'M1/packet']]) {
+    assert.match(calls[n].task, /\*\*What the guard lets this step do\.\*\*/, calls[n].phase);
+    assert.ok(calls[n].task.includes(`npm test > .loop/work/${folder}/test.txt 2>&1`), `${calls[n].phase}: ${folder}`);
+  }
+  assert.doesNotMatch(calls[1].task, /What the guard lets this step do/, 'a build session may write: it has other rules');
+  assert.match(calls[3].task, /\*\*A guard refusal is not a problem\.\*\*/);
+  assert.match(calls[3].task, /### Guard refusals\n\nThe guard working\. This table is the cost only/);
   // the packet is about what the milestone delivers, and points the owner at the retro
   const packet = calls[6].task;
   assert.match(packet, /\.loop\/retros\/R-01\.md/);

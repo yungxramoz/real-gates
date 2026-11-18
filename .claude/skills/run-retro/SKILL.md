@@ -57,7 +57,8 @@ Read, in this order. Where to find each number: [reference/run-facts.md](referen
   its status (open, worked, revised, retired, dropped) and every impediment
 - `docs/retros/R-*.md` (and `.loop/retros/` for minutes not filed yet): what each retro kept,
   changed and checked
-- `.loop/IMPEDIMENTS.md`: causes in the harness that wait for the owner, each with an example
+- `.loop/IMPEDIMENTS.md`: defects in the harness the run recorded, one row per cause, each with
+  an example and how often it was met. The run did not wait for them; this is where they are read
 - `.loop/PROGRESS.md` and `.loop/REPORT.md` (if present)
 - `.loop/logs/guard.log`: blocks per rule
 - `docs/LESSONS.md` and `docs/DECISIONS.md`: rows added during the run
@@ -119,8 +120,10 @@ examples: [reference/template-lessons.md](reference/template-lessons.md#any-proj
 
 Every impediment is **any project** by definition: it is a fault in the harness. It goes into
 `template-lessons.md` with its example line copied exactly, because that line becomes a test in
-the template. Rule 2 still holds: an impediment that asks for a looser guard is reported with its
-example and decided by the owner in the template, never applied here.
+the template. The run records no guard refusals as impediments: a refusal is the guard working.
+If the guard log (`.loop/logs/guard.log`) shows a rule that refused the same harmless line in
+many sessions, you may report that line the same way; Rule 2 still holds, so a looser guard is
+decided by the owner in the template, never applied here.
 
 Show the classification as one table and ask once: "Is this split right?" Also flag every row in
 `docs/LESSONS.md` that does not name the command or test that proves it, and propose that command.
@@ -156,7 +159,7 @@ the file and fix every finding.
   (`gh issue create --repo <template> --title "Lessons from a run" --body-file .loop/retro/template-lessons.md`);
   wait for a yes.
 - Impediments: say which ones the template fix will clear. After `node scripts/sync-template.mjs`
-  brought the fix in, the next run counts their signals again and a retro closes each one whose
-  signal is gone.
+  brought the fix in, every open one waits as "recheck" and closes by itself once a few sessions
+  ran without its cause.
 - Summary: three lines on what went well, what the loop fixed by itself, and what the next project
   starts with.

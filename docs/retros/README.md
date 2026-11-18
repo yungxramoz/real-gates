@@ -16,10 +16,11 @@ How a retro works, when one is held and how its action items are measured:
 | What went wrong               | Each problem, its cause, and where the cause is: the product, how we work, the harness or the owner                                     |
 | Earlier action items, checked | For every open action item: how many items were built since, in how many the failure came back, and the decision (keep, revise, retire) |
 | Action items                  | What changes now, at which rung (lesson, test, rule, tool), the effect it promises and the command that proves it                       |
-| Impediments: for the owner    | Causes in the harness, each with an example. The loop does not fix these and does not work around them                                  |
+| Impediments                   | Defects in the harness that broke something, each with an example. A record: the loop does not fix them and the run does not wait       |
 
 ## Reading them
 
 - To see whether the loop is getting better, read the "checked" tables in order: an action item
   that worked is closed, one that did not is revised or taken back.
-- To see what you have to do, read the impediments, or `.loop/IMPEDIMENTS.md` during a run.
+- To see what the template should fix, read the impediments, or `.loop/IMPEDIMENTS.md` during a
+  run. Nothing in the run waits for you to do so.

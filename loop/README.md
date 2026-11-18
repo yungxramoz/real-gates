@@ -33,7 +33,7 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
                              merged commit and db ok. Failures become ACC items, max 2 rounds
                            → retro: what went well, what went wrong and why. Its action
                              items become one LEARN item, built before the packet; causes in
-                             the harness go to the owner as impediments
+                             the harness are recorded as impediments; nothing waits
                            → review packet in .loop/reviews/<milestone>.md, once those items
                              are settled. Fixes from the last round are not re-accepted: the
                              packet and OWNER-ACTIONS say so
@@ -131,7 +131,7 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | Every session in full | `.loop/logs/NNN-<item>-<phase>.jsonl` |
 | Blocked actions | `.loop/logs/guard.log` (time, item, phase, rule, reason, what was refused) |
 | What the loop learned | `.loop/retros/R-<n>.md` (the minutes of each retro), filed in `docs/retros/` |
-| **What holds the loop back** | `.loop/IMPEDIMENTS.md` (causes in the harness, for you to fix in the template) |
+| Defects in the harness the run recorded | `.loop/IMPEDIMENTS.md` (a record; nothing in the run waits for it) |
 | Time and cost per session | `.loop/ledger.jsonl` (item, phase, duration, turns, cost, outcome) |
 | What happened, for a program | `.loop/events.jsonl` (one JSON line per event, see below) |
 | **Things only you can do** | `.loop/OWNER-ACTIONS.md` |
@@ -195,7 +195,8 @@ or removed. A dry run writes nothing.
 | `retro.held` | `retro`, `kind` (`milestone` or `early`), `milestone`, `wentWell`, `problems`, `actions`, `impediments`, `learn` | a retro session returned |
 | `learn.queued` | `learn`, `retro` (`item` and `signature` are always null now) | a retro queued its LEARN item |
 | `action.checked` | `action`, `retro`, `verdict`, `decision`, `itemsSince`, `hits` | a retro judged an earlier action item |
-| `impediment.reported` | `impediment`, `retro`, `part`, `signal`, `title` | a retro reported a cause in the harness |
+| `impediment.reported` | `impediment`, `retro`, `part`, `signal`, `title` | a retro recorded a defect in the harness |
+| `impediment.seen` | `impediment`, `retro`, `seen` | a retro met a recorded one again: its count went up |
 | `followup.queued` | `item`, `followup`, `milestone` | a build session raised a follow-up item |
 | `usage.wait` | `item`, `minutes` | the usage limit was hit and the run waits |
 
@@ -390,13 +391,12 @@ flowchart LR
   count["The runner counts<br/>every failure by its signal"] --> retro["Retro<br/>one read-only session"]
   retro --> keep["Keep doing<br/>what went well"]
   retro --> act["Action items<br/>at most 3"]
-  retro --> imp["Impediments<br/>causes in the harness"]
+  retro --> imp["Impediments<br/>defects in the harness, recorded once"]
   act --> learn["One LEARN item<br/>built, reviewed, merged"]
   keep --> learn
   learn --> measure["Measured<br/>did the signal stop?"]
   measure --> retro
-  imp --> owner["The owner<br/>fixes the template, syncs"]
-  owner --> retro
+  imp -. "after a sync: closed by the numbers" .-> retro
 ```
 
 ### When a retro is held
@@ -414,7 +414,7 @@ The runner counts failures by **signal** while the run goes on:
 | `ci:<job name>` | A red CI job on a pull request | 2 |
 | `gate:<command>`, `premerge` | The local gate or a pre-merge check failed | 2 |
 | `review:<category>` | The same review category, whatever the cause | `learnCategoryThreshold` (4) |
-| `guard:<rule id>` | The guard refused a command | 4 |
+| `guard:<rule id>` | The guard refused a command | never: it is counted as a cost, see below |
 
 Only **different items** count. Three review rounds on one item are that item's own trouble, and a
 LEARN item's own failures never count: it studies a failure and often trips it while doing so.
@@ -435,9 +435,9 @@ the sessions behind them and returns five things:
 | --- | --- | --- |
 | **What went well** | A practice and the evidence for it | Goes into the minutes. Marked `keep`: also a row under "Keep doing" in `docs/LESSONS.md` |
 | **What went wrong** | A problem, its cause, and where the cause is: the product, how we work, the harness, or the owner | Goes into the minutes. The owner's are added to `.loop/OWNER-ACTIONS.md` |
-| **Checks** | A verdict on every open action item | Closes, revises or retires the action item |
+| **Checks** | A verdict on every open action item | Closes, revises or retires the action item. One the session left out is judged by the numbers |
 | **Action items** | At most `retro.maxActions` (3), each with a rung, the expected effect and a proving command | One `LEARN-n` item, first in line |
-| **Impediments** | Causes in the harness, each with an example | `.loop/IMPEDIMENTS.md` and one line in `.loop/OWNER-ACTIONS.md` |
+| **Impediments** | Defects in the harness that broke something, each with an example | `.loop/IMPEDIMENTS.md`: one entry per cause, no owner action |
 
 The runner writes the minutes to `.loop/retros/R-<n>.md`. The LEARN item files them in
 `docs/retros/`, so the repository keeps the record of what was decided and why.
@@ -478,20 +478,27 @@ A signal that still comes back after three action items goes to the owner, and t
 spending sessions on it. `docs/LESSONS.md` holds at most `retro.maxLessons` (20) rows: at the
 limit a retro merges or retires rows before it adds one.
 
-### Impediments: what the loop does not fix
+### The harness: what the loop does not fix, and does not raise
 
-A cause in the harness (the guard refuses harmless work, a runner bug, an unclear prompt, CI's
-wiring) is not the loop's to fix: it may not edit `loop/**`, and a loop that loosens its own guard
-is no longer supervised. It is not the loop's to work around either. A lesson that teaches
-sessions to phrase commands so that a guard bug does not trigger costs a row, goes stale when the
-bug is fixed, and hides the bug from the owner.
+The harness (the guard, the runner, the prompts, CI's wiring) is not the loop's to fix: it may not
+edit `loop/**`, and a loop that loosens its own guard is no longer guarded. It is not the loop's
+to work around either. And a loop that runs unattended must not keep asking a person about it. So
+there are two cases, and neither waits for anyone:
 
-So the retro reports it as an **impediment** in `.loop/IMPEDIMENTS.md`: what is wrong, in which
-part, the evidence, one refused line or failing case, and what is wanted. From then on that signal
-no longer calls retros. You fix it in the template and bring the fix in with
-`node scripts/sync-template.mjs`. On the next run the signal counts again, and after a few
-sessions a retro settles the impediment by the numbers: closed when the signal is gone, open again
-when it is still there.
+| What happened | What the loop does |
+| --- | --- |
+| The guard refused a command | Nothing but count it. A refusal is the guard working: the session goes another way. It is not a problem in a retro, not an impediment, not an owner action, and it never calls a retro. The retro sees the count as a cost |
+| A defect in the runner, a prompt or CI's wiring broke something: the run stopped, an item did not merge because of it, a result was lost, a report was false | The retro records it once as an **impediment** in `.loop/IMPEDIMENTS.md`: what is wrong, in which part, what it broke, one failing case, what is wanted. Meeting it again raises its count; it gets no second entry and no owner action |
+
+Sessions do not learn the guard's rules by being refused: every read-only step (review,
+acceptance, packet, retro) is told them before it starts (`loop/lib/guardnotes.mjs`), with the
+allowed way to do each thing. The runner's suite holds that text to the real guard.
+
+An impediment is a record for whoever maintains the template, not a request. A signal that is
+recorded as one stops calling retros. After a sync from the template
+(`node scripts/sync-template.mjs`) every open entry waits as "recheck" and the numbers settle
+it: closed once a few sessions ran without its cause, open again when it came back. No session
+reports it a second time, and nothing reopens on a sync that did not touch its cause.
 
 ### Where everything is
 
@@ -499,7 +506,7 @@ when it is still there.
 | --- | --- |
 | The numbers a retro was given | `.loop/retros/data/R-<n>.md` (raw: refused commands as logged; never filed in the repository) |
 | The minutes | `.loop/retros/R-<n>.md`, filed in `docs/retros/` by the LEARN item |
-| Impediments that wait for you | `.loop/IMPEDIMENTS.md` |
+| Defects in the harness, recorded | `.loop/IMPEDIMENTS.md` |
 | Rules and practices in force | `docs/LESSONS.md` |
 | Retros held, action items being measured | `.loop/REPORT.md` under "Retros", `retro` in `.loop/state.json` |
 
@@ -535,9 +542,8 @@ file `loop/patches/<id>.patch`, with a short reason at the top. The run continue
 After the run, `/run-retro` reviews and applies pending patches (`git apply loop/patches/<id>.patch`),
 then runs `pnpm test:loop`.
 
-A patch is for a runner change an item needs. A harness problem the loop only ran into, like a
-guard rule that refuses harmless work, is not a patch and not a lesson: the retro reports it as an
-impediment (above), and sessions do not write patches for the guard.
+A patch is for a runner change an item needs. A refusal by the guard is not a patch and not a
+lesson: it is the guard working (above), and sessions do not write patches for the guard.
 
 ## Changing the plan
 

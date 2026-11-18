@@ -11,7 +11,8 @@ import { deployAdapter } from '../adapters/index.mjs';
 import { acceptMode, acceptTypeName } from './worktypes.mjs';
 import { ACCEPT_SCHEMA, PACKET_SCHEMA } from './schemas.mjs';
 import { writeJson, readJson } from './state.mjs';
-import { retroState } from './learn.mjs';
+import { noteAcceptanceFailed, retroState } from './learn.mjs';
+import { readOnlyRules } from './guardnotes.mjs';
 import { holdRetro } from './retro.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
@@ -37,6 +38,7 @@ async function acceptSession(L, m, round, sha, mode) {
     MIN_SCORE: L.cfg.review.minDesignScore,
     BASE_SHA_SHORT: sha.slice(0, 7),
     WORK: L.work.path(m, 'accept'),
+    GUARD_RULES: readOnlyRules(L.work.path(m, 'accept')),
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status} · refs: ${(i.refs || []).join('; ')}`).join('\n'),
     PREVIOUS: prev?.failures?.length ? `## The previous round failed on these — verify each is fixed\n\n\`\`\`json\n${JSON.stringify(prev.failures, null, 2)}\n\`\`\`` : '',
   }, { variant: mode }));
@@ -62,6 +64,7 @@ async function packetSession(L, m, mode) {
     BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || '(none)',
     BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
     WORK: L.work.path(m, 'packet'),
+    GUARD_RULES: readOnlyRules(L.work.path(m, 'packet')),
     ACCEPT_WORK: L.work.path(m, 'accept'), // what acceptance installed is still there for the packet
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status}${L.store.st(i.id).prs?.length ? ` · PR ${L.store.st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}`).join('\n'),
     OWNER_ACTIONS: L.ownerActionsTail(60),
@@ -137,6 +140,8 @@ export async function packMilestones(L, only) {
         if (ending) return {};
       } else {
         const failures = (res?.failures || []).slice(0, 8);
+        // what acceptance found counts against the action items being measured: no review signal names it
+        if (failures.length) noteAcceptanceFailed(S, m, a.rounds);
         if (!res) failures.push({ title: `Acceptance run for ${m} produced no verdict`, scope: mode === 'site' ? 'Re-run the milestone acceptance; check the dev deployment and the health endpoint first.' : 'Re-run the milestone acceptance; check that the merged base installs and starts first.' });
         failures.forEach((f, i) =>
           L.store.addExtra({ kind: 'fix', id: `ACC-${m}-${a.rounds}-${i + 1}`, milestone: m, title: short(f.title || 'acceptance failure', 120), scope: short(`${f.scope || ''} Evidence: ${f.evidence || '-'}${f.relatedItem ? ` (related: ${f.relatedItem})` : ''}`, 1200), refs: [`.loop/accept-${m}.json`, 'docs/REQUIREMENTS.md', 'loop/prompts/learn.md'], type: acceptTypeName(L.cfg, delivered(L, m)), dependsOn: [] }),

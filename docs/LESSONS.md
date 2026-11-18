@@ -18,8 +18,9 @@ How a row gets here and how it leaves:
   same gates.
 - **The next retro checks it.** The runner counts whether the failure came back after the row
   merged. A row that did not help is revised or removed, and the minutes in `docs/retros/` say why.
-- **Never a workaround for the harness.** When the guard refuses harmless work or the runner is
-  wrong, the retro reports an impediment to the owner. No row here teaches how to phrase around it.
+- **Never a workaround for the harness.** A refusal is the guard working: the session goes another
+  way, and no row here teaches how to phrase a command so that a rule does not trigger. A defect
+  in the runner that broke something is recorded once in `.loop/IMPEDIMENTS.md`, not here.
 - **After a run**, `/run-retro` moves lessons that apply to any project back into the template.
 
 Format: `L-nn`, the rule in bold with its proving command, the date, why (the incident in one or

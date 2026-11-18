@@ -14,6 +14,7 @@ import path from 'node:path';
 import { runClaude } from './claude.mjs';
 import { goalPrompt } from './engine.mjs';
 import { actionVerdict, applyRetro, harnessChanged, renderImpediments, renderMinutes, retroId, retroState } from './learn.mjs';
+import { readOnlyRules } from './guardnotes.mjs';
 import { RETRO_SCHEMA } from './schemas.mjs';
 import { readJson, writeJson } from './state.mjs';
 
@@ -42,7 +43,7 @@ export const harnessVersion = (root) => readJson(path.join(root, 'loop', 'templa
 export function noteHarness(L) {
   const again = harnessChanged(L.store.S, harnessVersion(L.root));
   if (again.length) {
-    L.progress(`the harness changed since the last run: ${again.map((i) => i.id).join(', ')} ${again.length === 1 ? 'is' : 'are'} checked again by the next retro`);
+    L.progress(`the harness changed since the last run: ${again.map((i) => i.id).join(', ')} ${again.length === 1 ? 'waits' : 'wait'} for the numbers (closed when the cause stays away, open again when it comes back)`);
     fs.writeFileSync(path.join(L.paths.run, 'IMPEDIMENTS.md'), renderImpediments(L.store.S));
   }
   L.store.save();
@@ -114,9 +115,9 @@ export function buildSheet(L, since) {
     `### Items\n\n${table(['Item', 'Kind', 'Ended', 'Build rounds', 'Sent back by', 'Sessions', 'Cost', 'Minutes'], built.map((x) => [x.id, kind(x), x.status || (x.merged ? 'merged' : 'open'), x.rounds, Object.entries(x.back).map(([k, n]) => `${k} ×${n}`).join(', ') || 'nothing', x.sessions, usd(x.usd), x.min.toFixed(0)]))}`,
     `### Merged at the first attempt, sent back by nothing\n\n${firstTime.map((x) => x.id).join(', ') || 'None.'}`,
     `### Signals: failures counted since the last retro\n\nA signal with "calls this retro" showed up in enough different items to call it.\n\n${table(['Signal', 'Items since the last retro', 'All time', 'Latest cases', 'Note'], signals.map(([sig, e]) => [`\`${sig}\``, (e.items || []).join(', ') || '-', e.count, (e.details || []).slice(-3).join(' // '), [r.due?.signals?.includes(sig) ? 'calls this retro' : '', e.muted ? `reported (${e.muted.by})` : ''].filter(Boolean).join(', ')]))}`,
-    `### Guard refusals\n\n${table(['Rule', 'Times', 'Items', 'Steps', 'What the guard said', 'Refused lines (examples)'], [...blocks.values()].map((b) => [`\`${b.rule}\``, b.n, [...b.items].join(', '), [...b.phases].join(', '), b.reason, b.examples.map((x) => `\`${x.replace(/`/g, "'")}\``).join(' // ') || '(not logged)']))}`,
-    `### Earlier action items still open: check each one\n\n${table(['Action', 'From', 'Promised', 'Signal', 'Items built since it merged', 'Still happened in', 'By the numbers'], open.map((a) => [`${a.id} ${a.title}`, a.retro, a.expect, a.signal ? `\`${a.signal}\`` : '-', a.since ? a.itemsSince.length : '-', a.hits.join(', ') || (a.since ? 'none' : '-'), actionVerdict(a, L.cfg)]))}`,
-    `### Impediments already reported\n\n${table(['Id', 'Status', 'Impediment', 'Signal'], r.impediments.filter((i) => i.status !== 'closed').map((i) => [i.id, i.status, i.title, i.signal ? `\`${i.signal}\`` : '-']))}`,
+    `### Guard refusals\n\nThe guard working. This table is the cost only: a refusal is not a problem, not an impediment and not a subject for an action item. Leave it out of your result, whatever the count.\n\n${table(['Rule', 'Times', 'Items', 'Steps', 'What the guard said', 'Refused lines (examples)'], [...blocks.values()].map((b) => [`\`${b.rule}\``, b.n, [...b.items].join(', '), [...b.phases].join(', '), b.reason, b.examples.map((x) => `\`${x.replace(/`/g, "'")}\``).join(' // ') || '(not logged)']))}`,
+    `### Earlier action items still open: check each one\n\n${table(['Action', 'From', 'Promised', 'Signal', 'Items built since it merged', 'Still happened in', 'Acceptance failed since', 'By the numbers'], open.map((a) => [`${a.id} ${a.title}`, a.retro, a.expect, a.signal ? `\`${a.signal}\`` : '-', a.since ? a.itemsSince.length : '-', a.hits.join(', ') || (a.since ? 'none' : '-'), (a.acceptFails || []).join(', ') || (a.since ? 'none' : '-'), actionVerdict(a, L.cfg)]))}`,
+    `### Impediments already on the list\n\nTo say you met one again, return it with \`same_as\` set to its id: it gets no second entry.\n\n${table(['Id', 'Status', 'Part', 'Impediment', 'Signal', 'Seen'], r.impediments.filter((i) => i.status !== 'closed').map((i) => [i.id, i.status, i.part, i.title, i.signal ? `\`${i.signal}\`` : '-', i.seen || 1]))}`,
     `### docs/LESSONS.md\n\n${lessons.rows} row(s) of at most ${limit}, ${lessons.chars} characters, the longest row ${lessons.longest}.${lessons.rows >= limit ? ' **At the limit: merge or retire rows before adding one.**' : ''}`,
   ].join('\n\n');
   return { markdown, covers };
@@ -145,6 +146,7 @@ export async function holdRetro(L, { kind, milestone }) {
     CHECK_AFTER: L.cfg.retro?.checkAfterItems ?? 5,
     MAX_LESSONS: L.cfg.retro?.maxLessons ?? 20,
     WORK: L.work.path(id, 'retro'),
+    GUARD_RULES: readOnlyRules(L.work.path(id, 'retro')),
   }));
   L.setStatus('retro', { id, title: kind === 'milestone' ? `retro after ${milestone}` : 'retro called early' });
   const cond = `The retro described in .loop/current-task.md is complete: you checked every open action item against the numbers, and the structured result names what went well, what went wrong with its cause, the action items and the impediments.`;
@@ -158,10 +160,9 @@ export async function holdRetro(L, { kind, milestone }) {
   fs.writeFileSync(path.join(dir, `${id}.md`), renderMinutes(res.retro));
   fs.writeFileSync(path.join(L.paths.run, 'IMPEDIMENTS.md'), renderImpediments(S));
   if (res.learn) L.store.addExtra(res.learn);
-  for (const i of res.impediments) {
-    L.ownerAction(i.id, `Impediment in the harness (${i.part}): ${i.title}. ${i.example ? `Example: \`${i.example}\`. ` : ''}Wanted: ${i.wanted} Fix it in the template and sync; the loop does not work around it. Details: .loop/IMPEDIMENTS.md`);
-    L.event('impediment.reported', { impediment: i.id, retro: id, part: i.part, signal: i.signal, title: i.title });
-  }
+  // Recorded, not raised: an impediment is no owner action, and the run does not wait for it.
+  for (const i of res.impediments) L.event('impediment.reported', { impediment: i.id, retro: id, part: i.part, signal: i.signal, title: i.title });
+  for (const i of res.seenAgain) L.event('impediment.seen', { impediment: i.id, retro: id, seen: i.seen });
   for (const p of res.retro.problems.filter((x) => x.owner === 'owner')) L.ownerAction(id, `The retro found something only you can settle: ${p.title}. ${p.cause}`);
   for (const s of res.escalated) L.ownerAction(id, `"${s}" keeps coming back after several action items (.loop/retros/). The loop stops spending sessions on it: look at the cases and decide what to change.`);
   for (const c of res.checks) L.event('action.checked', { action: c.action, retro: id, verdict: c.verdict, decision: c.decision, itemsSince: c.itemsSince, hits: c.hits });

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { HELD_PHASE, backlogProblems, createState, readJson, writeJson } from '../lib/state.mjs';
-import { actionVerdict, applyRetro, earlyRetro, guardSignatures, harnessChanged, isCoarse, nextLearnId, noteItemEnded, recordFailure, renderImpediments, renderMinutes, retroState, reviewSignatures } from '../lib/learn.mjs';
+import { actionVerdict, applyRetro, earlyRetro, guardSignatures, harnessChanged, isCoarse, isGuard, nextLearnId, noteAcceptanceFailed, noteItemEnded, recordFailure, renderImpediments, renderMinutes, retroState, reviewSignatures, sameTitle } from '../lib/learn.mjs';
 
 const backlog = {
   milestones: ['M1', 'M2'],
@@ -173,24 +173,71 @@ test('a retro with nothing for the repository queues nothing, except at the end 
   assert.equal(S.retro.milestones.M1, 'R-01');
 });
 
-test('an impediment is for the owner: its signal stops calling retros, and it is reported once', () => {
+test('a guard refusal is the guard working: counted, and never a retro, a problem to settle or an impediment', () => {
   const S = { extra: [], items: {} };
-  const block = (id) => recordFailure(S, { signature: 'guard:core:read-only', detail: 'redirect output only into .loop/', item: { id }, threshold: 2 });
-  block('A');
-  assert.equal(block('B'), true);
-  const imp = { title: 'The guard refuses every append', part: 'guard', evidence: '9 blocks in review', example: 'printf x >> .loop/a.txt', wanted: 'allow >> into .loop/', signal: 'guard:core:read-only' };
-  const res = applyRetro(S, retroOut({ impediments: [imp, { title: 'made-up signal', part: 'runner', evidence: 'e', wanted: 'w', signal: 'nope' }] }), { id: 'R-01', kind: 'early', cfg });
-  assert.deepEqual(res.impediments.map((i) => [i.id, i.signal, i.status]), [['IMP-1', 'guard:core:read-only', 'open'], ['IMP-2', null, 'open']]);
+  const block = (id, rule = 'core:read-only') => recordFailure(S, { signature: `guard:${rule}`, detail: 'redirect output only into .loop/', item: { id }, threshold: 2 });
+  for (const id of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']) assert.equal(block(id), false, `${id}: a refusal never calls a retro`);
+  assert.equal(block('A', 'core:add-all'), false);
+  assert.equal(retroState(S).due, null);
+  assert.equal(earlyRetro(S, cfg).due, false);
+  assert.equal(S.learn['guard:core:read-only'].count, 8, 'the count is kept: the retro shows it as a cost');
+  assert.deepEqual(S.learn['guard:core:read-only'].items, [], 'and it is not on the list of signals a retro has to settle');
+  assert.ok(isGuard('guard:core:read-only') && !isGuard('review:bug') && !isGuard(undefined));
+  // a retro that reports one all the same: not recorded, by part or by signal
+  const res = applyRetro(S, retroOut({ impediments: [
+    { title: 'The guard refuses every append', part: 'guard', broke: 'nothing', evidence: '9 blocks in review', example: 'printf x >> .loop/a.txt', wanted: 'allow it', signal: 'guard:core:read-only' },
+    { title: 'A rule refuses a harmless line', part: 'other', broke: 'nothing', evidence: 'e', wanted: 'w', signal: 'guard:core:add-all' },
+  ] }), { id: 'R-01', kind: 'early', cfg });
+  assert.deepEqual(res.impediments, []);
+  assert.deepEqual(retroState(S).impediments, []);
+  assert.equal(res.dropped.length, 2);
+  assert.match(res.dropped[0], /a refusal is the guard working, it is not recorded/);
+  assert.equal(S.learn['guard:core:read-only'].muted, undefined);
+  assert.doesNotMatch(renderImpediments(S), /IMP-/);
+});
+
+test('an impediment is recorded once: its signal stops calling retros, and meeting it again only raises its count', () => {
+  const S = { extra: [], items: {} };
+  const red = (id) => recordFailure(S, { signature: 'ci:e2e', detail: 'the job has no browser', item: { id }, threshold: 2 });
+  red('A');
+  assert.equal(red('B'), true);
+  const e2e = { title: 'The e2e job starts without a browser', part: 'ci', broke: 'A and B went through two fix rounds for nothing', evidence: 'ci:e2e in A and B', example: 'Executable does not exist', wanted: 'install the browser in the job', signal: 'ci:e2e' };
+  const crash = { title: 'The runner crashes on a transient git fetch network error', part: 'runner', broke: 'the run stopped for 40 minutes', evidence: 'PROGRESS.md 13:02', wanted: 'retry the fetch', signal: 'nope' };
+  const res = applyRetro(S, retroOut({ impediments: [e2e, crash] }), { id: 'R-01', kind: 'early', cfg });
+  assert.deepEqual(res.impediments.map((i) => [i.id, i.signal, i.status, i.seen]), [['IMP-1', 'ci:e2e', 'open', 1], ['IMP-2', null, 'open', 1]]);
   assert.equal(res.learn, null, 'nothing to build: the loop does not work around the harness');
-  assert.deepEqual(S.learn['guard:core:read-only'].muted, { by: 'IMP-1' });
-  assert.equal(block('C'), false);
-  assert.equal(block('D'), false);
+  assert.deepEqual(S.learn['ci:e2e'].muted, { by: 'IMP-1' });
+  assert.equal(red('C'), false);
+  assert.equal(red('D'), false);
   assert.equal(S.retro.due, null);
-  const again = applyRetro(S, retroOut({ impediments: [imp] }), { id: 'R-02', kind: 'early', cfg });
-  assert.deepEqual(again.impediments, []);
-  assert.match(again.dropped[0], /already reported/);
-  assert.match(renderImpediments(S), /\| IMP-1 \| open \| guard \| The guard refuses every append \|/);
-  assert.match(renderMinutes(res.retro), /`printf x >> \.loop\/a\.txt`/);
+  // the next retro meets all of it again: by signal, by id, and under other words for the same thing
+  const again = applyRetro(S, retroOut({ impediments: [
+    { ...e2e, title: 'e2e is red on every pull request', example: 'browserType.launch: Executable does not exist' },
+    { title: 'something else entirely', part: 'other', broke: 'b', evidence: 'e', wanted: 'w', same_as: 'IMP-2' },
+    { title: 'Runner crash when git fetch fails with a network error', part: 'runner', broke: 'b', evidence: 'e', wanted: 'w' },
+  ] }), { id: 'R-02', kind: 'early', cfg });
+  assert.deepEqual(again.impediments, [], 'no second entry for a known cause');
+  assert.deepEqual(again.seenAgain.map((i) => [i.id, i.seen, i.lastRetro]), [['IMP-1', 2, 'R-02'], ['IMP-2', 2, 'R-02']], 'one retro counts one meeting, however often it names it');
+  assert.equal(S.retro.impediments.length, 2);
+  assert.equal(S.retro.impediments[0].example, 'browserType.launch: Executable does not exist', 'the newest example is kept');
+  // another cause in the same part is a new entry
+  const other = applyRetro(S, retroOut({ impediments: [{ title: 'The retro minutes cut off the action item text', part: 'runner', broke: 'LEARN-7 had to guess', evidence: 'e', wanted: 'w' }] }), { id: 'R-03', kind: 'early', cfg });
+  assert.deepEqual(other.impediments.map((i) => i.id), ['IMP-3']);
+  const page = renderImpediments(S);
+  assert.match(page, /\| IMP-1 \| open \| ci \| The e2e job starts without a browser \|.*\| ci:e2e \| R-01 \| 2 \| R-02 \|/);
+  assert.match(page, /This is a record, not a to-do list: nothing in the run waits for it/);
+  const minutes = renderMinutes(again.retro);
+  assert.match(minutes, /## Impediments\n\nDefects in the harness that broke something/);
+  assert.match(minutes, /Met again, already on the list: IMP-1 \(2 times\), IMP-2 \(2 times\)\./);
+  assert.match(renderMinutes(res.retro), /\| IMP-1 The e2e job starts without a browser \| ci \|.*Executable does not exist`/);
+  assert.doesNotMatch(renderMinutes(res.retro), /for the owner|Met again/);
+});
+
+test('two titles name the same thing when most of the shorter one is in the other', () => {
+  assert.ok(sameTitle('The runner crashes on a transient git fetch network error', 'Runner crash when git fetch fails with a network error'));
+  assert.ok(sameTitle('Retro minutes cut off the action item text', 'The retro minutes cut off action item text and lose characters'));
+  assert.ok(!sameTitle('The retro packet reports finished items as open', 'Retro minutes lose invisible characters'));
+  assert.ok(!sameTitle('', 'x') && !sameTitle('a b c', 'a b c'), 'nothing to compare: short words carry no meaning');
 });
 
 test('an action item is measured, and the next retro closes, revises or retires it', () => {
@@ -259,41 +306,45 @@ test('an early retro waits for the open LEARN item, and stops once learning used
   assert.ok(earlyRetro(S, cfg).signals);
 });
 
-test('after a sync from the template the reported signals count again, and the numbers settle the impediment', () => {
+test('after a sync from the template the numbers settle an impediment, and its signal stays quiet until it closes', () => {
   const S = { extra: [], items: {}, iterations: 10 };
   assert.deepEqual(harnessChanged(S, 'aaa'), [], 'the first run only notes the version');
-  for (const id of ['A', 'B']) for (const sig of ['guard:core:read-only', 'guard:core:protected-path']) recordFailure(S, { signature: sig, item: { id } });
-  applyRetro(S, retroOut({ impediments: ['guard:core:read-only', 'guard:core:protected-path'].map((signal) => ({ title: signal, part: 'guard', evidence: 'e', wanted: 'w', signal })) }), { id: 'R-01', kind: 'early', cfg });
+  for (const id of ['A', 'B']) for (const sig of ['ci:e2e', 'ci:build']) recordFailure(S, { signature: sig, item: { id } });
+  applyRetro(S, retroOut({ impediments: ['ci:e2e', 'ci:build'].map((signal) => ({ title: signal, part: 'ci', broke: 'b', evidence: 'e', wanted: 'w', signal })) }), { id: 'R-01', kind: 'early', cfg });
   assert.deepEqual(harnessChanged(S, 'aaa'), []);
   assert.deepEqual(harnessChanged(S, 'bbb').map((i) => i.id), ['IMP-1', 'IMP-2']);
-  assert.equal(S.learn['guard:core:read-only'].muted, undefined);
+  assert.deepEqual(S.learn['ci:e2e'].muted, { by: 'IMP-1' }, 'a sync does not make the signal call retros again');
   assert.deepEqual(S.retro.impediments.map((i) => i.status), ['recheck', 'recheck']);
+  for (const id of ['C', 'D', 'E']) assert.equal(recordFailure(S, { signature: 'ci:e2e', item: { id: `LEARN-${id}`, kind: 'learn' } }), false);
   // too soon after the change: nothing is settled yet
   applyRetro(S, retroOut(), { id: 'R-02', kind: 'early', cfg });
   assert.deepEqual(S.retro.impediments.map((i) => i.status), ['recheck', 'recheck']);
   S.iterations = 20;
-  recordFailure(S, { signature: 'guard:core:protected-path', item: { id: 'C' } });
+  recordFailure(S, { signature: 'ci:build', item: { id: 'C' } });
   applyRetro(S, retroOut(), { id: 'R-03', kind: 'early', cfg });
   assert.deepEqual(S.retro.impediments.map((i) => i.status), ['closed', 'open'], 'one is gone, one is still there');
-  assert.deepEqual(S.learn['guard:core:protected-path'].muted, { by: 'IMP-2' });
+  assert.deepEqual(S.learn['ci:build'].muted, { by: 'IMP-2' });
+  assert.equal(S.learn['ci:e2e'].muted, undefined, 'the closed one counts again: if it ever comes back it is seen');
+  assert.match(S.retro.impediments[0].note, /Not seen again since the harness changed/);
+  assert.match(renderImpediments(S), /1 closed\./);
 });
 
 test('a retro inside the recheck window does not wipe out that the signal came back', () => {
   const S = { extra: [], items: {}, iterations: 10 };
   harnessChanged(S, 'aaa');
-  for (const id of ['A', 'B']) recordFailure(S, { signature: 'guard:core:read-only', item: { id } });
-  applyRetro(S, retroOut({ impediments: [{ title: 't', part: 'guard', evidence: 'e', wanted: 'w', signal: 'guard:core:read-only' }] }), { id: 'R-01', kind: 'early', cfg });
+  for (const id of ['A', 'B']) recordFailure(S, { signature: 'ci:e2e', item: { id } });
+  applyRetro(S, retroOut({ impediments: [{ title: 't', part: 'ci', broke: 'b', evidence: 'e', wanted: 'w', signal: 'ci:e2e' }] }), { id: 'R-01', kind: 'early', cfg });
   harnessChanged(S, 'bbb');
   // it comes back on the new harness, in one item and in a LEARN item (which does not count)
   S.iterations = 12;
-  recordFailure(S, { signature: 'guard:core:read-only', item: { id: 'C' } });
-  recordFailure(S, { signature: 'guard:core:read-only', item: { id: 'LEARN-1', kind: 'learn' } });
+  recordFailure(S, { signature: 'ci:e2e', item: { id: 'C' } });
+  recordFailure(S, { signature: 'ci:e2e', item: { id: 'LEARN-1', kind: 'learn' } });
   assert.deepEqual(S.retro.impediments[0].back, ['C']);
   // a milestone retro before the window ends starts the per-signal count again, and reopens it at once
   applyRetro(S, retroOut(), { id: 'R-02', kind: 'milestone', milestone: 'M1', cfg });
-  assert.deepEqual(S.learn['guard:core:read-only'].items, []);
+  assert.deepEqual(S.learn['ci:e2e'].items, []);
   assert.equal(S.retro.impediments[0].status, 'open');
-  assert.deepEqual(S.learn['guard:core:read-only'].muted, { by: 'IMP-1' });
+  assert.deepEqual(S.learn['ci:e2e'].muted, { by: 'IMP-1' });
   S.iterations = 30;
   applyRetro(S, retroOut(), { id: 'R-03', kind: 'early', cfg });
   assert.equal(S.retro.impediments[0].status, 'open', 'still open after the window');
@@ -302,11 +353,11 @@ test('a retro inside the recheck window does not wipe out that the signal came b
 test('a second harness change before the next retro starts the recheck again', () => {
   const S = { extra: [], items: {}, iterations: 10 };
   harnessChanged(S, 'v1');
-  for (const id of ['A', 'B']) recordFailure(S, { signature: 'guard:core:read-only', item: { id } });
-  applyRetro(S, retroOut({ impediments: [{ title: 't', part: 'guard', evidence: 'e', wanted: 'w', signal: 'guard:core:read-only' }] }), { id: 'R-01', kind: 'early', cfg });
+  for (const id of ['A', 'B']) recordFailure(S, { signature: 'ci:e2e', item: { id } });
+  applyRetro(S, retroOut({ impediments: [{ title: 't', part: 'ci', broke: 'b', evidence: 'e', wanted: 'w', signal: 'ci:e2e' }] }), { id: 'R-01', kind: 'early', cfg });
   harnessChanged(S, 'v2');
   S.iterations = 13;
-  recordFailure(S, { signature: 'guard:core:read-only', item: { id: 'C' } }); // still there on v2
+  recordFailure(S, { signature: 'ci:e2e', item: { id: 'C' } }); // still there on v2
   assert.deepEqual(harnessChanged(S, 'v3').map((i) => i.id), ['IMP-1'], 'v3 is judged on its own');
   assert.deepEqual([S.retro.impediments[0].back, S.retro.impediments[0].recheckAt], [[], 13]);
   S.iterations = 16;
@@ -315,14 +366,79 @@ test('a second harness change before the next retro starts the recheck again', (
   S.iterations = 20;
   applyRetro(S, retroOut(), { id: 'R-03', kind: 'early', cfg });
   assert.equal(S.retro.impediments[0].status, 'closed');
-  assert.equal(S.learn['guard:core:read-only'].muted, undefined);
+  assert.equal(S.learn['ci:e2e'].muted, undefined);
+});
+
+test('a sync closes the guard entries an older harness recorded, and asks nobody', () => {
+  // the state of a run on a harness that still recorded refusals as impediments
+  const S = { extra: [], items: {}, iterations: 40, learn: { 'guard:core:read-only': { count: 21, items: [], muted: { by: 'IMP-1' } }, 'guard:core:add-all': { count: 2, items: [], muted: { by: 'IMP-3' } } } };
+  const r = retroState(S);
+  r.harness = 'old';
+  r.impediments.push(
+    { id: 'IMP-1', retro: 'R-01', status: 'open', part: 'guard', title: 'core:read-only does not expand a variable', signal: 'guard:core:read-only' },
+    { id: 'IMP-2', retro: 'R-01', status: 'open', part: 'runner', title: 'The retro packet reports finished items as open', signal: null },
+    { id: 'IMP-3', retro: 'R-02', status: 'recheck', part: 'guard', title: 'core:add-all matches quoted text', signal: 'guard:core:add-all' },
+    { id: 'IMP-4', retro: 'R-03', status: 'open', part: 'guard', title: 'a relative path is not resolved', signal: null },
+    { id: 'IMP-5', retro: 'R-03', status: 'open', part: 'runner', title: 'The runner crashes on a transient git fetch network error', signal: null },
+  );
+  assert.deepEqual(harnessChanged(S, 'new').map((i) => i.id), ['IMP-2', 'IMP-5'], 'only the defects wait for the numbers');
+  assert.deepEqual(r.impediments.map((i) => i.status), ['closed', 'recheck', 'closed', 'closed', 'recheck']);
+  assert.match(r.impediments[0].note, /A refusal is the guard working/);
+  assert.deepEqual([S.learn['guard:core:read-only'].muted, S.learn['guard:core:add-all'].muted], [undefined, undefined]);
+  // an entry without a signal has no numbers: a retro that meets it again opens it, and one nobody met closes
+  S.iterations = 43;
+  applyRetro(S, retroOut({ impediments: [{ title: 'Runner crash when git fetch fails with a network error', part: 'runner', broke: 'the run stopped', evidence: 'e', wanted: 'w' }] }), { id: 'R-04', kind: 'early', cfg });
+  assert.deepEqual([r.impediments[1].status, r.impediments[4].status, r.impediments[4].seen], ['recheck', 'open', 2]);
+  S.iterations = 50;
+  applyRetro(S, retroOut(), { id: 'R-05', kind: 'early', cfg });
+  assert.deepEqual([r.impediments[1].status, r.impediments[4].status], ['closed', 'open']);
+  assert.equal(r.impediments.length, 5, 'no entry was added along the way');
+  // a closed one that turns up again is opened, not entered a second time
+  const back = applyRetro(S, retroOut({ impediments: [{ title: 'The retro packet reports finished items as open again', part: 'runner', broke: 'b', evidence: 'e', wanted: 'w' }] }), { id: 'R-06', kind: 'early', cfg });
+  assert.deepEqual([back.impediments.length, r.impediments[1].status, r.impediments[1].seen], [0, 'open', 2]);
+});
+
+test('an action item the retro says nothing about is judged by the numbers, and a failed acceptance keeps it open', () => {
+  const S = { extra: [], items: {} };
+  const act = (signal) => ({ title: `stop ${signal}`, rung: 'test', what: 'w', expect: 'e', done_when: 'd', signal });
+  for (const sig of ['ci:lint', 'ci:types', 'ci:unit']) for (const id of ['A', 'B']) recordFailure(S, { signature: sig, item: { id } });
+  applyRetro(S, retroOut({ actions: ['ci:lint', 'ci:types', 'ci:unit'].map(act) }), { id: 'R-01', kind: 'early', cfg });
+  const [lint, types, unit] = S.retro.actions;
+  noteAcceptanceFailed(S, 'M1', 1);
+  assert.equal(lint.acceptFails, undefined, 'not merged yet: nothing is measured');
+  noteItemEnded(S, { id: 'LEARN-1', kind: 'learn' }, 'done');
+  for (const id of ['C', 'D']) {
+    recordFailure(S, { signature: 'ci:types', item: { id } });
+    noteItemEnded(S, { id }, 'done');
+  }
+  assert.deepEqual([actionVerdict(lint, cfg), actionVerdict(types, cfg), actionVerdict(unit, cfg)], ['worked', 'no effect', 'worked']);
+  // the session returns a verdict for one of them only
+  const res = applyRetro(S, retroOut({ checks: [{ action: 'A-3', verdict: 'worked', decision: 'retire', note: 'the job is gone' }] }), { id: 'R-02', kind: 'early', cfg });
+  assert.deepEqual(res.checks.map((c) => [c.action, c.verdict, c.decision, c.status]), [['A-3', 'worked', 'retire', 'retired'], ['A-1', 'worked', 'keep', 'worked'], ['A-2', 'no_effect', 'keep', 'open']]);
+  assert.match(lint.note, /By the numbers: the retro gave no verdict/);
+  assert.match(types.note, /It stays open/);
+  assert.match(renderMinutes(res.retro), /\| A-1 stop ci:lint \| 2 \| 0 \| worked \| keep \| By the numbers/);
+
+  // acceptance failed since it merged: enough items and no hit is then "weak", and it is not closed
+  const T = { extra: [], items: {} };
+  for (const id of ['A', 'B']) recordFailure(T, { signature: 'ci:lint', item: { id } });
+  applyRetro(T, retroOut({ actions: [act('ci:lint')] }), { id: 'R-01', kind: 'early', cfg });
+  noteItemEnded(T, { id: 'LEARN-1', kind: 'learn' }, 'done');
+  for (const id of ['C', 'D', 'E']) noteItemEnded(T, { id }, 'done');
+  noteAcceptanceFailed(T, 'M2', 1);
+  noteAcceptanceFailed(T, 'M2', 1);
+  noteAcceptanceFailed(T, 'M2', 2);
+  assert.deepEqual(T.retro.actions[0].acceptFails, ['M2 round 1', 'M2 round 2']);
+  assert.equal(actionVerdict(T.retro.actions[0], cfg), 'weak');
+  assert.deepEqual(applyRetro(T, retroOut(), { id: 'R-02', kind: 'milestone', milestone: 'M2', cfg }).checks, []);
+  assert.equal(T.retro.actions[0].status, 'open');
 });
 
 test('a state written before retros existed is read as it is', () => {
   const S = { extra: [{ kind: 'learn', id: 'LEARN-2' }], items: { 'LEARN-2': { status: 'done' } }, learn: { 'guard:core:read-only': { count: 5, sinceLearn: 0, details: ['x'], queued: ['LEARN-2'] } } };
   assert.equal(nextLearnId(S), 'LEARN-3');
   assert.equal(recordFailure(S, { signature: 'guard:core:read-only', item: { id: 'A' } }), false);
-  assert.deepEqual(S.learn['guard:core:read-only'].items, ['A']);
+  assert.deepEqual([S.learn['guard:core:read-only'].count, S.learn['guard:core:read-only'].items], [6, []]);
   assert.deepEqual(retroState(S).actions, []);
 });
 

@@ -83,8 +83,8 @@ runner's.
    to `loop/rules/project-rules.json`, and write a new `loop/patches/<item>-<what>.patch` for a
    runner change your item needs and the owner applies later. If you need a wiring change, take a
    default that works without it and put the ask in `owner_actions`. When the guard refuses a
-   harmless command, go another way and carry on: do not work on the guard. The retro reads the
-   guard log and reports it to the owner.
+   command, that is the guard working: go another way and carry on. Do not work on the guard, and
+   do not put a refusal into `owner_actions`, the summary or the handoff: nobody is asked about it.
 
 9. **Commit and open the PR.** `git add` explicit paths only. Commit messages follow the repo style
    (`feat(…): …`). In the same PR, update `docs/BACKLOG.md` and add any decision rows, and keep

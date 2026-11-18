@@ -13,6 +13,7 @@ import { decide, READ_ONLY_PHASES } from '../guard/core.mjs';
 import { repoRelative, globToRegExp } from '../guard/paths.mjs';
 import { compileRules } from '../guard/rules.mjs';
 import { DEFAULTS, deepMerge } from '../lib/config.mjs';
+import { READ_ONLY_WAYS, readOnlyRules } from '../lib/guardnotes.mjs';
 import { PRESET } from './helpers/preset.mjs';
 
 const LOOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -91,6 +92,38 @@ describe('shell rules', () => {
       allowed(sh('rm -rf .loop/work/T1/review/wt', { phase }));
       blocked(sh('cd .loop/work/T1/review/wt; pnpm test > out.txt', { phase }), 'core:read-only');
     }
+  });
+});
+
+describe('what a read-only session is told is what the guard does', () => {
+  const work = '.loop/work/T1/review';
+  const ways = READ_ONLY_WAYS(work);
+  for (const phase of READ_ONLY_PHASES) {
+    test(`${phase}: every way the prompt names passes, and every way it says is refused is refused`, () => {
+      for (const line of ways.allowed) allowed(sh(line, { phase }));
+      for (const line of ways.refused) blocked(sh(line, { phase }), 'core:read-only');
+    });
+  }
+  test('every line the paragraph shows as allowed passes the guard, with the session\'s own folder in it', () => {
+    const text = readOnlyRules(work);
+    assert.match(text, /^\*\*What the guard lets this step do\.\*\*/);
+    assert.match(text, /A refusal is the guard working: it is never a fault to report and never a reason to stop/);
+    assert.ok(!text.includes('{{'), 'no placeholder is left for the prompt to fill');
+    // a quoted text with a placeholder (<branch>, …) or a variable is a pattern or a counter-example, not a line to run
+    const quoted = [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+    const lines = quoted.filter((c) => c.includes(work) && /\s/.test(c) && !/[<…$]/.test(c));
+    assert.ok(lines.length >= 3, lines.join(' | '));
+    for (const phase of READ_ONLY_PHASES) for (const c of lines) allowed(sh(c, { phase }));
+    // and what it says is refused, is
+    for (const c of ['> $OUT/test.txt', 'sed -i', 'perl -i'].filter((x) => text.includes(x))) assert.ok(c);
+    for (const phase of READ_ONLY_PHASES) {
+      blocked(sh('npm test > $OUT/test.txt', { phase }), 'core:read-only');
+      blocked(sh(`sed -i 's/a/b/' ${work}/wt/src/a.mjs`, { phase }), 'core:read-only');
+      blocked(sh(`perl -pi -e 's/a/b/' ${work}/wt/src/a.mjs`, { phase }), 'core:read-only');
+    }
+  });
+  test('the retro is a read-only step like the others', () => {
+    for (const phase of ['review', 'accept', 'packet', 'retro']) assert.ok(READ_ONLY_PHASES.has(phase), phase);
   });
 });
 

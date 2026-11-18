@@ -12,22 +12,32 @@
 //   4. The next retro checks each action item against the numbers: did the signal stop? An action
 //      that did not help is revised or taken back. Nothing is kept on faith.
 //
-// A cause in the harness itself (the guard, the runner, the prompts, CI's wiring) is not the
-// loop's to fix, and not to work around either: the retro records it as an impediment for the
-// owner, and that signal stops calling retros.
+// The harness itself (the guard, the runner, the prompts, CI's wiring) is not the loop's to fix and
+// not to work around, and nothing here asks a person to step in while a run goes on:
+//
+//   - A guard refusal is the guard working. It is counted as a cost and is never a problem, never
+//     an impediment and never a reason to hold a retro. A session that was refused goes another
+//     way; the rules are in its prompt (loop/lib/guardnotes.mjs).
+//   - A defect in the harness that broke something (a crash, a lost result, a wrong report) is
+//     recorded once as an impediment. The list is a record, not a request: one cause has one
+//     entry, meeting it again raises a counter, and nothing in the run waits for it. After a
+//     sync from the template an entry closes by itself when its cause stays away.
 //
 // Signals: review:<category>:<cause> (a blocking review finding with the cause key the reviewer
-// gave it), review:<category> (the same category whatever the cause), guard:<rule id> (a guard
-// block), ci:<job name> (a red CI job on a PR), gate:<command> (the local gate), premerge.
+// gave it), review:<category> (the same category whatever the cause), ci:<job name> (a red CI job
+// on a PR), gate:<command> (the local gate), premerge, and guard:<rule id> (a guard block, counted
+// only).
 //
 // Why two thresholds: a cause the reviewer named, a red CI job or a failing gate in two different
-// items is a pattern (learnThreshold). A bare review category or a guard rule is coarse, and a
-// retro costs a session, so those need more items (learnCategoryThreshold).
+// items is a pattern (learnThreshold). A bare review category is coarse, and a retro costs a
+// session, so it needs more items (learnCategoryThreshold).
 
 import { TERMINAL } from './state.mjs';
 
 /** After this many action items a signal that still comes back goes to the owner. */
 export const MAX_ACTIONS_PER_SIGNAL = 3;
+/** Sessions an impediment has to stay away for, after the harness changed, to be closed. */
+export const RECHECK_SESSIONS = 6;
 
 const oneLine = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const pad = (n) => String(n).padStart(2, '0');
@@ -46,15 +56,29 @@ export function retroState(S) {
   return r;
 }
 
-/** Signals a guard rule or a bare review category gives: coarse, so they need more items. */
-export const isCoarse = (signal) => /^guard:/.test(signal) || /^review:[^:]+$/.test(signal);
+/** A guard refusal: the guard working. It is counted, and it never calls a retro. */
+export const isGuard = (signal) => /^guard:/.test(String(signal ?? ''));
+
+/** Signals a bare review category gives (and a guard rule, which is only counted): coarse, so they need more items. */
+export const isCoarse = (signal) => isGuard(signal) || /^review:[^:]+$/.test(signal);
+
+/** Two titles that name the same thing: most of the shorter one's words are in the other. */
+export function sameTitle(a, b) {
+  const words = (t) => new Set(String(t ?? '').toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+  const [A, B] = [words(a), words(b)];
+  if (!A.size || !B.size) return false;
+  let both = 0;
+  for (const w of A) if (B.has(w)) both++;
+  return both / Math.min(A.size, B.size) >= 0.6;
+}
 
 /**
  * Count one failure. Returns true when this one makes a retro due: the signal has now shown up in
  * `threshold` different items since it was last on a retro's table. Mutates S.learn and S.retro.
  *
  * A LEARN item's own failures never count towards a retro: it studies a failure, often trips it
- * while doing so, and its own review rounds are not a pattern in the product's work.
+ * while doing so, and its own review rounds are not a pattern in the product's work. A guard
+ * refusal never does either: it is counted (the retro's sheet shows the cost), nothing more.
  */
 export function recordFailure(S, { signature, detail, item, threshold = 2 }) {
   S.learn ||= {};
@@ -70,7 +94,7 @@ export function recordFailure(S, { signature, detail, item, threshold = 2 }) {
   // An impediment that waits for its recheck keeps its own record: a retro in between starts the
   // per-signal count again, and must not wipe out that the signal came back on the new harness.
   for (const i of r.impediments) if (i.status === 'recheck' && i.signal === signature && !(i.back ||= []).includes(id)) i.back.push(id);
-  if (e.muted) return false;
+  if (isGuard(signature) || e.muted) return false;
   if (!e.items.includes(id)) e.items.push(id);
   if (e.items.length < threshold) return false;
   r.due ||= { signals: [], since: new Date().toISOString() };
@@ -103,12 +127,21 @@ export function earlyRetro(S, cfg) {
   return { due: true, signals: r.due.signals };
 }
 
-/** What the numbers say about an action item, before the retro decides. */
+/**
+ * What the numbers say about an action item, before the retro decides. An acceptance round that
+ * failed since it merged keeps it from "worked": acceptance finds what no review signal names.
+ */
 export function actionVerdict(a, cfg) {
   if (!a.since) return 'not merged yet';
   if (a.hits.length >= 2) return 'no effect';
-  if (a.itemsSince.length >= (cfg.retro?.checkAfterItems ?? 5)) return a.hits.length ? 'weak' : 'worked';
+  if (a.itemsSince.length >= (cfg.retro?.checkAfterItems ?? 5)) return a.hits.length || (a.acceptFails || []).length ? 'weak' : 'worked';
   return 'too early';
+}
+
+/** A milestone failed an acceptance round: every action item that is being measured notes it. */
+export function noteAcceptanceFailed(S, milestone, round) {
+  const mark = `${milestone} round ${round}`;
+  for (const a of retroState(S).actions) if (a.status === 'open' && a.since && !(a.acceptFails ||= []).includes(mark)) a.acceptFails.push(mark);
 }
 
 /**
@@ -129,8 +162,8 @@ export function noteItemEnded(S, item, status) {
 
 /**
  * Take a retro's result into the books. Pure: mutates S, writes nothing. Returns what the runner
- * has to do: { retro, learn (the LEARN item to queue, or null), impediments (new ones), checks,
- * dropped (what was not taken, with the reason) }.
+ * has to do: { retro, learn (the LEARN item to queue, or null), impediments (new ones), seenAgain
+ * (known ones the retro met again), checks, dropped (what was not taken, with the reason) }.
  */
 export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().toISOString(), covers = '' }) {
   const r = retroState(S);
@@ -151,28 +184,62 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
     Object.assign(a, { checkedBy: id, verdict, note: text(c.note, 300) });
     checks.push({ action: a.id, title: a.title, verdict, decision, status: a.status, note: a.note, itemsSince: a.itemsSince.length, hits: a.hits.length });
   }
-
-  // 2. Impediments: causes in the harness. One per signal; that signal stops calling retros.
-  // One that waits for a recheck (the harness changed) is settled by the numbers: open again as
-  // soon as its signal came back on the new harness, closed once a few sessions ran without it.
-  for (const i of r.impediments.filter((x) => x.status === 'recheck' && x.signal)) {
-    if ((i.back || []).length) {
-      i.status = 'open';
-      if (S.learn?.[i.signal]) S.learn[i.signal].muted = { by: i.id };
-    } else if ((S.iterations || 0) - (i.recheckAt || 0) >= 6) i.status = 'closed';
+  // An action item the session said nothing about is judged by the numbers alone, so none stays
+  // open because a session forgot it. One that worked is closed. One that had no effect stays
+  // open and is shown as such: taking a fix back or replacing it needs a retro's decision.
+  for (const a of r.actions.filter((x) => x.status === 'open' && x.since && !checks.some((c) => c.action === x.id))) {
+    const numbers = actionVerdict(a, cfg);
+    if (numbers !== 'worked' && numbers !== 'no effect') continue;
+    const verdict = numbers === 'worked' ? 'worked' : 'no_effect';
+    if (verdict === 'worked') a.status = 'worked';
+    Object.assign(a, { checkedBy: id, verdict, note: verdict === 'worked' ? 'By the numbers: the retro gave no verdict.' : 'By the numbers: it came back, and the retro gave no decision. It stays open.' });
+    checks.push({ action: a.id, title: a.title, verdict, decision: 'keep', status: a.status, note: a.note, itemsSince: a.itemsSince.length, hits: a.hits.length });
   }
+
+  // 2. Impediments: defects in the harness that broke something. One cause has one entry: a
+  // retro that meets a known one again adds to its count and opens no second entry. A guard
+  // refusal is not a defect and is never recorded.
   const impediments = [];
+  const seenAgain = [];
   for (const x of Array.isArray(out.impediments) ? out.impediments : []) {
     if (!x?.title) continue;
-    const signal = S.learn?.[x.signal] ? x.signal : null;
-    if (signal && r.impediments.some((i) => i.status === 'open' && i.signal === signal)) {
-      dropped.push(`impediment "${text(x.title, 80)}": ${signal} is already reported`);
+    const part = text(x.part, 20) || 'other';
+    if (part === 'guard' || isGuard(x.signal)) {
+      dropped.push(`impediment "${text(x.title, 80)}": a refusal is the guard working, it is not recorded`);
       continue;
     }
-    const imp = { id: `IMP-${r.impediments.length + 1}`, retro: id, status: 'open', at, title: text(x.title, 160), part: text(x.part, 20) || 'other', evidence: text(x.evidence), example: text(x.example, 400), wanted: text(x.wanted), signal };
+    const signal = S.learn?.[x.signal] ? x.signal : null;
+    const live = (i) => i.status !== 'closed';
+    const known =
+      r.impediments.find((i) => i.id === x.same_as) ||
+      (signal && (r.impediments.find((i) => i.signal === signal && live(i)) || r.impediments.find((i) => i.signal === signal))) ||
+      r.impediments.find((i) => i.part === part && live(i) && sameTitle(i.title, x.title)) ||
+      r.impediments.find((i) => i.part === part && sameTitle(i.title, x.title));
+    if (known) {
+      if (!seenAgain.includes(known)) {
+        Object.assign(known, { seen: (known.seen || 1) + 1, lastRetro: id, status: 'open', back: [] });
+        if (x.example) known.example = text(x.example, 400);
+        if (known.signal && S.learn?.[known.signal]) S.learn[known.signal].muted = { by: known.id };
+        seenAgain.push(known);
+      }
+      continue;
+    }
+    const imp = { id: `IMP-${r.impediments.length + 1}`, retro: id, status: 'open', at, title: text(x.title, 160), part, evidence: text(x.evidence), example: text(x.example, 400), wanted: text(x.wanted), signal, seen: 1, lastRetro: id };
     r.impediments.push(imp);
     impediments.push(imp);
     if (signal) S.learn[signal].muted = { by: imp.id };
+  }
+  // One that waits for its recheck (the harness changed) is settled by the numbers: open again
+  // as soon as its signal came back on the new harness, closed once a few sessions ran without
+  // it. One without a signal is open again when a retro met it (above), closed otherwise.
+  for (const i of r.impediments.filter((x) => x.status === 'recheck')) {
+    if (i.signal && (i.back || []).length) {
+      i.status = 'open';
+      if (S.learn?.[i.signal]) S.learn[i.signal].muted = { by: i.id };
+    } else if ((S.iterations || 0) - (i.recheckAt || 0) >= RECHECK_SESSIONS) {
+      Object.assign(i, { status: 'closed', closedBy: id, note: 'Not seen again since the harness changed.' });
+      if (i.signal && S.learn?.[i.signal]?.muted?.by === i.id) delete S.learn[i.signal].muted; // it counts again
+    }
   }
 
   // 3. New action items, a few at most. A signal that already had its share goes to the owner.
@@ -223,14 +290,18 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
   r.due = null;
   r.lastAt = at;
   if (kind === 'milestone' && milestone) r.milestones[milestone] = id;
-  const retro = { id, kind, milestone: milestone || null, at, covers, summary: text(out.summary, 1200), wentWell, problems, checks, actions, impediments, escalated, dropped, learn: learn?.id || null };
+  const again = seenAgain.map((i) => ({ id: i.id, title: i.title, part: i.part, seen: i.seen }));
+  const retro = { id, kind, milestone: milestone || null, at, covers, summary: text(out.summary, 1200), wentWell, problems, checks, actions, impediments, seenAgain: again, escalated, dropped, learn: learn?.id || null };
   r.held.push({ id, kind, milestone: milestone || null, at, actions: actions.map((a) => a.id), impediments: impediments.map((i) => i.id), learn: retro.learn });
-  return { retro, learn, impediments, checks, escalated, dropped };
+  return { retro, learn, impediments, seenAgain, checks, escalated, dropped };
 }
 
 /**
- * The harness changed (a sync from the template): every signal reported as an impediment counts
- * again, so the next retro sees whether the change removed it. Returns the impediments affected.
+ * The harness changed (a sync from the template): every open impediment waits for its recheck,
+ * and the numbers settle it (applyRetro): closed when its cause stays away, open again when it
+ * comes back. Nothing is asked of anyone and no signal starts calling retros again: a signal that
+ * is recorded as an impediment stays quiet until its entry closes. Returns the impediments
+ * affected.
  */
 export function harnessChanged(S, version) {
   const r = retroState(S);
@@ -238,7 +309,11 @@ export function harnessChanged(S, version) {
   const first = r.harness === undefined;
   r.harness = version;
   if (first) return [];
-  for (const e of Object.values(S.learn || {})) if (e.muted && e.muted.by !== 'owner') delete e.muted;
+  // Entries from a harness that still recorded guard refusals: a refusal is the guard working.
+  for (const i of r.impediments.filter((x) => x.status !== 'closed' && (x.part === 'guard' || isGuard(x.signal)))) {
+    Object.assign(i, { status: 'closed', note: 'A refusal is the guard working: it is no longer recorded.' });
+    if (i.signal && S.learn?.[i.signal]?.muted?.by === i.id) delete S.learn[i.signal].muted;
+  }
   // Also the ones already waiting for a recheck: what they saw belongs to the harness before this one.
   const open = r.impediments.filter((i) => i.status === 'open' || i.status === 'recheck');
   for (const i of open) Object.assign(i, { status: 'recheck', recheckAt: S.iterations || 0, back: [] });
@@ -260,16 +335,17 @@ export function renderMinutes(retro) {
     `## What went wrong\n\n${table(['Problem', 'Evidence', 'Cause', 'The cause is in'], retro.problems.map((p) => [p.title, p.evidence, p.cause, owner[p.owner]]))}`,
     `## Earlier action items, checked\n\n${table(['Action', 'Items since', 'Still happened in', 'Verdict', 'Decision', 'Note'], retro.checks.map((c) => [`${c.action} ${c.title}`, c.itemsSince, c.hits, c.verdict.replace('_', ' '), c.decision, c.note]))}`,
     `## Action items\n\n${table(['Action', 'Kind', 'What', 'Expected effect', 'Done when'], retro.actions.map((a) => [`${a.id} ${a.title}`, a.rung, a.what, a.expect, a.doneWhen]))}${retro.learn ? `\n\nCarried out by ${retro.learn}.` : ''}`,
-    `## Impediments: for the owner\n\nCauses in the harness. The loop does not fix these and does not work around them.\n\n${table(['Impediment', 'Part', 'Evidence', 'Example', 'Wanted'], retro.impediments.map((i) => [`${i.id} ${i.title}`, i.part, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted]))}`,
+    `## Impediments\n\nDefects in the harness that broke something in this stretch. The loop does not fix them and does not work around them, and nothing in the run waits for them: they are a record for whoever maintains the template.\n\n${table(['Impediment', 'Part', 'Evidence', 'Example', 'Wanted'], retro.impediments.map((i) => [`${i.id} ${i.title}`, i.part, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted]))}${(retro.seenAgain || []).length ? `\n\nMet again, already on the list: ${retro.seenAgain.map((i) => `${i.id} (${i.seen} times)`).join(', ')}.` : ''}`,
     retro.escalated.length ? `## Given to the owner\n\nThese signals had ${MAX_ACTIONS_PER_SIGNAL} action items and still come back: ${retro.escalated.map((s) => `\`${s}\``).join(', ')}.` : '',
   ].filter(Boolean).join('\n\n') + '\n';
 }
 
-/** Every open impediment, as the page the owner reads (.loop/IMPEDIMENTS.md). */
+/** Every impediment that is not closed, as a page to read (.loop/IMPEDIMENTS.md). */
 export function renderImpediments(S) {
   const r = retroState(S);
   const rows = r.impediments.filter((i) => i.status !== 'closed');
-  return `# Impediments\n\nWhat holds the loop back and is not the loop's to fix: causes in the guard, the runner, the prompts or CI's wiring. A retro puts them here. Fix them in the template and bring the fix in with \`node scripts/sync-template.mjs\`; the signal then counts again, and the next retro checks whether it is gone ("recheck").\n\n${table(['Id', 'Status', 'Part', 'Impediment', 'Evidence', 'Example', 'Wanted', 'Signal', 'Retro'], rows.map((i) => [i.id, i.status, i.part, i.title, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted, i.signal || '-', i.retro]))}\n`;
+  const closed = r.impediments.length - rows.length;
+  return `# Impediments\n\nDefects in the harness that broke something during the run: in the runner, the prompts, CI's wiring or a profile. This is a record, not a to-do list: nothing in the run waits for it, one cause has one row, and meeting it again raises "Seen". After a sync from the template (\`node scripts/sync-template.mjs\`) a row waits as "recheck" and closes by itself once its cause stays away. A guard refusal is the guard working and is never listed.\n\n${table(['Id', 'Status', 'Part', 'Impediment', 'Evidence', 'Example', 'Wanted', 'Signal', 'First', 'Seen', 'Last'], rows.map((i) => [i.id, i.status, i.part, i.title, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted, i.signal || '-', i.retro, i.seen || 1, i.lastRetro || i.retro]))}${closed ? `\n\n${closed} closed.` : ''}\n`;
 }
 
 export const retroId = (n) => `R-${pad(n)}`;
