@@ -119,11 +119,22 @@ export async function packMilestones(L, only) {
       a.rounds++;
       L.store.save();
       const res = await acceptSession(L, m, a.rounds, sha, mode);
-      if (L.stopRequested() || L.budgetExceeded()) return {};
+      // A stop or a spent budget ends the run after this step, not instead of its result: a round
+      // that gave a verdict is recorded first. Dropping it would leave the round counted and
+      // nothing known, and the next run would pack the milestone as "not re-accepted". Only a
+      // session that was cut short gives its round back.
+      const ending = L.stopRequested() || L.budgetExceeded();
+      if (ending && !res) {
+        a.rounds--;
+        L.store.save();
+        return {};
+      }
       if (res?.pass) {
         a.passed = true;
         L.progress(`${m} · acceptance round ${a.rounds} ${where}: **pass**`);
         L.event('acceptance.round', { milestone: m, round: a.rounds, mode, pass: true, failures: 0 });
+        L.store.save();
+        if (ending) return {};
       } else {
         const failures = (res?.failures || []).slice(0, 8);
         if (!res) failures.push({ title: `Acceptance run for ${m} produced no verdict`, scope: mode === 'site' ? 'Re-run the milestone acceptance; check the dev deployment and the health endpoint first.' : 'Re-run the milestone acceptance; check that the merged base installs and starts first.' });

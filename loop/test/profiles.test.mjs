@@ -205,6 +205,53 @@ describe('the CLI profile through the runner', () => {
     assert.deepEqual(Object.keys(schema.properties.scores.properties), Object.keys(SCORES));
   });
 
+  test('a stop placed while acceptance runs ends the run after the round, with its verdict recorded', async () => {
+    const stop = { '.loop/STOP': 'stopped by the owner' };
+    const packet = { structured: { markdown: '# M1\n', screenshots: [] } };
+    const at = (sb, rel) => fs.existsSync(path.join(sb.root, rel));
+
+    // a round that passed: recorded, and the next run goes straight on to the packet
+    const passed = box({ backlog: { milestones: ['M1'], items: [command('C1')] } });
+    passed.queue(smokeStep(), happyItem('C1')[0], approve(), { writes: stop, structured: { pass: true, failures: [], summary: 'good' } });
+    let r = await passed.run();
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.deepEqual(passed.state().accept.M1, { rounds: 1, passed: true });
+    assert.match(passed.file('.loop/PROGRESS.md'), /acceptance round 1 on develop: \*\*pass\*\*/);
+    assert.deepEqual(passed.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'accept'], 'nothing starts after the stop');
+    assert.deepEqual(passed.state().packed, []);
+    fs.rmSync(path.join(passed.root, '.loop', 'STOP'));
+    passed.queue(smokeStep(), packet);
+    r = await passed.run();
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.deepEqual(passed.calls().slice(4).map((c) => c.phase), ['smoke', 'packet'], 'the milestone is not accepted a second time');
+    assert.deepEqual(passed.state().packed, ['M1']);
+    assert.doesNotMatch(passed.file('.loop/OWNER-ACTIONS.md') || '', /acceptance still found failures/);
+
+    // a round that failed: its fix item is queued before the run ends
+    const failed = box({ backlog: { milestones: ['M1'], items: [command('C1')] } });
+    failed.queue(smokeStep(), happyItem('C1')[0], approve(), { writes: stop, structured: { pass: false, failures: [{ title: 'greet prints a stack trace', scope: 'Catch it.', evidence: 'x' }], summary: 'one' } });
+    r = await failed.run();
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.deepEqual(failed.state().accept.M1, { rounds: 1, passed: false });
+    assert.equal(failed.state().extra.filter((e) => e.id === 'ACC-M1-1-1').length, 1);
+    assert.deepEqual(failed.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'accept']);
+
+    // a session that was cut short gave no verdict: its round is given back, and the next run accepts again
+    const cut = box({ backlog: { milestones: ['M1'], items: [command('C1')] } });
+    cut.queue(smokeStep(), happyItem('C1')[0], approve(), { writes: stop, text: 'cut short' });
+    r = await cut.run();
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.deepEqual(cut.state().accept.M1, { rounds: 0, passed: false });
+    assert.equal(cut.state().extra.length, 0, 'no "produced no verdict" fix item for a session the stop cut short');
+    fs.rmSync(path.join(cut.root, '.loop', 'STOP'));
+    cut.queue(smokeStep(), { structured: { pass: true, failures: [], summary: 'good' } }, packet);
+    r = await cut.run();
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.deepEqual(cut.calls().slice(4).map((c) => c.phase), ['smoke', 'accept', 'packet']);
+    assert.deepEqual(cut.state().accept.M1, { rounds: 1, passed: true });
+    assert.ok(at(cut, '.loop/reviews/M1.md'));
+  });
+
   test('a command reviewed without one of its scores, or with one below the bar, is not approved', async () => {
     const sb = box({ backlog: { milestones: ['M1'], items: [command('C1')] } });
     const [build] = happyItem('C1');
