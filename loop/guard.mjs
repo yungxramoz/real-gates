@@ -78,6 +78,7 @@ try {
     branch: git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out,
     cfg,
     rel: (p) => repoRelative(root, p),
+    cwd: repoRelative(root, cwd),
     isOnBase: (rel) => {
       if (!onBase.has(rel)) onBase.set(rel, spawnSync('git', ['cat-file', '-e', `origin/${cfg.base}:${rel}`], { cwd: root, stdio: 'ignore', windowsHide: true }).status === 0);
       return onBase.get(rel);
