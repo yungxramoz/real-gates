@@ -1,4 +1,4 @@
-# 5 · Building blocks
+# 4 · Building blocks
 
 <!-- The module map. Start from the folder tree (`git ls-files bin src | sort`), then check it by
      hand. A new command or module updates this page in the same PR. -->

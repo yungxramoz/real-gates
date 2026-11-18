@@ -16,7 +16,7 @@ stay. It refuses to run on a working tree with uncommitted changes, so `git chec
 
 ## What you get
 
-| | |
+| Part | What it is |
 | --- | --- |
 | Skeleton | `bin/cli.mjs`, `src/cli.mjs` with `--help`, `--version` and command dispatch; unit and end-to-end tests for AC-0.1 to AC-0.4 |
 | Gates | `npm run check` (syntax, unit tests, coverage thresholds), `npm run test:e2e` (the binary, and the packed package installed into an empty folder) |

@@ -33,7 +33,7 @@
       "id": "R2",
       "milestone": "M2",
       "title": "Email sending with a preview stub",
-      "refs": ["docs/REQUIREMENTS.md#s22--reminder", "docs/architecture/03-context.md"],
+      "refs": ["docs/REQUIREMENTS.md#s22--reminder", "docs/architecture/02-context.md"],
       "scope": "sendEmail() through the email provider, routed to the stub when APP_ENV=preview, with an email log table. The provider account and domain are owner actions. Covers AC-2.4.",
       "ui": false,
       "dependsOn": []

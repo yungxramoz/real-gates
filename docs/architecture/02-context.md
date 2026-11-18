@@ -1,4 +1,4 @@
-# 3 · Context and scope
+# 2 · Context and scope
 
 <!-- Update in the same PR as a new integration. One box per external system, one arrow per
      direction of data. -->

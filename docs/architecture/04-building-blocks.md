@@ -1,4 +1,4 @@
-# 5 · Building blocks
+# 4 · Building blocks
 
 <!-- The module map. Start from the folder tree (`git ls-files src | cut -d/ -f1-3 | sort -u`),
      then check it by hand. A new module or route group updates this page in the same PR. -->

@@ -1,4 +1,4 @@
-# 4 · Solution strategy
+# 3 · Solution strategy
 
 <!-- Written by /setup-loop from the preset, then changed only through a decision. -->
 

@@ -1,4 +1,4 @@
-# 8 · Crosscutting concepts
+# 5 · Crosscutting concepts
 
 <!-- One short section per rule that applies across modules. A changed rule updates this page in
      the same PR. Hard rules live in CLAUDE.md; this page says how the code follows them. -->
