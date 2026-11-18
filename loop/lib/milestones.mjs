@@ -36,6 +36,7 @@ async function acceptSession(L, m, round, sha, mode) {
     BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
     MIN_SCORE: L.cfg.review.minDesignScore,
     BASE_SHA_SHORT: sha.slice(0, 7),
+    WORK: L.work.path(m, 'accept'),
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status} · refs: ${(i.refs || []).join('; ')}`).join('\n'),
     PREVIOUS: prev?.failures?.length ? `## The previous round failed on these — verify each is fixed\n\n\`\`\`json\n${JSON.stringify(prev.failures, null, 2)}\n\`\`\`` : '',
   }, { variant: mode }));
@@ -60,6 +61,8 @@ async function packetSession(L, m, mode) {
     DEV_URL: L.cfg.deploy.devUrl || '(none)',
     BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || '(none)',
     BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
+    WORK: L.work.path(m, 'packet'),
+    ACCEPT_WORK: L.work.path(m, 'accept'), // what acceptance installed is still there for the packet
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status}${L.store.st(i.id).prs?.length ? ` · PR ${L.store.st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}`).join('\n'),
     OWNER_ACTIONS: L.ownerActionsTail(60),
     RETRO: retro && retro !== 'none' ? `The loop's retro for this milestone is in \`.loop/retros/${retro}.md\`: what went well, what went wrong, the action items and the impediments that wait for the owner (\`.loop/IMPEDIMENTS.md\`).` : 'No retro was held for this milestone.',
@@ -116,11 +119,22 @@ export async function packMilestones(L, only) {
       a.rounds++;
       L.store.save();
       const res = await acceptSession(L, m, a.rounds, sha, mode);
-      if (L.stopRequested() || L.budgetExceeded()) return {};
+      // A stop or a spent budget ends the run after this step, not instead of its result: a round
+      // that gave a verdict is recorded first. Dropping it would leave the round counted and
+      // nothing known, and the next run would pack the milestone as "not re-accepted". Only a
+      // session that was cut short gives its round back.
+      const ending = L.stopRequested() || L.budgetExceeded();
+      if (ending && !res) {
+        a.rounds--;
+        L.store.save();
+        return {};
+      }
       if (res?.pass) {
         a.passed = true;
         L.progress(`${m} · acceptance round ${a.rounds} ${where}: **pass**`);
         L.event('acceptance.round', { milestone: m, round: a.rounds, mode, pass: true, failures: 0 });
+        L.store.save();
+        if (ending) return {};
       } else {
         const failures = (res?.failures || []).slice(0, 8);
         if (!res) failures.push({ title: `Acceptance run for ${m} produced no verdict`, scope: mode === 'site' ? 'Re-run the milestone acceptance; check the dev deployment and the health endpoint first.' : 'Re-run the milestone acceptance; check that the merged base installs and starts first.' });
@@ -158,6 +172,7 @@ export async function packMilestones(L, only) {
     L.event('milestone.packed', { milestone: m, unverified: !!a.unverified });
     L.store.save();
     await packetSession(L, m, mode);
+    L.work.done(m, 'accept', 'packet'); // the packet is written: the installed package and the scratch folders go
   }
   return {};
 }

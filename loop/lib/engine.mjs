@@ -128,6 +128,7 @@ async function buildSession(L, item, s, fix) {
     PR_INSTRUCTION: fix ? `PR #${s.pr} already exists: push to it, do not open another.` : '',
     RETRO_ID: item.retro || '',
     MAX_LESSONS: L.cfg.retro?.maxLessons ?? 20,
+    WORK: L.work.path(item.id, 'build'),
   };
   vars.LEARN = item.kind === 'learn' ? (item.retro ? L.render('learn.md', vars) : LEGACY_LEARN) : item.kind === 'fix' && /^ACC-/.test(item.id) ? '## This is an acceptance fix\n\nFix what the evaluator found **and** the cause: add the test, check, lesson or project guard rule that would have caught it before acceptance (see `loop/prompts/learn.md` for the rungs).' : '';
   fs.writeFileSync(L.paths.task, L.render('build.md', vars));
@@ -166,6 +167,7 @@ async function reviewSession(L, item, s, headSha) {
     MIN_SCORE: L.cfg.review.minDesignScore,
     CATEGORIES: REVIEW_CATEGORIES.join(', '),
     REVIEW_ROUND: s.reviewRounds + 1,
+    WORK: L.work.path(item.id, 'review'),
     ITEM_JSON: JSON.stringify(item, null, 2),
     // The reviewer is not briefed by the builder: no handoff notes. It only learns what it needs to
     // judge scope, marked as the builder's claim.
@@ -312,6 +314,8 @@ export async function runItem(L, item) {
     L.event('item.finished', { item: item.id, milestone: item.milestone, status, why: why || null, buildRounds: s.rounds });
     noteItemEnded(L.store.S, item, status); // the stretch the open action items are measured over
     save();
+    // An item that ended any other way keeps its working folders, for the owner to look at.
+    if (status === 'done') L.work.done(item.id, 'build', 'review');
     return status;
   };
   const outsideMergeAsk = (it, pr) =>

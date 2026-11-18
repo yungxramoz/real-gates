@@ -1,6 +1,6 @@
 ---
 name: sync-arc42
-description: Syncs the lean arc42 architecture docs in docs/architecture/ with the code at the end of a milestone. Reads the diff since the last milestone, fixes drift in sections 1, 3, 4, 5, 8, 9 and 11, adds a missing Mermaid context or building-block diagram, links decisions in DECISIONS.md instead of copying them, and opens a docs pull request that goes through the normal gates and is never merged by this skill. Use after a milestone packet, when the owner says the architecture docs are stale, or asks for arc42, a context diagram, a building-block view or an architecture overview.
+description: Syncs the lean arc42 architecture docs in docs/architecture/ with the code at the end of a milestone. Reads the diff since the last milestone, fixes drift in its seven pages (goals, context, strategy, building blocks, crosscutting concepts, decisions, risks), adds a missing Mermaid context or building-block diagram, links decisions in DECISIONS.md instead of copying them, and opens a docs pull request that goes through the normal gates and is never merged by this skill. Use after a milestone packet, when the owner says the architecture docs are stale, or asks for arc42, a context diagram, a building-block view or an architecture overview.
 disable-model-invocation: true
 argument-hint: "[milestone]"
 allowed-tools: Bash(git log *) Bash(git diff *) Bash(git tag --list*) Bash(git ls-files*) Bash(git describe*)
@@ -9,19 +9,22 @@ allowed-tools: Bash(git log *) Bash(git diff *) Bash(git tag --list*) Bash(git l
 # Sync arc42
 
 Inside the loop, each PR that changes a building block, an integration or a crosscutting rule
-updates its section in the same PR, and the reviewer blocks it otherwise. This skill catches what
-slipped through, once per milestone.
+updates its page in the same PR. `scripts/arch-check.mjs` fails the PR when a building block in
+the code is not on the page or a path, decision ID or link leads nowhere, and the reviewer blocks
+a page that says something untrue. This skill catches what neither sees: prose that drifted over
+a milestone.
 
 ## Rules
 
-1. **Lean.** Only sections 1, 3, 4, 5, 8, 9 and 11, one file each in `docs/architecture/`. No new
-   sections; no regenerated prose where nothing changed.
-2. **Link, never copy.** Section 1 links `docs/BRIEF.md`; section 9 links decision IDs in
-   `docs/DECISIONS.md`. Copied text drifts.
+1. **Lean.** Only the seven pages in `docs/architecture/`: goals, context, strategy, building
+   blocks, crosscutting concepts, decisions, risks. No new pages; no regenerated prose where
+   nothing changed.
+2. **Link, never copy.** The goals page links `docs/BRIEF.md`; the decisions page links decision
+   IDs in `docs/DECISIONS.md`. Copied text drifts.
 3. **Code is the truth.** A doc that disagrees with the code is fixed to match the code. If the code
-   looks wrong, list it under section 11 and tell the owner; do not change code here.
-4. **Diagrams are Mermaid** (`flowchart`), so GitHub renders them. One context diagram in section 3,
-   one building-block diagram in section 5.
+   looks wrong, list it on the risks page and tell the owner; do not change code here.
+4. **Diagrams are Mermaid** (`flowchart`), so GitHub renders them. One context diagram on the
+   context page, one building-block diagram on the building-blocks page.
 5. **Through the gates.** Changes go on a branch and into a PR to the base branch. Ask before
    `git push` and `gh pr create`. Never merge: no `gh pr merge`, no push to the base branch.
 6. Only `docs/architecture/` changes. One question at a time when something is unclear, with a
@@ -33,7 +36,7 @@ slipped through, once per milestone.
 arc42 progress:
 - [ ] 1. Find the range since the last milestone
 - [ ] 2. Read what changed
-- [ ] 3. Compare each section with the code; list the drift
+- [ ] 3. Compare each page with the code; list the drift
 - [ ] 4. Fix the drift; add missing diagrams
 - [ ] 5. Check links, diagrams and the no-copy rule
 - [ ] 6. Branch, commit, PR (after a yes)
@@ -65,29 +68,37 @@ packet's follow-ups, and every current file in `docs/architecture/`.
 
 ### 3. Compare
 
-Per section, what is its source of truth and what counts as drift:
+Per page, what is its source of truth and what counts as drift:
 [reference/sections.md](reference/sections.md). List the drift as a table before editing:
 
-| Section | Drift | Evidence (file or commit) | Fix |
+| Page | Drift | Evidence (file or commit) | Fix |
 |---|---|---|---|
 
 Nothing drifted → say so, change nothing, stop.
 
 ### 4. Fix
 
-Edit only the sections with drift. Keep each file's headings. Use the diagram templates in
+Edit only the pages with drift. Keep each file's name and headings. Use the diagram templates in
 [reference/sections.md](reference/sections.md#diagrams) when a diagram is missing or a node or edge
 changed.
 
 ### 5. Check
 
-- Every relative link in `docs/architecture/` resolves (open each target).
-- Every decision ID in section 9 exists in `docs/DECISIONS.md`, and section 9 contains no copied
-  decision text.
-- Every Mermaid block starts with `flowchart`, node IDs are unique, and each node in section 5
-  matches a real folder (`git ls-files <folder>` is not empty).
+Run the check the loop runs:
 
-Fix and recheck until all three hold.
+```bash
+node scripts/arch-check.mjs
+```
+
+It covers links, decision IDs, the paths the building-blocks page names, and that every building
+block in the code is on that page. A project made from a template version without the script:
+check those four by hand. Then, by hand in any case:
+
+- The decisions page contains no copied decision text.
+- Every Mermaid block starts with `flowchart`, node IDs are unique, and each node of the
+  building-block diagram matches a real folder (`git ls-files <folder>` is not empty).
+
+Fix and recheck until the script passes and both hold.
 
 ### 6. Open the PR
 

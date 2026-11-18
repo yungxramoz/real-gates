@@ -67,6 +67,12 @@ installed into an empty folder, and used from there.
 
 ## Product rules
 
+<!-- shape-project: the few product rules that are easy to miss, one bullet each. For example:
+- Every text a user reads comes from one place, never scattered through the commands.
+- A command never asks a question when its input is not a terminal.
+- Nothing is written outside the folder the user named.
+-->
+
 ## How the autonomous loop works
 
 The backlog is built by a sequential loop (`npm run loop`): one item per fresh headless session.

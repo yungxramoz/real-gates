@@ -114,8 +114,8 @@ from outside the repo, auto memory).
 | `--max-iterations <N>` | Stop after N sessions |
 | `--max-hours <H>` | Stop after H hours |
 | `--status` | Print the state of every item, held items marked **HELD** |
-| `--reset <ID>` | Set an item back to todo |
-| `--skip <ID>` | Mark an item skipped |
+| `--reset <ID>` | Set an item back to todo, and remove its [working folders](#working-folders) |
+| `--skip <ID>` | Mark an item skipped, and remove its working folders |
 | `--release <ID>` | Release a held item you fixed by hand (see [Holds](#holds)) |
 
 It resumes where it stopped: all state is in `.loop/state.json`. Run it again after a crash or a
@@ -139,6 +139,32 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | Final summary | `.loop/REPORT.md` |
 | Stop cleanly (finishes the current step) | create `.loop/STOP` (any content); delete it to run again |
 | Phone notifications | set `notify.ntfyTopic`, subscribe in the ntfy app |
+
+### Working folders
+
+A session may write freely under `.loop/`, and a read-only step nowhere else. So every session
+gets a folder of its own there, named in its prompt, for what it writes for itself: notes, a PR
+body, probe scripts, sample data, a temporary worktree, an installed package. The runner creates
+the folder before the session and removes it when what the step worked on is finished:
+
+| Folder | Whose | Empty at the start of | Removed |
+| --- | --- | --- | --- |
+| `.loop/work/<item>/build/` | the build sessions of an item | the first one only: a fix round finds what the round before left | when the item is done |
+| `.loop/work/<item>/review/` | its review sessions | every review session | when the item is done |
+| `.loop/work/<milestone>/accept/` | acceptance: what it installs, its scratch folders | every acceptance round | when the milestone is packed |
+| `.loop/work/<milestone>/packet/` | the packet session | the session | when the milestone is packed |
+| `.loop/work/<retro>/retro/` | the retro session | the session | when the retro is over |
+
+An item that ends blocked, failed or `needs_human` keeps its folders, so you can see what its
+sessions were doing; `--reset <ID>` and `--skip <ID>` remove them. At every start the runner
+also removes what a killed run left of items and milestones that are finished.
+
+Everything else under `.loop/` is kept for the whole run: the runner's own files (the table
+above), and the evidence a prompt asks for by name, `.loop/shots/<item>/` and
+`.loop/reviews/<milestone>/`. The folder is a convention the prompts set, not a gate: the guard
+does not refuse a file a session writes elsewhere under `.loop/`, and the runner never deletes
+a file it did not name itself. A project that was already running before its template had
+working folders keeps what its sessions left there; delete that by hand while no loop runs.
 
 ### The event file
 
@@ -204,10 +230,10 @@ under `.loop/`. A redirect (`>`, `>>`, `2>`, `&>`) or a `tee` passes when its ta
 | The line | Passes? | Why |
 | --- | --- | --- |
 | `pnpm test >> .loop/reviews/t.txt 2>&1` | yes | the target is spelled out under `.loop/` |
-| `cd .loop/review-wt && pnpm test > out.txt` | yes | `&&` makes it certain where `out.txt` lands |
-| `pnpm test > out.txt`, in a session whose folder is `.loop/review-wt` | yes | the guard knows the session's folder |
+| `cd .loop/work/E1-1/review/wt && pnpm test > out.txt` | yes | `&&` makes it certain where `out.txt` lands |
+| `pnpm test > out.txt`, in a session whose folder is `.loop/work/E1-1/review/wt` | yes | the guard knows the session's folder |
 | `grep '>>' docs/a.md`, `node -e "[1].map(x => x)"` | yes | a `>` inside quotes is text |
-| `cd .loop/review-wt; pnpm test > out.txt` | no | after `;` or a new line the `cd` may have failed |
+| `cd .loop/work/E1-1/review/wt; pnpm test > out.txt` | no | after `;` or a new line the `cd` may have failed |
 | `pnpm test > $OUT/t.txt`, `echo x > .loop/../src/a` | no | the target cannot be read, or does not stay under `.loop/` |
 | `echo 'echo x > src/a' \| bash` | no | text that a shell on the line runs is not text |
 
@@ -255,6 +281,33 @@ that **ran and passed**. A test inside a skipped group, a conditional skip or a 
 never collected has a title and no passing case, so it does not count. A missing report fails the
 check. Any test runner that writes JUnit can feed it.
 
+### The architecture pages
+
+`docs/architecture/` is kept true by the PR that changes the code, with nobody running a skill:
+
+- The build prompt says which page a change touches: the building-blocks page for a new module,
+  the context diagram for a new external service, the risks page for a gap left behind.
+- `node scripts/arch-check.mjs` runs in the local gate and in CI. A failure goes to a fix session
+  like any other red check.
+- The reviewer judges what a script cannot: whether what a page says is right.
+
+| The check fails when | So that |
+| --- | --- |
+| a building block in the code is not named on the building-blocks page | a new module cannot merge undocumented |
+| the page names a path that is not in the repository | a removed or renamed module leaves the page too |
+| a page names a decision ID `docs/DECISIONS.md` does not have | no page cites a decision nobody recorded |
+| a relative link on a page leads to no file | the pages stay readable |
+
+What a building block is comes from `architecture.blocks` in the stack profile: `src/lib/*` is
+every file and folder in `src/lib`, `src/*/` every folder in `src`. A block counts as named when
+the page has its path, or a path inside it, in backticks. Test files, type declarations and
+dotfiles are not blocks. The patterns are in `loop/`, which no loop session can edit, so the loop
+cannot shrink the check to get past it; to make it finer or coarser for your project, set
+`architecture.blocks` in `loop/loop.config.json`.
+
+`/sync-arc42` stays for you: it reads a whole milestone's diff and fixes prose that drifted,
+which no script sees. The loop does not need it to keep going.
+
 ### Base CI in the background
 
 `baseCiWait: "unless-tree-equal"` (the default): the landed check compares the merge commit's tree
@@ -275,7 +328,8 @@ first, and the steps run once that item is done. If the FIX item does not finish
 
 ### The local gate
 
-`localGate.commands` (the preset: `pnpm check`) are run by the runner on the pushed branch head
+`localGate.commands` (the preset: `pnpm check`, then `node scripts/arch-check.mjs`) are run by
+the runner on the pushed branch head
 after each build session, with the same reduced environment as a session. A failure goes straight
 to a fix session with the output in `.loop/logs/gate-<item>-r<round>.txt` and counts against the
 CI fix rounds. It does not replace CI: CI still decides the merge. Set `commands` to `[]` to

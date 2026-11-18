@@ -105,6 +105,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: npm run ac-trace -- --results artifacts/junit
 
+      # The architecture pages follow the code: every building block in the tree is named on the
+      # building-blocks page, and every path, decision ID and link on the pages leads somewhere.
+      # Called by path, not through a package script, so a project that takes a later template
+      # version gets the check without touching its own package.json.
+      - name: arch-check
+        id: arch_check
+        if: ${{ !cancelled() }}
+        run: node scripts/arch-check.mjs
+
       # The project rule table may only grow. On a PR it is compared with the base branch; on a
       # push with the commit the push replaced.
       - name: check:rules
@@ -185,6 +194,7 @@ jobs:
             check=${{ steps.check.outcome }}
             e2e=${{ steps.e2e.outcome }}
             ac_trace=${{ steps.ac_trace.outcome }}
+            arch_check=${{ steps.arch_check.outcome }}
             check_rules=${{ steps.check_rules.outcome }}
             check_skills=${{ steps.check_skills.outcome }}
             sanitize=${{ steps.sanitize.outcome }}

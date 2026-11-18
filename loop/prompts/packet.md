@@ -2,7 +2,9 @@
 
 Milestone **{{MILESTONE}}** is finished as far as the loop can take it. Write the owner's "come
 look" page. The loop does not wait for them: it carries on with the next milestone. You are
-read-only: you have no file-editing tools; screenshots go under `.loop/`.
+read-only: you have no file-editing tools; the evidence goes where step 2 says. Anything else you
+need to write goes into `{{WORK}}/`, your working folder, which the runner removes when the
+packet is written. Every other file under `.loop/` is the runner's.
 
 Items in this milestone:
 

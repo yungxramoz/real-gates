@@ -1,4 +1,4 @@
-# 9 · Decisions
+# 6 · Decisions
 
 All decisions live in [docs/DECISIONS.md](../DECISIONS.md). This page only links the ones that
 shape the architecture, so nothing is copied and nothing drifts.

@@ -114,6 +114,13 @@ test('an unknown guard pack and an unusable ratchet are named problems', () => {
   assert.ok(p.some((x) => /gates\.ratchets: "cov" is not usable/.test(x)), p.join('|'));
 });
 
+test('building-block patterns must be paths with a * for one name', () => {
+  const problems = (blocks) => configProblems(deepMerge(DEFAULTS, { architecture: { blocks } })).filter((p) => p.startsWith('architecture.blocks'));
+  assert.deepEqual(loadConfig(tmpRepo({})).architecture, { blocks: [] }, 'no profile: nothing is checked against the tree');
+  for (const ok of [[], ['src/lib/*'], ['src/*/', 'src/app/(admin)/*', 'bin/*']]) assert.deepEqual(problems(ok), [], JSON.stringify(ok));
+  for (const bad of [['src/lib'], ['src/**'], ['../other/*'], ['/abs/*'], ['src/./*'], ['src\\lib\\*'], [7], 'src/*']) assert.equal(problems(bad).length, 1, JSON.stringify(bad));
+});
+
 test('a pack asks for what it needs: the database pack wants the allowed project', () => {
   const noRef = deepMerge(PRESET, { ...runnable, guard: { allowedDbProject: '' } });
   assert.ok(configProblems(noRef).some((x) => /allowedDbProject/.test(x)));

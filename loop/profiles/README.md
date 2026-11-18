@@ -25,6 +25,7 @@ URLs). Objects merge key by key; lists and single values replace; `null` removes
 | Key | What the core does with it |
 | --- | --- |
 | `localGate.commands` | Shell commands the runner runs on the pushed branch head before it waits for CI. A failure goes to a fix session |
+| `architecture.blocks` | Path patterns that say what a building block of the code is (`src/lib/*`: every file and folder there; a slash at the end: folders only). `scripts/arch-check.mjs` fails a PR when one is not named on the building-blocks page of `docs/architecture/` |
 | `gates.files` | Globs a PR may not change at all, because CI runs through them: test, lint and type configs, the repo's own scripts |
 | `gates.frozenJsonKeys` | `[{ file, key }]`: one key of a JSON file that may not change (the commands CI runs), while the rest of the file may |
 | `gates.ratchets` | Numbers in a config file that may only go up. See below |
@@ -119,6 +120,15 @@ A profile with several work types can word a step per type: `review-drive.<type>
 `review-rubric.<type>.md` win over the plain file for an item of that type, and
 `accept-drive.<site|local>.md`, `accept-score.<…>.md` and `packet-shots.<…>.md` for that way of
 accepting.
+
+**Where a fragment puts files.** What a session writes for itself (a temporary worktree, an
+installed package, scratch folders) goes into `{{WORK}}/`, the session's working folder: the
+runner creates it, empties it where a step starts over and removes it when the item or the
+milestone is finished ([Working folders](../README.md#working-folders)). The packet's fragment
+also has `{{ACCEPT_WORK}}`, the folder the acceptance step of the same milestone used. Evidence
+that has to outlast the session goes where it always went: `.loop/shots/{{ITEM_ID}}/` and
+`.loop/reviews/{{MILESTONE}}/`. A fragment that names its own folder under `.loop/` still works,
+but nothing removes that folder.
 
 ## A new stack
 

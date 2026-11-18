@@ -52,6 +52,10 @@ export const DEFAULTS = Object.freeze({
   // told to prove its work locally; this checks that it did. Empty = no local gate.
   localGate: { commands: [], timeoutMin: 20 },
   contractsDir: 'docs/contracts', // <dir>/<item id>.md, written by the build session
+  // What counts as a building block of the code, for scripts/arch-check.mjs: path patterns from
+  // the repository root, `*` for one name, a slash at the end for folders only. Every block must
+  // be named on the building-blocks page of docs/architecture/. Empty: that half of the check is off.
+  architecture: { blocks: [] },
 
   notify: { adapter: 'ntfy', ntfyTopic: '' },
   gitAuthor: { name: '', email: '' },
@@ -197,6 +201,10 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!['always', 'unless-tree-equal'].includes(cfg.baseCiWait)) p.push('baseCiWait must be "always" or "unless-tree-equal"');
   if (!['apply', 'wait'].includes(cfg.postMergeOnRedBase)) p.push('postMergeOnRedBase must be "apply" or "wait"');
   if (!Array.isArray(cfg.sessionEnvDeny)) p.push('sessionEnvDeny must be a list of environment variable names');
+  const name = '[\\w.@()[\\]+~-]+';
+  const block = new RegExp(`^(?:${name}|\\*)(?:/(?:${name}|\\*))*/?$`);
+  const usable = (b) => typeof b === 'string' && block.test(b) && b.includes('*') && !b.split('/').some((s) => s === '.' || s === '..');
+  if (!Array.isArray(cfg.architecture?.blocks) || !cfg.architecture.blocks.every(usable)) p.push('architecture.blocks must be a list of path patterns from the repository root, each with a * for one name ("src/lib/*", or "src/*/" for folders only)');
   return p;
 }
 

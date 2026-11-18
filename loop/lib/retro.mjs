@@ -144,11 +144,13 @@ export async function holdRetro(L, { kind, milestone }) {
     MAX_ACTIONS: L.cfg.retro?.maxActions ?? 3,
     CHECK_AFTER: L.cfg.retro?.checkAfterItems ?? 5,
     MAX_LESSONS: L.cfg.retro?.maxLessons ?? 20,
+    WORK: L.work.path(id, 'retro'),
   }));
   L.setStatus('retro', { id, title: kind === 'milestone' ? `retro after ${milestone}` : 'retro called early' });
   const cond = `The retro described in .loop/current-task.md is complete: you checked every open action item against the numbers, and the structured result names what went well, what went wrong with its cause, the action items and the impediments.`;
   const run = await runClaude(L.session, { prompt: goalPrompt(L, cond), phase: 'retro', item: { id }, timeoutMin: L.cfg.timeouts.retroMin ?? 45, model: L.cfg.reviewModel || L.cfg.model, schema: RETRO_SCHEMA });
   L.checkIsolation(run);
+  L.work.done(id, 'retro'); // its notes were for the session; the minutes are what stays
   if (run.gaveUp || !run.structured) return null;
 
   const res = applyRetro(S, run.structured, { id, kind, milestone, cfg: L.cfg, covers: sheet.covers });
