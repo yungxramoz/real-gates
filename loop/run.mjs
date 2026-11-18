@@ -26,6 +26,7 @@ import { holdRetro, noteHarness } from './lib/retro.mjs';
 import { workTypeProblems } from './lib/worktypes.mjs';
 import { adapterProblems, forgeAdapter, notifyAdapter } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
+import { createWork } from './lib/workdir.mjs';
 
 // ------------------------------------------------------------------------------------------ setup
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -74,6 +75,8 @@ const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19) + 'Z
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
 const store = createState(paths.state, backlog, { dry: args.dry });
 const proc = createProc({ root: ROOT, env: () => childEnv('script') });
+// One folder per session step under .loop/work/, removed when its item, milestone or retro is finished.
+const work = createWork({ root: ROOT, run: RUN, git: (...a) => proc.gitTry(...a), log: (...a) => log(...a) });
 const runStartedAt = Date.now();
 let runSessions = 0;
 let runCostUsd = 0;
@@ -218,6 +221,7 @@ const L = {
   paths,
   proc,
   store,
+  work,
   args,
   log,
   progress,
@@ -241,8 +245,9 @@ const L = {
 // warning; these checks hold whatever spelling a command used.
 let harness = null;
 let warnedTree = false;
-function beforeSession() {
+function beforeSession(phase, item) {
   fs.mkdirSync(RUN, { recursive: true });
+  work.prepare(item?.id, phase);
   const snap = snapshotGuard(ROOT, cfg, proc);
   if (snap.fromTree && !warnedTree) {
     warnedTree = true;
@@ -453,11 +458,13 @@ async function main() {
   if (args.reset) {
     delete store.S.items[args.reset];
     store.save();
+    work.done(args.reset, 'build', 'review');
     return log(`reset ${args.reset} to todo`);
   }
   if (args.skip) {
     store.st(args.skip).status = 'skipped';
     store.save();
+    work.done(args.skip, 'build', 'review');
     return log(`marked ${args.skip} as skipped`);
   }
   if (args.release) {
@@ -475,6 +482,8 @@ async function main() {
     return;
   }
   acquireLock();
+  // what a killed run left in .loop/work/ of items and milestones that are finished
+  work.sweep({ items: store.allItems().filter((i) => ['done', 'skipped'].includes(store.st(i.id).status)).map((i) => i.id), milestones: store.S.packed });
   recordHeads();
   noteHarness(L);
   await smokeTest();

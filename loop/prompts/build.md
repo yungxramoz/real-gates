@@ -27,6 +27,14 @@ Session {{ITERATION}} · item **{{ITEM_ID}}** · mode **{{MODE}}** · build roun
 {{PROGRESS_TAIL}}
 ```
 
+## Your working folder
+
+`{{WORK}}/` is yours for this item. The runner created it and removes it when the item is done.
+Everything you write for yourself goes there: notes, the PR body file, patches, probe scripts,
+sample data, a temporary worktree or install. Elsewhere under `.loop/`, write only what this file
+names: `.loop/result.json` and the evidence step 6 asks for. Every other file there is the
+runner's.
+
 ## Procedure
 
 1. **Orient.** `git status`, `git log --oneline -15`. Read `CLAUDE.md` in full and the docs it lists

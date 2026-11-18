@@ -36,6 +36,7 @@ async function acceptSession(L, m, round, sha, mode) {
     BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
     MIN_SCORE: L.cfg.review.minDesignScore,
     BASE_SHA_SHORT: sha.slice(0, 7),
+    WORK: L.work.path(m, 'accept'),
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status} · refs: ${(i.refs || []).join('; ')}`).join('\n'),
     PREVIOUS: prev?.failures?.length ? `## The previous round failed on these — verify each is fixed\n\n\`\`\`json\n${JSON.stringify(prev.failures, null, 2)}\n\`\`\`` : '',
   }, { variant: mode }));
@@ -60,6 +61,8 @@ async function packetSession(L, m, mode) {
     DEV_URL: L.cfg.deploy.devUrl || '(none)',
     BYPASS_ENV: L.cfg.deploy.bypassSecretEnv || '(none)',
     BYPASS_HEADER: L.cfg.deploy.bypassHeader || '(none)',
+    WORK: L.work.path(m, 'packet'),
+    ACCEPT_WORK: L.work.path(m, 'accept'), // what acceptance installed is still there for the packet
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status}${L.store.st(i.id).prs?.length ? ` · PR ${L.store.st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}`).join('\n'),
     OWNER_ACTIONS: L.ownerActionsTail(60),
     RETRO: retro && retro !== 'none' ? `The loop's retro for this milestone is in \`.loop/retros/${retro}.md\`: what went well, what went wrong, the action items and the impediments that wait for the owner (\`.loop/IMPEDIMENTS.md\`).` : 'No retro was held for this milestone.',
@@ -158,6 +161,7 @@ export async function packMilestones(L, only) {
     L.event('milestone.packed', { milestone: m, unverified: !!a.unverified });
     L.store.save();
     await packetSession(L, m, mode);
+    L.work.done(m, 'accept', 'packet'); // the packet is written: the installed package and the scratch folders go
   }
   return {};
 }

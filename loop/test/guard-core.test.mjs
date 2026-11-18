@@ -83,6 +83,13 @@ describe('shell rules', () => {
       blocked(sh('gh pr edit 3 --title x', { phase }), 'core:read-only');
       allowed(sh('gh pr review 3 --comment --body-file .loop/review-body.md', { phase }));
       allowed(sh('git worktree add .loop/review-wt origin/feat/x', { phase }));
+      // the session's working folder (.loop/work/<id>/<step>/), with a temporary worktree in it
+      allowed(sh('git worktree add .loop/work/T1/review/wt origin/feat/x', { phase }));
+      allowed(sh('cd .loop/work/T1/review/wt && pnpm test > out.txt 2>&1', { phase }));
+      allowed(sh('pnpm test > .loop/work/T1/review/out.txt', { phase }));
+      allowed(sh('git worktree remove --force .loop/work/T1/review/wt', { phase }));
+      allowed(sh('rm -rf .loop/work/T1/review/wt', { phase }));
+      blocked(sh('cd .loop/work/T1/review/wt; pnpm test > out.txt', { phase }), 'core:read-only');
     }
   });
 });

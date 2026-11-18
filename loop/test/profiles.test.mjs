@@ -114,10 +114,20 @@ describe('guard pack: npm', () => {
   });
   test('global installs and npm link are refused, a prefix install under .loop/ is not', () => {
     for (const c of ['npm install -g app', 'npm i --global ./app-0.1.0.tgz', 'npm link', 'npm link && app --help', 'yarn global add app', 'pnpm add -g app']) blocked(sh(c), 'npm:global');
-    for (const c of ['npm ci', 'npm install', 'npm install --save-dev c8', 'npm pack --pack-destination .loop/accept-M1', 'npm install --prefix .loop/accept-M1/app .loop/accept-M1/app-0.1.0.tgz', 'npm run check', 'npm run test:e2e']) allowed(sh(c));
+    for (const c of ['npm ci', 'npm install', 'npm install --save-dev c8', 'npm pack --pack-destination .loop/work/M1/accept', 'npm install --prefix .loop/work/M1/accept/app .loop/work/M1/accept/app-0.1.0.tgz', 'npm run check', 'npm run test:e2e']) allowed(sh(c));
   });
   test('the acceptance step can pack and install under .loop/ although it is read-only', () => {
-    for (const c of ['git worktree add .loop/accept-wt origin/develop', 'npm pack --pack-destination ../accept-M1', 'npm install --prefix .loop/accept-M1/app .loop/accept-M1/app-0.1.0.tgz', '.loop/accept-M1/app/node_modules/.bin/app --help > .loop/reviews/M1/accept-r1/help.txt', 'git worktree remove --force .loop/accept-wt']) allowed(sh(c, 'accept'));
+    for (const c of [
+      'git worktree add .loop/work/M1/accept/wt origin/develop',
+      'cd .loop/work/M1/accept/wt && npm ci && npm pack --pack-destination ..',
+      'npm install --prefix .loop/work/M1/accept/app .loop/work/M1/accept/app-0.1.0.tgz',
+      '.loop/work/M1/accept/app/node_modules/.bin/app --help > .loop/reviews/M1/accept-r1/help.txt',
+      'mkdir -p .loop/work/M1/accept/empty && cd .loop/work/M1/accept/empty && ../app/node_modules/.bin/app greet > out.txt 2> err.txt',
+      'git worktree remove --force .loop/work/M1/accept/wt',
+    ]) allowed(sh(c, 'accept'));
+    // the packet works from what acceptance installed, and the reviewer in a worktree of its own
+    allowed(sh('.loop/work/M1/accept/app/node_modules/.bin/app --help > .loop/reviews/M1/help.txt 2>&1', 'packet'));
+    for (const c of ['git worktree add .loop/work/C1/review/wt origin/feat/c1', 'node .loop/work/C1/review/wt/bin/cli.mjs --help > .loop/shots/C1-review/help.txt', 'git worktree remove --force .loop/work/C1/review/wt']) allowed(sh(c, 'review'));
     blocked(sh('npm publish', 'accept'), 'npm:publish');
   });
   test('the web profile does not carry the npm rules, and the CLI profile not the database ones', () => {
@@ -147,10 +157,10 @@ describe('the CLI profile through the runner', () => {
       smokeStep(),
       build,
       approve(),
-      { structured: { pass: false, failures: [{ title: 'greet --help shows no example', scope: 'Add one example to the help of greet; fixed = the example runs as written.', evidence: '.loop/reviews/M1/accept-r1/greet-help.txt' }], summary: 'one failure' } },
+      { writes: { '.loop/work/M1/accept/app/round-1.txt': 'x' }, structured: { pass: false, failures: [{ title: 'greet --help shows no example', scope: 'Add one example to the help of greet; fixed = the example runs as written.', evidence: '.loop/reviews/M1/accept-r1/greet-help.txt' }], summary: 'one failure' } },
       fixBuild,
       approve(),
-      { structured: { pass: true, failures: [], summary: 'good' } },
+      { writes: { '.loop/work/M1/accept/app/round-2.txt': 'x' }, structured: { pass: true, failures: [], summary: 'good' } },
       { structured: { markdown: '# M1\n\nTry `app greet`.\n', screenshots: [] } },
     );
     const r = await sb.run();
@@ -173,8 +183,18 @@ describe('the CLI profile through the runner', () => {
     assert.match(reviewTask, /under\s+exactly these keys: `help_and_errors`, `ergonomics`, `output`, `robustness`/);
     assert.match(reviewTask, /calibrated against `docs\/CLI-CONVENTIONS\.md`/);
     assert.match(acceptTask, /Nothing is deployed for this project: you test the merged `develop` itself/);
-    assert.match(acceptTask, /npm pack --pack-destination \.\.\/accept-M1/);
+    assert.match(acceptTask, /git worktree add \.loop\/work\/M1\/accept\/wt origin\/develop/);
+    assert.match(acceptTask, /npm install --prefix \.loop\/work\/M1\/accept\/app <tarball>/);
     assert.match(packetTask, /save a transcript of `--help`/);
+    assert.match(packetTask, /the installed package the acceptance step\s+left in `\.loop\/work\/M1\/accept\/app\/`/);
+    assert.match(reviewTask, /git worktree add \.loop\/work\/C1\/review\/wt origin\//);
+    // every acceptance round installs into an empty folder; the packet still finds the last install,
+    // and once the packet is written the milestone's folders are gone
+    const [, , , accept1, , , accept2, packet] = calls;
+    assert.deepEqual(accept1.work, { 'M1/accept': [] });
+    assert.deepEqual(accept2.work, { 'M1/accept': [] });
+    assert.deepEqual(packet.work, { 'M1/accept': ['app'], 'M1/packet': [] });
+    assert.deepEqual(fs.readdirSync(path.join(sb.root, '.loop', 'work')), []);
     for (const task of [buildTask, reviewTask, acceptTask, packetTask]) assert.doesNotMatch(task, /Playwright|pnpm|360 px|Vercel|Supabase|\{\{/i);
 
     // the reviewer was asked for exactly this rubric

@@ -114,8 +114,8 @@ from outside the repo, auto memory).
 | `--max-iterations <N>` | Stop after N sessions |
 | `--max-hours <H>` | Stop after H hours |
 | `--status` | Print the state of every item, held items marked **HELD** |
-| `--reset <ID>` | Set an item back to todo |
-| `--skip <ID>` | Mark an item skipped |
+| `--reset <ID>` | Set an item back to todo, and remove its [working folders](#working-folders) |
+| `--skip <ID>` | Mark an item skipped, and remove its working folders |
 | `--release <ID>` | Release a held item you fixed by hand (see [Holds](#holds)) |
 
 It resumes where it stopped: all state is in `.loop/state.json`. Run it again after a crash or a
@@ -139,6 +139,32 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | Final summary | `.loop/REPORT.md` |
 | Stop cleanly (finishes the current step) | create `.loop/STOP` (any content); delete it to run again |
 | Phone notifications | set `notify.ntfyTopic`, subscribe in the ntfy app |
+
+### Working folders
+
+A session may write freely under `.loop/`, and a read-only step nowhere else. So every session
+gets a folder of its own there, named in its prompt, for what it writes for itself: notes, a PR
+body, probe scripts, sample data, a temporary worktree, an installed package. The runner creates
+the folder before the session and removes it when what the step worked on is finished:
+
+| Folder | Whose | Empty at the start of | Removed |
+| --- | --- | --- | --- |
+| `.loop/work/<item>/build/` | the build sessions of an item | the first one only: a fix round finds what the round before left | when the item is done |
+| `.loop/work/<item>/review/` | its review sessions | every review session | when the item is done |
+| `.loop/work/<milestone>/accept/` | acceptance: what it installs, its scratch folders | every acceptance round | when the milestone is packed |
+| `.loop/work/<milestone>/packet/` | the packet session | the session | when the milestone is packed |
+| `.loop/work/<retro>/retro/` | the retro session | the session | when the retro is over |
+
+An item that ends blocked, failed or `needs_human` keeps its folders, so you can see what its
+sessions were doing; `--reset <ID>` and `--skip <ID>` remove them. At every start the runner
+also removes what a killed run left of items and milestones that are finished.
+
+Everything else under `.loop/` is kept for the whole run: the runner's own files (the table
+above), and the evidence a prompt asks for by name, `.loop/shots/<item>/` and
+`.loop/reviews/<milestone>/`. The folder is a convention the prompts set, not a gate: the guard
+does not refuse a file a session writes elsewhere under `.loop/`, and the runner never deletes
+a file it did not name itself. A project that was already running before its template had
+working folders keeps what its sessions left there; delete that by hand while no loop runs.
 
 ### The event file
 
@@ -204,10 +230,10 @@ under `.loop/`. A redirect (`>`, `>>`, `2>`, `&>`) or a `tee` passes when its ta
 | The line | Passes? | Why |
 | --- | --- | --- |
 | `pnpm test >> .loop/reviews/t.txt 2>&1` | yes | the target is spelled out under `.loop/` |
-| `cd .loop/review-wt && pnpm test > out.txt` | yes | `&&` makes it certain where `out.txt` lands |
-| `pnpm test > out.txt`, in a session whose folder is `.loop/review-wt` | yes | the guard knows the session's folder |
+| `cd .loop/work/E1-1/review/wt && pnpm test > out.txt` | yes | `&&` makes it certain where `out.txt` lands |
+| `pnpm test > out.txt`, in a session whose folder is `.loop/work/E1-1/review/wt` | yes | the guard knows the session's folder |
 | `grep '>>' docs/a.md`, `node -e "[1].map(x => x)"` | yes | a `>` inside quotes is text |
-| `cd .loop/review-wt; pnpm test > out.txt` | no | after `;` or a new line the `cd` may have failed |
+| `cd .loop/work/E1-1/review/wt; pnpm test > out.txt` | no | after `;` or a new line the `cd` may have failed |
 | `pnpm test > $OUT/t.txt`, `echo x > .loop/../src/a` | no | the target cannot be read, or does not stay under `.loop/` |
 | `echo 'echo x > src/a' \| bash` | no | text that a shell on the line runs is not text |
 

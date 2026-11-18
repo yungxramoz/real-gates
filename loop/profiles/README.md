@@ -120,6 +120,15 @@ A profile with several work types can word a step per type: `review-drive.<type>
 `accept-drive.<site|local>.md`, `accept-score.<…>.md` and `packet-shots.<…>.md` for that way of
 accepting.
 
+**Where a fragment puts files.** What a session writes for itself (a temporary worktree, an
+installed package, scratch folders) goes into `{{WORK}}/`, the session's working folder: the
+runner creates it, empties it where a step starts over and removes it when the item or the
+milestone is finished ([Working folders](../README.md#working-folders)). The packet's fragment
+also has `{{ACCEPT_WORK}}`, the folder the acceptance step of the same milestone used. Evidence
+that has to outlast the session goes where it always went: `.loop/shots/{{ITEM_ID}}/` and
+`.loop/reviews/{{MILESTONE}}/`. A fragment that names its own folder under `.loop/` still works,
+but nothing removes that folder.
+
 ## A new stack
 
 1. **The profile**: a folder here with `profile.json` and the seven fragments.

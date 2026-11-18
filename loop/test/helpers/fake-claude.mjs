@@ -6,6 +6,7 @@
 //         mergeBase }, createPr: { title }, result: {...}, writes: { relPath: content }, structured,
 //         text, initExtra }
 // Placeholders: "$OPEN" = the branch of the newest open PR, "$PR" = the PR of the current branch.
+// Every call also records `work`: what is in .loop/work/ as the session starts, { "<id>/<step>": [names] }.
 // `guard` runs the PreToolUse hook command from the --settings file exactly as Claude Code would.
 
 import { spawnSync } from 'node:child_process';
@@ -29,7 +30,16 @@ if (args.includes('--version')) {
   process.exit(0);
 }
 
-fs.appendFileSync(path.join(DIR, 'claude-calls.jsonl'), JSON.stringify({ phase: process.env.LOOP_PHASE, item: process.env.LOOP_ITEM, args, task: fs.existsSync(path.join(cwd, '.loop', 'current-task.md')) ? fs.readFileSync(path.join(cwd, '.loop', 'current-task.md'), 'utf8') : '', sees: Object.fromEntries((process.env.LOOP_FAKE_RECORD_ENV || '').split(',').filter(Boolean).map((k) => [k, k in process.env])) }) + '\n');
+const ls = (d) => {
+  try {
+    return fs.readdirSync(d).sort();
+  } catch {
+    return [];
+  }
+};
+const workBase = path.join(cwd, '.loop', 'work');
+const work = Object.fromEntries(ls(workBase).flatMap((id) => ls(path.join(workBase, id)).map((s) => [`${id}/${s}`, ls(path.join(workBase, id, s))])));
+fs.appendFileSync(path.join(DIR, 'claude-calls.jsonl'), JSON.stringify({ phase: process.env.LOOP_PHASE, item: process.env.LOOP_ITEM, work, args, task: fs.existsSync(path.join(cwd, '.loop', 'current-task.md')) ? fs.readFileSync(path.join(cwd, '.loop', 'current-task.md'), 'utf8') : '', sees: Object.fromEntries((process.env.LOOP_FAKE_RECORD_ENV || '').split(',').filter(Boolean).map((k) => [k, k in process.env])) }) + '\n');
 const qFile = path.join(DIR, 'claude-queue.json');
 const queue = fs.existsSync(qFile) ? JSON.parse(fs.readFileSync(qFile, 'utf8')) : [];
 const step = queue.shift() || { text: 'nothing scripted' };
