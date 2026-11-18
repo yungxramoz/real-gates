@@ -25,6 +25,7 @@ URLs). Objects merge key by key; lists and single values replace; `null` removes
 | Key | What the core does with it |
 | --- | --- |
 | `localGate.commands` | Shell commands the runner runs on the pushed branch head before it waits for CI. A failure goes to a fix session |
+| `architecture.blocks` | Path patterns that say what a building block of the code is (`src/lib/*`: every file and folder there; a slash at the end: folders only). `scripts/arch-check.mjs` fails a PR when one is not named on the building-blocks page of `docs/architecture/` |
 | `gates.files` | Globs a PR may not change at all, because CI runs through them: test, lint and type configs, the repo's own scripts |
 | `gates.frozenJsonKeys` | `[{ file, key }]`: one key of a JSON file that may not change (the commands CI runs), while the rest of the file may |
 | `gates.ratchets` | Numbers in a config file that may only go up. See below |

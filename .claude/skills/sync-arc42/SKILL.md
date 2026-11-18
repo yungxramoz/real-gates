@@ -9,8 +9,10 @@ allowed-tools: Bash(git log *) Bash(git diff *) Bash(git tag --list*) Bash(git l
 # Sync arc42
 
 Inside the loop, each PR that changes a building block, an integration or a crosscutting rule
-updates its page in the same PR, and the reviewer blocks it otherwise. This skill catches what
-slipped through, once per milestone.
+updates its page in the same PR. `scripts/arch-check.mjs` fails the PR when a building block in
+the code is not on the page or a path, decision ID or link leads nowhere, and the reviewer blocks
+a page that says something untrue. This skill catches what neither sees: prose that drifted over
+a milestone.
 
 ## Rules
 
@@ -82,13 +84,21 @@ changed.
 
 ### 5. Check
 
-- Every relative link in `docs/architecture/` resolves (open each target).
-- Every decision ID on the decisions page exists in `docs/DECISIONS.md`, and the page contains no
-  copied decision text.
+Run the check the loop runs:
+
+```bash
+node scripts/arch-check.mjs
+```
+
+It covers links, decision IDs, the paths the building-blocks page names, and that every building
+block in the code is on that page. A project made from a template version without the script:
+check those four by hand. Then, by hand in any case:
+
+- The decisions page contains no copied decision text.
 - Every Mermaid block starts with `flowchart`, node IDs are unique, and each node of the
   building-block diagram matches a real folder (`git ls-files <folder>` is not empty).
 
-Fix and recheck until all three hold.
+Fix and recheck until the script passes and both hold.
 
 ### 6. Open the PR
 

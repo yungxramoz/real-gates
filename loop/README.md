@@ -281,6 +281,33 @@ that **ran and passed**. A test inside a skipped group, a conditional skip or a 
 never collected has a title and no passing case, so it does not count. A missing report fails the
 check. Any test runner that writes JUnit can feed it.
 
+### The architecture pages
+
+`docs/architecture/` is kept true by the PR that changes the code, with nobody running a skill:
+
+- The build prompt says which page a change touches: the building-blocks page for a new module,
+  the context diagram for a new external service, the risks page for a gap left behind.
+- `node scripts/arch-check.mjs` runs in the local gate and in CI. A failure goes to a fix session
+  like any other red check.
+- The reviewer judges what a script cannot: whether what a page says is right.
+
+| The check fails when | So that |
+| --- | --- |
+| a building block in the code is not named on the building-blocks page | a new module cannot merge undocumented |
+| the page names a path that is not in the repository | a removed or renamed module leaves the page too |
+| a page names a decision ID `docs/DECISIONS.md` does not have | no page cites a decision nobody recorded |
+| a relative link on a page leads to no file | the pages stay readable |
+
+What a building block is comes from `architecture.blocks` in the stack profile: `src/lib/*` is
+every file and folder in `src/lib`, `src/*/` every folder in `src`. A block counts as named when
+the page has its path, or a path inside it, in backticks. Test files, type declarations and
+dotfiles are not blocks. The patterns are in `loop/`, which no loop session can edit, so the loop
+cannot shrink the check to get past it; to make it finer or coarser for your project, set
+`architecture.blocks` in `loop/loop.config.json`.
+
+`/sync-arc42` stays for you: it reads a whole milestone's diff and fixes prose that drifted,
+which no script sees. The loop does not need it to keep going.
+
 ### Base CI in the background
 
 `baseCiWait: "unless-tree-equal"` (the default): the landed check compares the merge commit's tree
@@ -301,7 +328,8 @@ first, and the steps run once that item is done. If the FIX item does not finish
 
 ### The local gate
 
-`localGate.commands` (the preset: `pnpm check`) are run by the runner on the pushed branch head
+`localGate.commands` (the preset: `pnpm check`, then `node scripts/arch-check.mjs`) are run by
+the runner on the pushed branch head
 after each build session, with the same reduced environment as a session. A failure goes straight
 to a fix session with the output in `.loop/logs/gate-<item>-r<round>.txt` and counts against the
 CI fix rounds. It does not replace CI: CI still decides the merge. Set `commands` to `[]` to

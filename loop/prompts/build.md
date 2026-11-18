@@ -87,7 +87,12 @@ runner's.
    guard log and reports it to the owner.
 
 9. **Commit and open the PR.** `git add` explicit paths only. Commit messages follow the repo style
-   (`feat(…): …`). In the same PR, update `docs/BACKLOG.md` and add any decision rows. Push the
+   (`feat(…): …`). In the same PR, update `docs/BACKLOG.md` and add any decision rows, and keep
+   `docs/architecture/` true: a new module, route group or command gets its row and its node on
+   the building-blocks page, a new external service its node in the context diagram, a changed
+   crosscutting rule its paragraph, and a gap you knowingly leave behind a row on the risks page
+   (a risk your change closes loses its row). `node scripts/arch-check.mjs` checks the part a
+   script can check; run it before you push, because the runner and CI run it too. Push the
    branch, then `gh pr create --base {{BASE}}` with a body that has **What & why**, the
    **acceptance-criteria checklist with evidence**, **How to check on dev**, **For the owner**
    (owner_actions) and **Risks**. {{PR_INSTRUCTION}}

@@ -34,6 +34,9 @@ describe('every shipped profile fits the contract', () => {
       assert.deepEqual(workTypeProblems(preset, null), []);
       assert.deepEqual(configProblems(deepMerge(preset, instance)), []);
       assert.ok(preset.localGate.commands.length > 0, 'a profile names the commands that prove a change');
+      // every profile says what a building block of its code is, and its local gate checks the pages against it
+      assert.ok(preset.architecture.blocks.length > 0, 'a profile names its building blocks');
+      assert.ok(preset.localGate.commands.includes('node scripts/arch-check.mjs'));
       // before /setup-loop every problem is about a value only the project can know
       for (const p of configProblems(preset)) assert.match(p, /^(repo|gitAuthor\.|deploy\.devUrl|guard\.allowedDbProject)/, p);
     });
@@ -232,7 +235,7 @@ describe('the CLI profile through the runner', () => {
 
   test('the runner\'s local gate is the profile\'s command, and sessions get the npm deny rule', async () => {
     const sb = box();
-    assert.deepEqual(presetConfig(CLI).localGate.commands, ['npm run check']);
+    assert.deepEqual(presetConfig(CLI).localGate.commands, ['npm run check', 'node scripts/arch-check.mjs']);
     sb.queue(smokeStep(), happyItem('A1'));
     await sb.run(['--once']);
     const settings = JSON.parse(sb.file('.loop/claude-settings.json'));

@@ -134,11 +134,17 @@ for (const preset of presets) {
     );
     for (const command of profile.localGate.commands) {
       const script = command.match(/^npm run (\S+)$/)?.[1];
+      const file = command.match(/^node (scripts\/\S+)$/)?.[1];
       assert.ok(
-        script && pkg.scripts[script],
-        `local gate "${command}" must be an npm script of the preset`,
+        (script && pkg.scripts[script]) || (file && fs.existsSync(path.join(dir, file))),
+        `local gate "${command}" must be an npm script of the preset or a script in scripts/`,
       );
     }
+    // the skeleton's architecture pages name every block the profile's patterns find
+    assert.ok(profile.architecture.blocks.length > 0);
+    const arch = node(['scripts/arch-check.mjs'], dir);
+    assert.equal(arch.status, 0, `arch-check failed:\n${arch.stdout}\n${arch.stderr}`);
+    assert.match(arch.stdout, /arch-check: OK — \d+ page\(s\), [1-9]\d* building block\(s\)/);
     for (const script of ['check', 'test:e2e']) {
       const [cmd, ...args] = pkg.scripts[script].split(' ');
       assert.equal(cmd, 'node');

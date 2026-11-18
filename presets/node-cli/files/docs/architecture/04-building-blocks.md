@@ -1,7 +1,9 @@
 # 4 · Building blocks
 
 <!-- The module map. Start from the folder tree (`git ls-files bin src | sort`), then check it by
-     hand. A new command or module updates this page in the same PR. -->
+     hand. A new command or module updates this page in the same PR: `node scripts/arch-check.mjs`
+     fails when a file or folder in bin/ or src/ is not named here in backticks, or when a path
+     named here is gone. -->
 
 ```mermaid
 flowchart TB

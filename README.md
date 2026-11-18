@@ -70,8 +70,10 @@ does not fix its own guard and does not work around it
 You need Node 22 or newer, pnpm, `gh` logged in, and Claude Code logged in. The preflight checks
 the versions and tells you what is missing. Details: [loop/README.md](loop/README.md).
 
-After the app is done, `/run-retro` carries what the run learned and the impediments it reported
-back into the template, and `/sync-arc42` keeps `docs/architecture/` true once per milestone.
+During the run the loop keeps `docs/architecture/` true itself: a check fails every PR whose code
+the pages do not name. After the app is done, `/run-retro` carries what the run learned and the
+impediments it reported back into the template, and `/sync-arc42` fixes prose in the architecture
+pages that no check can see.
 
 ## Taking a later template version
 
@@ -137,17 +139,17 @@ flowchart TB
 
 ## What is in the box
 
-| Path                                  | What                                                                                                                               |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `loop/`                               | Runner, guard, rule table, prompts, adapters, test suite. [loop/README.md](loop/README.md)                                         |
-| `.claude/skills/`                     | The five skills: `/setup-loop`, `/shape-project`, `/draft-design`, `/run-retro`, `/sync-arc42`                                     |
-| `docs/`                               | Brief, requirements, backlog, decisions, lessons, owner actions, retro minutes, [architecture](docs/architecture/README.md)        |
-| `DESIGN.md`, `design/mocks/accepted/` | The design system and the mocks the reviewer scores against                                                                        |
-| `CLAUDE.md`                           | Project rules every session reads                                                                                                  |
-| `examples/sample-backlog/`            | A tiny sample project to read before you shape your own                                                                            |
-| `presets/`                            | Project files of other stacks, swapped in by `scripts/apply-preset.mjs`: [a Node.js command-line tool](presets/node-cli/README.md) |
-| `scripts/`                            | The AC gate, the preset and template-sync scripts, and the scan that keeps emails, keys and names out of a public repo             |
-| `WHY.md`                              | The incident behind each gate                                                                                                      |
+| Path                                  | What                                                                                                                                           |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loop/`                               | Runner, guard, rule table, prompts, adapters, test suite. [loop/README.md](loop/README.md)                                                     |
+| `.claude/skills/`                     | The five skills: `/setup-loop`, `/shape-project`, `/draft-design`, `/run-retro`, `/sync-arc42`                                                 |
+| `docs/`                               | Brief, requirements, backlog, decisions, lessons, owner actions, retro minutes, [architecture](docs/architecture/README.md)                    |
+| `DESIGN.md`, `design/mocks/accepted/` | The design system and the mocks the reviewer scores against                                                                                    |
+| `CLAUDE.md`                           | Project rules every session reads                                                                                                              |
+| `examples/sample-backlog/`            | A tiny sample project to read before you shape your own                                                                                        |
+| `presets/`                            | Project files of other stacks, swapped in by `scripts/apply-preset.mjs`: [a Node.js command-line tool](presets/node-cli/README.md)             |
+| `scripts/`                            | The AC gate, the architecture check, the preset and template-sync scripts, and the scan that keeps emails, keys and names out of a public repo |
+| `WHY.md`                              | The incident behind each gate                                                                                                                  |
 
 ## The talk
 

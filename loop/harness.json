@@ -5,6 +5,8 @@
     "scripts/ac-trace.mjs",
     "scripts/apply-preset.mjs",
     "scripts/apply-preset.test.mjs",
+    "scripts/arch-check.mjs",
+    "scripts/arch-check.test.mjs",
     "scripts/check-backlog.test.mjs",
     "scripts/check-skills.mjs",
     "scripts/check-skills.test.mjs",

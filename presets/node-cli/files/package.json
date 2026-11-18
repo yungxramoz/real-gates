@@ -20,6 +20,7 @@
     "test:loop": "node --test \"loop/test/**/*.test.mjs\"",
     "test:scripts": "node --test \"scripts/*.test.mjs\"",
     "ac-trace": "node scripts/ac-trace.mjs",
+    "arch-check": "node scripts/arch-check.mjs",
     "check:rules": "node loop/scripts/check-rules.mjs",
     "check:skills": "node scripts/check-skills.mjs",
     "sanitize": "node scripts/sanitize-scan.mjs",

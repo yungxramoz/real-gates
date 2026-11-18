@@ -48,7 +48,9 @@ Review round {{REVIEW_ROUND}} · item **{{ITEM_ID}}** · PR #{{PR}} · branch `{
      {{>review-rubric}}
    - **Scope**: no unrelated changes, no stray files, `docs/BACKLOG.md` and `docs/DECISIONS.md`
      updated where they should be, architecture docs (`docs/architecture/`) updated when a module,
-     an integration or a crosscutting rule changed.
+     an integration or a crosscutting rule changed. CI checks that every building block in the
+     code is named there and that paths, decision IDs and links resolve; you check that what the
+     pages say about this change is true.
 
 ## Verdict
 

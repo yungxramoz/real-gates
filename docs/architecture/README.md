@@ -6,8 +6,14 @@ either duplicate files that already exist or stay empty. The last column names t
 page stands for. Diagrams are Mermaid, which GitHub renders.
 
 **Rule:** a PR that changes a building block, an integration or a crosscutting rule updates the
-matching page in the same PR. The reviewer blocks it otherwise. `/sync-arc42` fixes drift once
-per milestone.
+matching page in the same PR. Two things hold it to that, with nobody watching:
+
+- `node scripts/arch-check.mjs` runs on every PR. It fails when a building block in the code is
+  not named on the building-blocks page, when a path named there is gone, when a page names a
+  decision ID `docs/DECISIONS.md` does not have, or when a link leads nowhere.
+- The reviewer blocks a PR whose pages say something that is not true.
+
+`/sync-arc42` is for what neither sees: prose that drifted over a whole milestone.
 
 | #   | Page                                        | Source of truth                                 | Updated when                              | arc42 section               |
 | --- | ------------------------------------------- | ----------------------------------------------- | ----------------------------------------- | --------------------------- |
