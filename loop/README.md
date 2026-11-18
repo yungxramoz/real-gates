@@ -367,7 +367,8 @@ LEARN item's own failures never count: it studies a failure and often trips it w
 
 An early retro waits while the last LEARN item is still being built, and it is not held once
 learning has used its share of the sessions (`retro.maxShare`, a fifth): the backlog comes first.
-The retro at the end of the milestone is always held and takes every waiting signal with it.
+The retro at the end of the milestone is always held and takes every waiting signal with it, also
+with `milestonePackets: false`, which switches off only acceptance and the packet.
 
 ### What a retro does
 

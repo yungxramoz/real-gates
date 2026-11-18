@@ -80,22 +80,27 @@ async function packetSession(L, m, mode) {
  * Returns { stop: reason } when the run has to stop (the dev site does not serve the merge).
  */
 export async function packMilestones(L, only) {
-  if (!L.cfg.milestonePackets || L.args.dry) return {};
+  // `milestonePackets: false` switches off acceptance and the packet. The retro stays: it is how
+  // the loop learns, and without it the signals of a milestone's last items would never be read.
+  const packets = !!L.cfg.milestonePackets;
+  const retros = L.cfg.retro?.enabled !== false;
+  if ((!packets && !retros) || L.args.dry) return {};
   if (L.baseCiGaveUp) return {}; // a merge has no base CI verdict: nothing is accepted or packed on it
   const S = L.store.S;
   for (const m of L.backlog.milestones) {
     if (only && m !== only) continue;
     if (S.packed.includes(m)) continue;
+    if (!packets && retroState(S).milestones[m]) continue; // without packets the retro is all a milestone ends with
     const inM = L.store.allItems().filter((i) => i.milestone === m);
     if (!inM.length || !inM.every((i) => L.store.settled(i)) || !inM.some((i) => L.store.st(i.id).status === 'done')) continue;
     // A milestone is not judged while a merge in it still waits for its base CI verdict.
     const settled = await settleBaseCi(L, { wait: true });
     if (settled.stop) return { stop: settled.stop };
     if (settled.queued || L.stopRequested()) return {};
-    const a = (S.accept[m] ||= { rounds: 0, passed: false });
+    const a = packets ? (S.accept[m] ||= { rounds: 0, passed: false }) : null;
     // How this milestone is accepted follows from its items' work types: on the deployed site,
     // on the merged base itself, or not at all.
-    const mode = acceptMode(L.cfg, delivered(L, m));
+    const mode = packets ? acceptMode(L.cfg, delivered(L, m)) : 'none';
     const where = mode === 'site' ? 'on dev' : `on ${L.cfg.base}`;
     if (mode !== 'none' && !a.passed && a.rounds < L.cfg.maxAcceptRounds) {
       L.proc.git('fetch', 'origin', '--prune');
@@ -134,15 +139,16 @@ export async function packMilestones(L, only) {
     // The retro, once per milestone: what the stretch taught. Its LEARN item is built before the
     // packet, so the packet can say what changed.
     const R = retroState(S);
-    if (L.cfg.retro?.enabled !== false && !R.milestones[m]) {
+    if (retros && !R.milestones[m]) {
       const res = await holdRetro(L, { kind: 'milestone', milestone: m });
       if (L.stopRequested() || L.budgetExceeded()) return {};
       if (!res) {
         R.milestones[m] = 'none';
-        L.progress(`${m} · the retro session gave no result; the milestone is packed without one`);
+        L.progress(`${m} · the retro session gave no result; the milestone ${packets ? 'is packed' : 'ends'} without one`);
         L.store.save();
       } else if (res.learn) return {};
     }
+    if (!packets) continue;
     if (mode !== 'none' && a.rounds > 0 && !a.passed) {
       a.unverified = true;
       L.ownerAction(m, `Milestone ${m}: acceptance still found failures in its last round (${a.rounds} of ${L.cfg.maxAcceptRounds}). Their fix items (ACC-${m}-${a.rounds}-*) went through CI and review, but nothing re-tested them ${mode === 'site' ? 'on the dev site' : where}. Check them yourself against .loop/accept-${m}.json before you rely on ${m}.`);
