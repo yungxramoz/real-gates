@@ -52,8 +52,9 @@ holds the run.
 The retro is how the loop learns. At the end of every milestone, and early when one signal shows
 up in several items, a read-only session says what went well, what went wrong and why. Its action
 items become one LEARN item that goes through the same gates, and the next retro checks by the
-numbers whether they worked. A cause in the harness itself goes to you as an impediment: the loop
-does not fix its own guard and does not work around it
+numbers whether they worked. The loop does not fix its own guard and does not work around it: a
+refusal is the guard working and the session goes another way, and a defect in the runner that
+broke something is recorded once, without anything waiting for you
 ([how the loop learns](loop/README.md#how-the-loop-learns-the-retro)).
 
 ## Quick start
@@ -122,20 +123,20 @@ flowchart TB
 
 ## Where to watch a run
 
-| What                         | Where                                                |
-| ---------------------------- | ---------------------------------------------------- |
-| Overview                     | `pnpm loop --status`                                 |
-| Live                         | the console, or `.loop/status.json`                  |
-| History                      | `.loop/PROGRESS.md`                                  |
-| Every session in full        | `.loop/logs/NNN-<item>-<phase>.jsonl`                |
-| Blocked actions              | `.loop/logs/guard.log`                               |
-| What the loop learned        | `docs/retros/` (the minutes of every retro)          |
-| **Things only you can do**   | `.loop/OWNER-ACTIONS.md`                             |
-| **What holds the loop back** | `.loop/IMPEDIMENTS.md`                               |
-| **Milestone "come look"**    | `.loop/reviews/<milestone>.md`                       |
-| Final summary                | `.loop/REPORT.md`                                    |
-| Stop cleanly                 | create `.loop/STOP`                                  |
-| Phone                        | set `notify.ntfyTopic` and subscribe in the ntfy app |
+| What                             | Where                                                |
+| -------------------------------- | ---------------------------------------------------- |
+| Overview                         | `pnpm loop --status`                                 |
+| Live                             | the console, or `.loop/status.json`                  |
+| History                          | `.loop/PROGRESS.md`                                  |
+| Every session in full            | `.loop/logs/NNN-<item>-<phase>.jsonl`                |
+| Blocked actions                  | `.loop/logs/guard.log`                               |
+| What the loop learned            | `docs/retros/` (the minutes of every retro)          |
+| **Things only you can do**       | `.loop/OWNER-ACTIONS.md`                             |
+| Defects in the harness, recorded | `.loop/IMPEDIMENTS.md`                               |
+| **Milestone "come look"**        | `.loop/reviews/<milestone>.md`                       |
+| Final summary                    | `.loop/REPORT.md`                                    |
+| Stop cleanly                     | create `.loop/STOP`                                  |
+| Phone                            | set `notify.ntfyTopic` and subscribe in the ntfy app |
 
 ## What is in the box
 

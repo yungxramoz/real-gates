@@ -6,6 +6,8 @@ read-only: you have no file-editing tools; the evidence goes where step 2 says. 
 need to write goes into `{{WORK}}/`, your working folder, which the runner removes when the
 packet is written. Every other file under `.loop/` is the runner's.
 
+{{GUARD_RULES}}
+
 Items in this milestone:
 
 {{ITEM_TABLE}}
@@ -34,7 +36,7 @@ Open asks for the owner collected so far (`.loop/OWNER-ACTIONS.md`):
    - **Evidence**: the file list
    - **Needs you**: the open asks for this milestone, copy-paste exact
    - **How the loop is doing**: from the retro, in three lines: what it keeps doing, what it
-     changed, and which impediments wait for the owner
+     changed, and which defects in the harness it recorded (`.loop/IMPEDIMENTS.md`)
    - **Known gaps and risks**: honest and short
 
    and `screenshots`: the file paths. The runner writes `.loop/reviews/{{MILESTONE}}.md`.

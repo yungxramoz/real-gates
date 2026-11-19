@@ -75,7 +75,7 @@ export const RETRO_SCHEMA = {
     },
     impediments: {
       type: 'array',
-      items: { type: 'object', properties: { title: str, part: { type: 'string', enum: ['guard', 'runner', 'prompt', 'ci', 'profile', 'other'] }, evidence: str, example: str, wanted: str, signal: str }, required: ['title', 'part', 'evidence', 'wanted'] },
+      items: { type: 'object', properties: { title: str, part: { type: 'string', enum: ['runner', 'prompt', 'ci', 'profile', 'other'] }, broke: str, evidence: str, example: str, wanted: str, signal: str, same_as: str }, required: ['title', 'part', 'broke', 'evidence', 'wanted'] },
     },
   },
   required: ['summary', 'went_well', 'problems', 'checks', 'actions', 'impediments'],

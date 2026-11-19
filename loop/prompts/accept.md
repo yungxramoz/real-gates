@@ -11,6 +11,8 @@ removes it once the milestone is packed. Whatever you install, your scratch fold
 probe scripts go there. Elsewhere under `.loop/`, write only the evidence step 4 asks for:
 every other file there is the runner's.
 
+{{GUARD_RULES}}
+
 Acceptance round {{ROUND}} for {{MILESTONE}}. {{TARGET_NOTE}}
 
 Items in this milestone:
@@ -30,7 +32,6 @@ Items in this milestone:
    wrong, where (the exact place and the evidence file), what "fixed" looks like. Things only the
    owner can do (accounts, legal text, real brand assets) are not failures: list them under `owner`.
 6. You judge the product, not the loop. A command of yours that the guard refuses, a slow step or
-   a lesson you find unclear is never a failure here: the loop's retro reads the logs and deals
-   with those. Go another way and carry on.
+   a lesson you find unclear is never a failure here. Go another way and carry on.
 
 Return the result as your structured output. `pass` is true exactly when `failures` is empty.

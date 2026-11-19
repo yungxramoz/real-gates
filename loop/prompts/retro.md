@@ -7,6 +7,8 @@ them without favour. You are read-only: you have no file-editing tools; notes go
 `{{WORK}}/`, your working folder, which the runner removes after the retro. Every other file
 under `.loop/` is the runner's: read it, write nothing there.
 
+{{GUARD_RULES}}
+
 {{WHY}}
 
 The runner gathered the numbers for the stretch since the last retro. They are your starting
@@ -18,7 +20,8 @@ point, not your conclusion: read the sources behind any row you rely on.
 
 - `.loop/PROGRESS.md`: one line per thing that happened, with the reviewers' summaries.
 - `.loop/events.jsonl` and `.loop/ledger.jsonl`: the same as fields, and the cost of each session.
-- `.loop/logs/guard.log`: every refused command (time, item, step, rule, reason, the line).
+- `.loop/logs/guard.log`: every refused command (time, item, step, rule, reason, the line). It
+  is the guard's record, not a list of problems.
 - `.loop/logs/<n>-<item>-<step>.jsonl`: each session, turn by turn. Open the ones a row points at.
 - `docs/LESSONS.md`, `docs/retros/` (earlier minutes), `docs/DECISIONS.md`, the merged PRs
   (`gh pr view <n>`, `git log origin/{{BASE}}`).
@@ -32,14 +35,20 @@ point, not your conclusion: read the sources behind any row you rely on.
    evidence is not an entry.
 
 2. **What went wrong.** For every signal, send-back and costly item above, find the **cause**, not
-   the symptom: read the session, the review, the refused line. Several signals often share one
-   cause; write it once. Then say where the cause is (`owner`):
+   the symptom: read the session, the review. Several signals often share one cause; write it
+   once. Then say where the cause is (`owner`):
    - `product`: the code or its tests. A check in the test suite can catch it next time.
    - `practice`: how sessions work in this repository: a missing rule, an unclear doc, a habit.
-   - `harness`: the guard, the runner, a prompt or CI's wiring is wrong or refuses harmless work.
-     The loop may not change those, and it must not teach itself to work around them.
+   - `harness`: the runner, a prompt or CI's wiring has a defect that **broke something**: the
+     run stopped or crashed, an item ended without merging because of it, a result was lost, or
+     the runner reported something that is not true.
    - `owner`: only a person can settle it (an account, a decision, a missing requirement).
    Set `signal` to the signal from the table when the problem is one.
+
+   **A guard refusal is not a problem.** The loop is guarded on purpose, and a session that was
+   refused and went another way is the guard doing its work. Do not list refusals under what
+   went wrong, whatever their count, and do not weigh whether a refused command was harmless:
+   that is not the loop's question. The table of refusals above is there for the cost only.
 
 3. **Check the earlier action items.** Every open action item above promised an effect. Compare
    the promise with the numbers and return one entry in `checks` for each:
@@ -69,12 +78,17 @@ point, not your conclusion: read the sources behind any row you rely on.
    `retire` in `checks` or an action item that merges rows. A general rule holds across items; a
    list of single cases does not, so never hand out a lesson that only lists what went wrong.
 
-5. **Report impediments.** Every cause in `harness` becomes one entry in `impediments`, not an
-   action item: what is wrong, in which `part`, the `evidence`, one refused line or failing case
+5. **Record impediments.** Every cause in `harness` becomes one entry in `impediments`, not an
+   action item: what is wrong, in which `part`, what it broke (`broke`: the stopped run, the
+   item that did not merge, the lost result, the false report), the `evidence`, one failing case
    as `example` (copy it exactly; it becomes a test in the template), and what you want instead
-   (`wanted`). Set `signal` when it has one: the runner then stops counting it. Do not report one
-   that is already listed above, and never hand out an action item that phrases work around an
-   impediment.
+   (`wanted`). Set `signal` when it has one: the runner then stops counting it. The list is a
+   record: nobody is asked to act on it and the run does not wait for it. So keep the bar high:
+   - Nothing broke, no entry. A slow step, a clumsy prompt or a refused command is not one.
+   - One cause, one entry. If it is already on the list above, return it with `same_as` set to
+     its id and a fresh `example`: its count goes up and it gets no second entry.
+   - Never an entry for the guard, and never an action item that teaches sessions to phrase a
+     command so that a rule does not trigger.
 
 6. Things only the owner can settle go into `problems` with `owner: owner`; the runner lists them.
 
@@ -83,5 +97,5 @@ the repository.
 
 Return the result as your structured output. `summary` is three to six plain sentences: how the
 stretch went, the main thing to keep, the main thing to change. The runner writes the minutes to
-`.loop/retros/{{RETRO_ID}}.md`, queues the action items as one LEARN item first in line, and puts
-the impediments in front of the owner.
+`.loop/retros/{{RETRO_ID}}.md`, queues the action items as one LEARN item first in line, and keeps
+the impediments in `.loop/IMPEDIMENTS.md`.

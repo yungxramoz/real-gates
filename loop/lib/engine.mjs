@@ -16,6 +16,7 @@ import { isCoarse, knownCauses, noteItemEnded, recordFailure, reviewFailures, RE
 import { reviewSchema } from './schemas.mjs';
 import { workType, workTypeName } from './worktypes.mjs';
 import { runLocalGate } from './localgate.mjs';
+import { readOnlyRules } from './guardnotes.mjs';
 
 const short = (v, n = 140) => (typeof v === 'string' ? v : JSON.stringify(v) || '').replace(/\s+/g, ' ').slice(0, n);
 const NEXT_AFTER_HOLD = { landed: 'baseci', baseci: 'postmerge', postmerge: 'finish', 'outside-merge': 'rebuild' };
@@ -56,7 +57,8 @@ export function countGuardBlocks(L, item, offset) {
     return;
   }
   // A rule counts once per session, however often it fired: the session was told no and went
-  // another way, which is the guard working. (A LEARN item's blocks never call a retro.)
+  // another way, which is the guard working. The count is for the retro's sheet only: a refusal
+  // never calls a retro (loop/lib/learn.mjs).
   const seen = new Set();
   for (const line of text.split('\n')) {
     const f = line.split('\t');
@@ -168,6 +170,7 @@ async function reviewSession(L, item, s, headSha) {
     CATEGORIES: REVIEW_CATEGORIES.join(', '),
     REVIEW_ROUND: s.reviewRounds + 1,
     WORK: L.work.path(item.id, 'review'),
+    GUARD_RULES: readOnlyRules(L.work.path(item.id, 'review')),
     ITEM_JSON: JSON.stringify(item, null, 2),
     // The reviewer is not briefed by the builder: no handoff notes. It only learns what it needs to
     // judge scope, marked as the builder's claim.

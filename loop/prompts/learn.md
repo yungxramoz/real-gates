@@ -39,10 +39,10 @@ Do exactly what the minutes say, in one pull request:
 5. **Keep `docs/LESSONS.md` within {{MAX_LESSONS}} rows.** At the limit, merge two rows that
    say the same or remove the one the minutes retire before you add one.
 
-**Impediments are not yours.** The minutes list causes in the harness (the guard, the runner, the
-prompts, CI's wiring) for the owner. Do not fix them, do not write a patch for the guard, and do
-not add a lesson that only teaches how to phrase work around one: the template gets fixed
-instead.
+**Impediments are not yours.** The minutes may list defects in the harness (the runner, the
+prompts, CI's wiring). They are a record. Do not fix them, do not write a patch for the guard,
+and do not add a lesson that teaches how to phrase a command so that a guard rule does not
+trigger: a refusal is the guard working, and a session that is refused goes another way.
 
 Your contract (procedure step 3) lists each action item with its proof in place of acceptance
 criteria. In the pull request, give one line per action item: what you did and the command that
