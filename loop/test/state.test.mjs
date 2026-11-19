@@ -206,6 +206,10 @@ test('an impediment is recorded once: its signal stops calling retros, and meeti
   const crash = { title: 'The runner crashes on a transient git fetch network error', part: 'runner', broke: 'the run stopped for 40 minutes', evidence: 'PROGRESS.md 13:02', wanted: 'retry the fetch', signal: 'nope' };
   const res = applyRetro(S, retroOut({ impediments: [e2e, crash] }), { id: 'R-01', kind: 'early', cfg });
   assert.deepEqual(res.impediments.map((i) => [i.id, i.signal, i.status, i.seen]), [['IMP-1', 'ci:e2e', 'open', 1], ['IMP-2', null, 'open', 1]]);
+  // what it broke is part of the record: in the state, the minutes and the page
+  assert.deepEqual(S.retro.impediments.map((i) => i.broke), ['A and B went through two fix rounds for nothing', 'the run stopped for 40 minutes']);
+  assert.match(renderMinutes(res.retro), /\| Impediment \| Part \| What it broke \| Evidence \| Example \| Wanted \|\n.*\n\| IMP-1 The e2e job starts without a browser \| ci \| A and B went through two fix rounds for nothing \| ci:e2e in A and B \|/);
+  assert.match(renderImpediments(S), /\| IMP-2 \| open \| runner \| The runner crashes on a transient git fetch network error \| the run stopped for 40 minutes \| PROGRESS\.md 13:02 \|/);
   assert.equal(res.learn, null, 'nothing to build: the loop does not work around the harness');
   assert.deepEqual(S.learn['ci:e2e'].muted, { by: 'IMP-1' });
   assert.equal(red('C'), false);
@@ -221,6 +225,7 @@ test('an impediment is recorded once: its signal stops calling retros, and meeti
   assert.deepEqual(again.seenAgain.map((i) => [i.id, i.seen, i.lastRetro]), [['IMP-1', 2, 'R-02'], ['IMP-2', 2, 'R-02']], 'one retro counts one meeting, however often it names it');
   assert.equal(S.retro.impediments.length, 2);
   assert.equal(S.retro.impediments[0].example, 'browserType.launch: Executable does not exist', 'the newest example is kept');
+  assert.deepEqual(S.retro.impediments.map((i) => i.broke), ['A and B went through two fix rounds for nothing', 'b'], 'and what it broke the last time it was met with one');
   // another cause in the same part is a new entry
   const other = applyRetro(S, retroOut({ impediments: [{ title: 'The retro minutes cut off the action item text', part: 'runner', broke: 'LEARN-7 had to guess', evidence: 'e', wanted: 'w' }] }), { id: 'R-03', kind: 'early', cfg });
   assert.deepEqual(other.impediments.map((i) => i.id), ['IMP-3']);
@@ -498,6 +503,32 @@ test('an action item the retro says nothing about is judged by the numbers, and 
   assert.equal(actionVerdict(T.retro.actions[0], cfg), 'weak');
   assert.deepEqual(applyRetro(T, retroOut(), { id: 'R-02', kind: 'milestone', milestone: 'M2', cfg }).checks, []);
   assert.equal(T.retro.actions[0].status, 'open');
+});
+
+test('an action item without a signal has no numbers: only a retro closes it', () => {
+  const S = { extra: [], items: {} };
+  const act = (title, signal) => ({ title, rung: 'lesson', what: 'w', expect: 'sessions write the contract first', done_when: 'd', signal });
+  for (const id of ['A', 'B']) recordFailure(S, { signature: 'ci:lint', item: { id } });
+  applyRetro(S, retroOut({ actions: [act('measured', 'ci:lint'), act('judged by reading'), act('made-up signal', 'no:such')] }), { id: 'R-01', kind: 'early', cfg });
+  const [measured, read, made] = S.retro.actions;
+  assert.deepEqual([measured.signal, read.signal, made.signal], ['ci:lint', null, null]);
+  assert.equal(actionVerdict(read, cfg), 'not merged yet');
+  noteItemEnded(S, { id: 'LEARN-1', kind: 'learn' }, 'done');
+  for (const id of ['C', 'D', 'E', 'F', 'G', 'H']) noteItemEnded(S, { id }, 'done');
+  assert.deepEqual([actionVerdict(measured, cfg), actionVerdict(read, cfg), actionVerdict(made, cfg)], ['worked', 'no numbers', 'no numbers']);
+  // a retro that says nothing closes only the one that was measured
+  const silent = applyRetro(S, retroOut(), { id: 'R-02', kind: 'early', cfg });
+  assert.deepEqual(silent.checks.map((c) => [c.action, c.verdict]), [['A-1', 'worked']]);
+  assert.deepEqual([measured.status, read.status, made.status], ['worked', 'open', 'open'], 'nothing counted whether the other two held');
+  // however many items pass, and whatever acceptance does
+  for (const id of ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']) noteItemEnded(S, { id }, 'done');
+  noteAcceptanceFailed(S, 'M1', 1);
+  assert.deepEqual(applyRetro(S, retroOut(), { id: 'R-03', kind: 'milestone', milestone: 'M1', cfg }).checks, []);
+  assert.deepEqual([read.status, made.status, actionVerdict(read, cfg)], ['open', 'open', 'no numbers']);
+  // the retro's own verdict does close it
+  const judged = applyRetro(S, retroOut({ checks: [{ action: 'A-2', verdict: 'worked', decision: 'keep', note: 'every contract since came first' }] }), { id: 'R-04', kind: 'early', cfg });
+  assert.deepEqual(judged.checks.map((c) => [c.action, c.verdict, c.status]), [['A-2', 'worked', 'worked']]);
+  assert.equal(made.status, 'open');
 });
 
 test('a state written before retros existed is read as it is', () => {
