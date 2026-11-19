@@ -16,7 +16,7 @@ import { goalPrompt } from './engine.mjs';
 import { actionVerdict, applyRetro, harnessChanged, renderImpediments, renderMinutes, retroId, retroState } from './learn.mjs';
 import { readOnlyRules } from './guardnotes.mjs';
 import { RETRO_SCHEMA } from './schemas.mjs';
-import { readJson, writeJson } from './state.mjs';
+import { TERMINAL, readJson, writeJson } from './state.mjs';
 
 const lines = (file) => {
   try {
@@ -91,6 +91,8 @@ export function buildSheet(L, since) {
     if (e.type === 'item.finished') row(e.item).status = e.status;
   }
   const built = [...items.values()].filter((x) => !x.step);
+  // An item that ended before this stretch has no "finished" event in it: the state knows.
+  const ended = (x) => x.status || (TERMINAL.has(S.items?.[x.id]?.status) ? S.items[x.id].status : x.merged ? 'merged' : 'open');
   const kind = (x) => defs.get(x.id)?.kind || 'backlog';
   const firstTime = built.filter((x) => kind(x) !== 'learn' && x.merged && x.rounds <= 1 && !Object.keys(x.back).length);
   const total = ledger.reduce((a, s) => ({ sessions: a.sessions + 1, usd: a.usd + (s.costUsd || 0), min: a.min + (s.durationMs || 0) / 60_000 }), { sessions: 0, usd: 0, min: 0 });
@@ -122,7 +124,7 @@ export function buildSheet(L, since) {
 
   const markdown = [
     `## The numbers\n\n${covers}. Of that, learning (retros and LEARN items): ${learn.sessions} session(s), ${usd(learn.usd)}.`,
-    `### Items\n\n${table(['Item', 'Kind', 'Ended', 'Build rounds', 'Sent back by', 'Sessions', 'Cost', 'Minutes'], built.map((x) => [x.id, kind(x), x.status || (x.merged ? 'merged' : 'open'), x.rounds, Object.entries(x.back).map(([k, n]) => `${k} ×${n}`).join(', ') || 'nothing', x.sessions, usd(x.usd), x.min.toFixed(0)]))}`,
+    `### Items\n\n${table(['Item', 'Kind', 'Ended', 'Build rounds', 'Sent back by', 'Sessions', 'Cost', 'Minutes'], built.map((x) => [x.id, kind(x), ended(x), x.rounds, Object.entries(x.back).map(([k, n]) => `${k} ×${n}`).join(', ') || 'nothing', x.sessions, usd(x.usd), x.min.toFixed(0)]))}`,
     `### Merged at the first attempt, sent back by nothing\n\n${firstTime.map((x) => x.id).join(', ') || 'None.'}`,
     `### Signals: failures counted since the last retro\n\nA signal with "calls this retro" showed up in enough different items to call it.\n\n${table(['Signal', 'Items since the last retro', 'All time', 'Latest cases', 'Note'], signals.map(([sig, e]) => [`\`${sig}\``, (e.items || []).join(', ') || '-', e.count, (e.details || []).slice(-3).join(' // '), [r.due?.signals?.includes(sig) ? 'calls this retro' : '', e.muted ? `reported (${e.muted.by})` : ''].filter(Boolean).join(', ')]))}`,
     `### Guard refusals\n\nThe guard working. This table is the cost only: a refusal is not a problem, not an impediment and not a subject for an action item. Leave it out of your result, whatever the count.\n\n${table(['Rule', 'Times', 'Items', 'Steps', 'What the guard said', 'Refused lines (examples)'], [...blocks.values()].map((b) => [`\`${b.rule}\``, b.n, [...b.items].join(', '), [...b.phases].join(', '), b.reason, b.examples.map((x) => `\`${x.replace(/`/g, "'")}\``).join(' // ') || '(not logged)']))}`,

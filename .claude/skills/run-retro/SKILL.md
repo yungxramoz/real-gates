@@ -159,7 +159,7 @@ the file and fix every finding.
   (`gh issue create --repo <template> --title "Lessons from a run" --body-file .loop/retro/template-lessons.md`);
   wait for a yes.
 - Impediments: say which ones the template fix will clear. After `node scripts/sync-template.mjs`
-  brought the fix in, every open one waits as "recheck" and closes by itself once a few sessions
+  brought the fix in, every open one waits as "recheck" and closes by itself once thirty sessions
   ran without its cause.
 - Summary: three lines on what went well, what the loop fixed by itself, and what the next project
   starts with.

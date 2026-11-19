@@ -77,6 +77,7 @@ export const DEFAULTS = Object.freeze({
     checkAfterItems: 5, // an action item is judged once this many items were built after it merged
     maxShare: 0.2, // early retros stop once learning used this share of all sessions; the backlog comes first
     maxLessons: 20, // rows in docs/LESSONS.md; at the limit a retro merges or retires rows before it adds one
+    recheckSessions: 30, // after a template update, an impediment closes once this many sessions ran without it
   },
   // 'unless-tree-equal': when the landed check proved the merge commit has exactly the tree PR CI
   // passed on, the next item starts while base CI runs; a red result still queues a FIX item first
