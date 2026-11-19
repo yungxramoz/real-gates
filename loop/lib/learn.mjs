@@ -141,9 +141,12 @@ export function earlyRetro(S, cfg) {
 /**
  * What the numbers say about an action item, before the retro decides. An acceptance round that
  * failed since it merged keeps it from "worked": acceptance finds what no review signal names.
+ * An action item without a signal has no numbers at all: nothing counts whether what it promised
+ * happened, so only a retro that read the sessions can judge it.
  */
 export function actionVerdict(a, cfg) {
   if (!a.since) return 'not merged yet';
+  if (!a.signal) return 'no numbers';
   if (a.hits.length >= 2) return 'no effect';
   if (a.itemsSince.length >= (cfg.retro?.checkAfterItems ?? 5)) return a.hits.length || (a.acceptFails || []).length ? 'weak' : 'worked';
   return 'too early';
@@ -197,7 +200,8 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
   }
   // An action item the session said nothing about is judged by the numbers alone, so none stays
   // open because a session forgot it. One that worked is closed. One that had no effect stays
-  // open and is shown as such: taking a fix back or replacing it needs a retro's decision.
+  // open and is shown as such: taking a fix back or replacing it needs a retro's decision. One
+  // without a signal has no numbers ("no numbers" above): it stays open until a retro judges it.
   for (const a of r.actions.filter((x) => x.status === 'open' && x.since && !checks.some((c) => c.action === x.id))) {
     const numbers = actionVerdict(a, cfg);
     if (numbers !== 'worked' && numbers !== 'no effect') continue;
@@ -234,12 +238,13 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
         Object.assign(known, { seen: (known.seen || 1) + 1, lastRetro: id, status: 'open', back: [] });
         known.signal ||= signal; // it was recorded before its signal was known
         if (x.example) known.example = text(x.example, 400);
+        if (x.broke) known.broke = text(x.broke, 300); // what it broke this time
         if (known.signal && S.learn?.[known.signal]) S.learn[known.signal].muted = { by: known.id };
         seenAgain.push(known);
       }
       continue;
     }
-    const imp = { id: `IMP-${r.impediments.length + 1}`, retro: id, status: 'open', at, title: text(x.title, 160), part, evidence: text(x.evidence), example: text(x.example, 400), wanted: text(x.wanted), signal, seen: 1, lastRetro: id };
+    const imp = { id: `IMP-${r.impediments.length + 1}`, retro: id, status: 'open', at, title: text(x.title, 160), part, broke: text(x.broke, 300), evidence: text(x.evidence), example: text(x.example, 400), wanted: text(x.wanted), signal, seen: 1, lastRetro: id };
     r.impediments.push(imp);
     impediments.push(imp);
     if (signal) S.learn[signal].muted = { by: imp.id };
@@ -350,7 +355,7 @@ export function renderMinutes(retro) {
     `## What went wrong\n\n${table(['Problem', 'Evidence', 'Cause', 'The cause is in'], retro.problems.map((p) => [p.title, p.evidence, p.cause, owner[p.owner]]))}`,
     `## Earlier action items, checked\n\n${table(['Action', 'Items since', 'Still happened in', 'Verdict', 'Decision', 'Note'], retro.checks.map((c) => [`${c.action} ${c.title}`, c.itemsSince, c.hits, c.verdict.replace('_', ' '), c.decision, c.note]))}`,
     `## Action items\n\n${table(['Action', 'Kind', 'What', 'Expected effect', 'Done when'], retro.actions.map((a) => [`${a.id} ${a.title}`, a.rung, a.what, a.expect, a.doneWhen]))}${retro.learn ? `\n\nCarried out by ${retro.learn}.` : ''}`,
-    `## Impediments\n\nDefects in the harness that broke something in this stretch. The loop does not fix them and does not work around them, and nothing in the run waits for them: they are a record for whoever maintains the template.\n\n${table(['Impediment', 'Part', 'Evidence', 'Example', 'Wanted'], retro.impediments.map((i) => [`${i.id} ${i.title}`, i.part, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted]))}${(retro.seenAgain || []).length ? `\n\nMet again, already on the list: ${retro.seenAgain.map((i) => `${i.id} (${i.seen} times)`).join(', ')}.` : ''}`,
+    `## Impediments\n\nDefects in the harness that broke something in this stretch. The loop does not fix them and does not work around them, and nothing in the run waits for them: they are a record for whoever maintains the template.\n\n${table(['Impediment', 'Part', 'What it broke', 'Evidence', 'Example', 'Wanted'], retro.impediments.map((i) => [`${i.id} ${i.title}`, i.part, i.broke, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted]))}${(retro.seenAgain || []).length ? `\n\nMet again, already on the list: ${retro.seenAgain.map((i) => `${i.id} (${i.seen} times)`).join(', ')}.` : ''}`,
     retro.escalated.length ? `## Given to the owner\n\nThese signals had ${MAX_ACTIONS_PER_SIGNAL} action items and still come back: ${retro.escalated.map((s) => `\`${s}\``).join(', ')}.` : '',
   ].filter(Boolean).join('\n\n') + '\n';
 }
@@ -360,7 +365,7 @@ export function renderImpediments(S) {
   const r = retroState(S);
   const rows = r.impediments.filter((i) => i.status !== 'closed');
   const closed = r.impediments.length - rows.length;
-  return `# Impediments\n\nDefects in the harness that broke something during the run: in the runner, the prompts, CI's wiring or a profile. This is a record, not a to-do list: nothing in the run waits for it, one cause has one row, and meeting it again raises "Seen". After a sync from the template (\`node scripts/sync-template.mjs\`) a row waits as "recheck" and closes by itself once its cause stays away. A guard refusal is the guard working and is never listed.\n\n${table(['Id', 'Status', 'Part', 'Impediment', 'Evidence', 'Example', 'Wanted', 'Signal', 'First', 'Seen', 'Last'], rows.map((i) => [i.id, i.status, i.part, i.title, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted, i.signal || '-', i.retro, i.seen || 1, i.lastRetro || i.retro]))}${closed ? `\n\n${closed} closed.` : ''}\n`;
+  return `# Impediments\n\nDefects in the harness that broke something during the run: in the runner, the prompts, CI's wiring or a profile. This is a record, not a to-do list: nothing in the run waits for it, one cause has one row, and meeting it again raises "Seen". After a sync from the template (\`node scripts/sync-template.mjs\`) a row waits as "recheck" and closes by itself once its cause stays away. A guard refusal is the guard working and is never listed.\n\n${table(['Id', 'Status', 'Part', 'Impediment', 'What it broke', 'Evidence', 'Example', 'Wanted', 'Signal', 'First', 'Seen', 'Last'], rows.map((i) => [i.id, i.status, i.part, i.title, i.broke, i.evidence, i.example ? `\`${i.example.replace(/`/g, "'")}\`` : '-', i.wanted, i.signal || '-', i.retro, i.seen || 1, i.lastRetro || i.retro]))}${closed ? `\n\n${closed} closed.` : ''}\n`;
 }
 
 export const retroId = (n) => `R-${pad(n)}`;

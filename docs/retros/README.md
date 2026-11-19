@@ -16,7 +16,7 @@ How a retro works, when one is held and how its action items are measured:
 | What went wrong               | Each problem, its cause, and where the cause is: the product, how we work, the harness or the owner                                     |
 | Earlier action items, checked | For every open action item: how many items were built since, in how many the failure came back, and the decision (keep, revise, retire) |
 | Action items                  | What changes now, at which rung (lesson, test, rule, tool), the effect it promises and the command that proves it                       |
-| Impediments                   | Defects in the harness that broke something, each with an example. A record: the loop does not fix them and the run does not wait       |
+| Impediments                   | Defects in the harness, each with what it broke and an example. A record: the loop does not fix them and the run does not wait          |
 
 ## Reading them
 

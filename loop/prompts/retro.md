@@ -59,7 +59,8 @@ point, not your conclusion: read the sources behind any row you rely on.
    - `no_effect` and `retire`: it came back and no better fix is yours to make, or the rule costs
      more than it saves. It is taken out of the repository again.
    - `worked` and `retire`: it worked, and what it guarded against is gone for good.
-   An action item with no signal has no numbers: judge it from the sessions since.
+   An action item with no signal has no numbers ("no numbers" in the table): nothing closes it
+   but your verdict, so judge it from the sessions since and return an entry for it.
 
 4. **Hand out action items**: at most {{MAX_ACTIONS}}, for causes in `product` or `practice`,
    the ones that cost the most. One build session carries them all out in one pull request, so
