@@ -36,10 +36,20 @@ import { TERMINAL } from './state.mjs';
 
 /** After this many action items a signal that still comes back goes to the owner. */
 export const MAX_ACTIONS_PER_SIGNAL = 3;
-/** Sessions an impediment has to stay away for, after the harness changed, to be closed. */
-export const RECHECK_SESSIONS = 6;
+/**
+ * Sessions an impediment has to stay away for, after the harness changed, to be closed
+ * (retro.recheckSessions). A defect that shows up once in fifty sessions is not gone after six.
+ */
+export const RECHECK_SESSIONS = 30;
 
-const oneLine = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+/** Characters a reader cannot see: written as \uXXXX, so a rule about them survives the minutes. */
+const INVISIBLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028\u2029\u2060\ufeff]/g;
+export const visible = (v) => String(v ?? '').replace(INVISIBLE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+/** One line of at most n characters. What is cut off is marked, never dropped silently. */
+const oneLine = (v, n) => {
+  const s = visible(v).replace(/\s+/g, ' ').trim();
+  return s.length > n ? `${s.slice(0, Math.max(0, n - 4)).trimEnd()} […]` : s;
+};
 const pad = (n) => String(n).padStart(2, '0');
 
 /** The retro's books in the state, with every key present (an older state has none of them). */
@@ -250,13 +260,13 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
     if (signal) S.learn[signal].muted = { by: imp.id };
   }
   // One that waits for its recheck (the harness changed) is settled by the numbers: open again
-  // as soon as its signal came back on the new harness, closed once a few sessions ran without
+  // as soon as its signal came back on the new harness, closed once enough sessions ran without
   // it. One without a signal is open again when a retro met it (above), closed otherwise.
   for (const i of r.impediments.filter((x) => x.status === 'recheck')) {
     if (i.signal && (i.back || []).length) {
       i.status = 'open';
       if (S.learn?.[i.signal]) S.learn[i.signal].muted = { by: i.id };
-    } else if ((S.iterations || 0) - (i.recheckAt || 0) >= RECHECK_SESSIONS) {
+    } else if ((S.iterations || 0) - (i.recheckAt || 0) >= (cfg.retro?.recheckSessions ?? RECHECK_SESSIONS)) {
       Object.assign(i, { status: 'closed', closedBy: id, note: 'Not seen again since the harness changed.' });
       if (i.signal && S.learn?.[i.signal]?.muted?.by === i.id) delete S.learn[i.signal].muted; // it counts again
     }
@@ -278,7 +288,7 @@ export function applyRetro(S, out, { id, kind, milestone, cfg, at = new Date().t
       dropped.push(`action "${text(x.title, 80)}": ${signal} already had ${MAX_ACTIONS_PER_SIGNAL} action items and still comes back, so it goes to the owner`);
       continue;
     }
-    actions.push({ id: `A-${r.actions.length + actions.length + 1}`, retro: id, status: 'open', title: text(x.title, 160), rung: ['lesson', 'test', 'rule', 'tool'].includes(x.rung) ? x.rung : 'lesson', what: text(x.what, 900), expect: text(x.expect, 300), doneWhen: text(x.done_when, 300), signal, since: null, itemsSince: [], hits: [] });
+    actions.push({ id: `A-${r.actions.length + actions.length + 1}`, retro: id, status: 'open', title: text(x.title, 160), rung: ['lesson', 'test', 'rule', 'tool'].includes(x.rung) ? x.rung : 'lesson', what: text(x.what, 4000), expect: text(x.expect, 1000), doneWhen: text(x.done_when, 1500), signal, since: null, itemsSince: [], hits: [] });
   }
 
   const wentWell = (Array.isArray(out.went_well) ? out.went_well : []).filter((w) => w?.practice).slice(0, 6).map((w) => ({ practice: text(w.practice, 300), evidence: text(w.evidence, 300), keep: !!w.keep }));

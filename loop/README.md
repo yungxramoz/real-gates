@@ -497,7 +497,8 @@ allowed way to do each thing. The runner's suite holds that text to the real gua
 An impediment is a record for whoever maintains the template, not a request. A signal that is
 recorded as one stops calling retros. After a sync from the template
 (`node scripts/sync-template.mjs`) every open entry waits as "recheck" and the numbers settle
-it: closed once a few sessions ran without its cause, open again when it came back. No session
+it: closed once `retro.recheckSessions` (30) sessions ran without its cause, open again when it
+came back. No session
 reports it a second time, and nothing reopens on a sync that did not touch its cause.
 
 ### Where everything is
@@ -511,7 +512,7 @@ reports it a second time, and nothing reopens on a sync that did not touch its c
 | Retros held, action items being measured | `.loop/REPORT.md` under "Retros", `retro` in `.loop/state.json` |
 
 Settings, in `loop/loop.config.json` under `retro`: `enabled`, `maxActions`, `checkAfterItems`,
-`maxShare`, `maxLessons`. The two thresholds are `learnThreshold` and `learnCategoryThreshold`.
+`maxShare`, `maxLessons`, `recheckSessions`. The two thresholds are `learnThreshold` and `learnCategoryThreshold`.
 `/run-retro` is the owner's turn after the run: it carries the impediments and the lessons that
 apply to any project back into the template.
 

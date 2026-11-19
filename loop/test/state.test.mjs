@@ -135,7 +135,7 @@ test('a guard rule or a bare review category is coarse: it needs more items', ()
 });
 
 const retroOut = (over = {}) => ({ summary: 'It went fine.', went_well: [], problems: [], checks: [], actions: [], impediments: [], ...over });
-const cfg = { retro: { maxActions: 3, checkAfterItems: 2, maxShare: 0.2 } };
+const cfg = { retro: { maxActions: 3, checkAfterItems: 2, maxShare: 0.2, recheckSessions: 6 } };
 
 test('a retro becomes one LEARN item for its action items, and the count starts again', () => {
   const S = { extra: [], items: {}, iterations: 9 };
@@ -565,4 +565,81 @@ test('an item whose post-merge steps wait for a fix item is not picked until tha
   assert.match(only.waiting[0], /A ← FIX-1:todo \(base is red\)/);
   store.st('FIX-1').status = 'done';
   assert.equal(store.pickNext().id, 'A');
+});
+
+test('an action item reaches the LEARN session whole: long text is kept, invisible characters are written out, and a cut is marked', async () => {
+  const { visible } = await import('../lib/learn.mjs');
+  const ch = (...codes) => String.fromCharCode(...codes);
+  const [LS, PS, ESC, ZWSP, BOM, NUL] = [ch(0x2028), ch(0x2029), ch(0x1b), ch(0x200b), ch(0xfeff), ch(0)];
+  assert.equal(visible(`a${LS}b${PS}c${NUL}d${ZWSP}e${BOM}f${ESC}[31m`), 'a\\u2028b\\u2029c\\u0000d\\u200be\\ufefff\\u001b[31m');
+  assert.equal(visible('plain text, tabs\tand\nnew lines stay'), 'plain text, tabs\tand\nnew lines stay');
+  const S = { extra: [], items: {} };
+  const what = `Add a variant whose every string holds U+2028 (${LS}), U+2029 (${PS}), ESC (${ESC}) and a zero-width space (${ZWSP}). ${'Walk every string the tool reads. '.repeat(60)}End of the brief.`;
+  assert.ok(what.length > 2000);
+  const res = applyRetro(S, retroOut({ actions: [{ title: 't', rung: 'test', what, expect: 'e', done_when: `node --test --test-name-pattern="${'x'.repeat(400)}" tests/unit/a.test.mjs` }] }), { id: 'R-01', kind: 'early', cfg });
+  const a = S.retro.actions[0];
+  assert.match(a.what, /U\+2028 \(\\u2028\), U\+2029 \(\\u2029\), ESC \(\\u001b\) and a zero-width space \(\\u200b\)\./);
+  assert.ok(a.what.endsWith('End of the brief.'), 'nothing of a two-thousand-character brief is cut');
+  assert.ok(a.doneWhen.endsWith('tests/unit/a.test.mjs'), 'nor of a long proving command');
+  assert.ok(res.learn.scope.includes('End of the brief.') && res.learn.scope.includes('\\u2028'), 'and the LEARN item carries it');
+  assert.match(renderMinutes(res.retro), /ESC \(\\u001b\)/);
+  // beyond the limit the cut is said, not hidden
+  const T = { extra: [], items: {} };
+  applyRetro(T, retroOut({ actions: [{ title: 't', rung: 'test', what: 'w '.repeat(3000), expect: 'e', done_when: 'd' }] }), { id: 'R-01', kind: 'early', cfg });
+  assert.ok(T.retro.actions[0].what.length <= 4000 && T.retro.actions[0].what.endsWith(' […]'));
+});
+
+test('after a template update an impediment waits thirty sessions before it closes, unless the project says otherwise', async () => {
+  const { RECHECK_SESSIONS } = await import('../lib/learn.mjs');
+  const { DEFAULTS } = await import('../lib/config.mjs');
+  assert.deepEqual([RECHECK_SESSIONS, DEFAULTS.retro.recheckSessions], [30, 30]);
+  const start = (config) => {
+    const S = { extra: [], items: {}, iterations: 100 };
+    harnessChanged(S, 'old');
+    applyRetro(S, retroOut({ impediments: [{ title: 'The runner crashes when a fetch fails', part: 'runner', broke: 'the run stopped', evidence: 'e', wanted: 'w' }] }), { id: 'R-01', kind: 'early', cfg: config });
+    harnessChanged(S, 'new');
+    return S;
+  };
+  const plain = { retro: { maxActions: 3 } };
+  const S = start(plain);
+  for (const [at, status] of [[106, 'recheck'], [129, 'recheck'], [130, 'closed']]) {
+    S.iterations = at;
+    applyRetro(S, retroOut(), { id: `R-${at}`, kind: 'early', cfg: plain });
+    assert.equal(S.retro.impediments[0].status, status, `at session ${at}`);
+  }
+  const quick = { retro: { maxActions: 3, recheckSessions: 3 } };
+  const T = start(quick);
+  T.iterations = 103;
+  applyRetro(T, retroOut(), { id: 'R-02', kind: 'early', cfg: quick });
+  assert.equal(T.retro.impediments[0].status, 'closed');
+});
+
+test('the retro sheet says how an item ended, also when it ended before the stretch began', async () => {
+  const { buildSheet } = await import('../lib/retro.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-sheet-'));
+  try {
+    const since = '2026-01-02T00:00:00.000Z';
+    const at = (h) => `2026-01-02T0${h}:00:00.000Z`;
+    const ledger = [
+      { at: at(1), item: 'OLD-DONE', phase: 'build', costUsd: 1, durationMs: 60000 }, // a late session on an item that finished before
+      { at: at(1), item: 'OLD-SKIP', phase: 'review', costUsd: 1, durationMs: 60000 },
+      { at: at(2), item: 'NOW-DONE', phase: 'build', costUsd: 1, durationMs: 60000 },
+      { at: at(3), item: 'MERGED', phase: 'build', costUsd: 1, durationMs: 60000 },
+      { at: at(4), item: 'RUNNING', phase: 'build', costUsd: 1, durationMs: 60000 },
+    ];
+    const events = [
+      { at: '2026-01-01T10:00:00.000Z', type: 'item.finished', item: 'OLD-DONE', status: 'done' }, // before the stretch: not read
+      { at: at(2), type: 'item.finished', item: 'NOW-DONE', status: 'done' },
+      { at: at(3), type: 'item.merged', item: 'MERGED' },
+    ];
+    fs.writeFileSync(path.join(dir, 'ledger.jsonl'), ledger.map((l) => JSON.stringify(l)).join('\n'));
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), events.map((l) => JSON.stringify(l)).join('\n'));
+    const ids = ['OLD-DONE', 'OLD-SKIP', 'NOW-DONE', 'MERGED', 'RUNNING'];
+    const S = { extra: [], learn: {}, items: { 'OLD-DONE': { status: 'done' }, 'OLD-SKIP': { status: 'skipped' }, 'NOW-DONE': { status: 'done' }, MERGED: { status: 'in_progress' }, RUNNING: { status: 'in_progress' } } };
+    const L = { root: dir, cfg: { retro: {} }, paths: { events: path.join(dir, 'events.jsonl'), ledger: path.join(dir, 'ledger.jsonl'), guardLog: path.join(dir, 'guard.log') }, store: { S, allItems: () => ids.map((id) => ({ id })) } };
+    const rows = Object.fromEntries(buildSheet(L, since).markdown.split('\n').filter((l) => /^\| [A-Z-]+ \| backlog \|/.test(l)).map((l) => l.split('|').map((c) => c.trim())).map((c) => [c[1], c[3]]));
+    assert.deepEqual(rows, { 'OLD-DONE': 'done', 'OLD-SKIP': 'skipped', 'NOW-DONE': 'done', MERGED: 'merged', RUNNING: 'open' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
