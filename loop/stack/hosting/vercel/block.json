@@ -1,0 +1,10 @@
+{
+  "title": "Vercel",
+  "description": "The base branch is deployed to a dev site on Vercel. Before a milestone is accepted the runner polls `/api/health` until it reports the merged commit, and passes the preview-protection bypass secret to the steps that open the site. Sessions may not change Vercel settings.",
+  "choose": "The base branch is deployed on Vercel.",
+  "status": "proven",
+  "config": {
+    "guard": { "packs": ["vercel"] },
+    "deploy": { "adapter": "http-health", "health": "/api/health", "commitField": "commit", "bypassSecretEnv": "VERCEL_BYPASS", "bypassHeader": "x-vercel-protection-bypass" }
+  }
+}

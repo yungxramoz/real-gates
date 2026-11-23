@@ -1,0 +1,11 @@
+{
+  "title": "HTTP API",
+  "description": "Endpoints a program calls over HTTP. An item of the work type `api` needs an end-to-end test that starts the real server and calls it, is called by the reviewer the way the author of a client would (the documented examples, then bad, missing, huge and repeated input, wrong methods and wrong credentials), and is scored on contract, errors, robustness and security against docs/API-CONVENTIONS.md. A milestone with such items is accepted where the product runs: on the deployed dev site when the stack deploys one, otherwise on a production build of the merged base, started on the machine the loop runs on.",
+  "choose": "The product has endpoints that other programs call: a backend for an app, or an API of its own.",
+  "status": "draft",
+  "config": {
+    "workTypes": {
+      "api": { "rubric": ["contract", "errors", "robustness", "security"], "accept": "site-or-local" }
+    }
+  }
+}

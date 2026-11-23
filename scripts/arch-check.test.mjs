@@ -281,7 +281,7 @@ test('a pattern that is not usable is named, on the command line and in the chec
   assert.equal(run(repo(), '--nope').status, 2);
 });
 
-test('the patterns come from the loop config: the profile, then the project', () => {
+test('the patterns come from the loop config: the stack the profile lists, then the project', () => {
   const root = repo({
     'src/report.mjs': '',
     'loop/loop.config.json': JSON.stringify({ profile: 'node-cli' }),
@@ -290,9 +290,9 @@ test('the patterns come from the loop config: the profile, then the project', ()
   fs.cpSync(path.join(REPO, 'loop', 'guard'), path.join(root, 'loop', 'guard'), {
     recursive: true,
   });
-  fs.cpSync(path.join(REPO, 'loop', 'profiles'), path.join(root, 'loop', 'profiles'), {
-    recursive: true,
-  });
+  for (const part of ['profiles', 'stack']) {
+    fs.cpSync(path.join(REPO, 'loop', part), path.join(root, 'loop', part), { recursive: true });
+  }
   const fromProfile = run(root);
   assert.equal(fromProfile.status, 1, fromProfile.stdout);
   assert.match(fromProfile.stderr, /`src\/report\.mjs` is in the code and not on this page/);

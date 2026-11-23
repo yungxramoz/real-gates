@@ -1,7 +1,7 @@
 // The gates that need only git: the pre-merge checks and the landed check. The script decides
 // these, never an agent. They know nothing about the forge (see adapters/forge-*.mjs) and nothing
-// about the stack: which files CI runs through and which numbers may only go up come from the
-// profile (`gates` in loop/profiles/<name>/profile.json).
+// about the stack: which files CI runs through and which numbers may only go up come from its
+// blocks (`gates` in loop/stack/<category>/<name>/block.json).
 //
 // Lessons behind them (docs/LESSONS.md, WHY.md):
 //   L-01  CI must run on what will land: the branch must contain the current base before merge.
@@ -10,6 +10,7 @@
 
 import { matchesAny } from '../guard/paths.mjs';
 import { isProtected } from '../guard/core.mjs';
+import { migrationDirs } from '../guard/shared.mjs';
 
 // ------------------------------------------------------------------------------------- contract
 /** The AC IDs a backlog item names, in its refs, title or scope. */
@@ -35,7 +36,7 @@ function contractProblems(proc, cfg, branch, item) {
 
 // ------------------------------------------------------------------------------------- ratchets
 // A ratchet is a set of numbers in a config file that may only go up (coverage thresholds, a
-// minimum score). The profile describes it:
+// minimum score). A block of the stack describes it:
 //   { name, files: [...], comments: 'js' | 'hash' | 'none',
 //     within?: regex whose group 1 is the block the numbers live in (several blocks: lowest wins),
 //     number: regex with group 1 = the key and group 2 = the number }
@@ -63,7 +64,7 @@ const ratchetShape = (text, r) => stripComments(text, r).replace(numberRe(r), (_
 
 /**
  * Files CI runs through. A PR that changes them could switch a gate off and still be green, so the
- * loop may not change them. From the profile's `gates`:
+ * loop may not change them. From the `gates` of the stack's blocks:
  *   files          globs that may not change at all (test, lint and type configs, the repo scripts)
  *   frozenJsonKeys [{ file, key }]: one key of a JSON file that may not change (the commands CI
  *                  runs), while the rest of the file may (dependencies)
@@ -134,13 +135,13 @@ export function preMergeChecks(ctx, s, item) {
     return { ok: false, text: `\`${cfg.base}\` has moved since this branch was cut. Merge \`origin/${cfg.base}\` into \`${s.branch}\` (no rebase, no force-push), resolve conflicts, re-run the local gates and push. CI must run on what will actually land (L-01).` };
   }
   const changes = nameStatus(proc, `origin/${cfg.base}...${branch}`);
-  const migrationDirs = (cfg.postMerge || []).map((x) => x.migrationsDir).filter(Boolean);
+  const frozenDirs = migrationDirs(cfg);
   const guardCtx = { cfg, isOnBase: (rel) => proc.gitTry('cat-file', '-e', `origin/${cfg.base}:${rel}`).ok };
   const problems = gateProblems(proc, cfg, branch, changes);
   if (item) problems.push(...contractProblems(proc, cfg, branch, item));
   for (const { status, files } of changes) {
     for (const file of files) {
-      if (migrationDirs.some((d) => file.startsWith(d.replace(/\/$/, '') + '/')) && /\.sql$/.test(file) && !status.startsWith('A')) problems.push(`\`${file}\` (${status}): migrations already on ${cfg.base} are frozen — revert this change and fix forward with a new file.`);
+      if (frozenDirs.some((d) => file.startsWith(d + '/')) && /\.sql$/.test(file) && !status.startsWith('A')) problems.push(`\`${file}\` (${status}): migrations already on ${cfg.base} are frozen — revert this change and fix forward with a new file.`);
       if (/(^|\/)\.env($|\.(?!example$))/.test(file)) problems.push(`\`${file}\`: env files must never be committed.`);
       else if (/^\.loop\//.test(file)) problems.push(`\`${file}\`: loop runtime files must not be committed.`);
       else if (isProtected(file, guardCtx) || (matchesAny(file, ['loop/patches/*']) && !status.startsWith('A'))) problems.push(`\`${file}\` (${status}): part of the harness or the owner's. A runner change ships as a new file in loop/patches/.`);

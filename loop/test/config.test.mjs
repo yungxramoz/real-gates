@@ -98,6 +98,60 @@ test('the profile sits between the defaults and the project config', () => {
   assert.equal(cfg.base, 'develop', 'what neither names keeps its default');
 });
 
+/** A repo with blocks: { '<category>/<name>': config }. */
+function repoWithBlocks(config, blocks, profiles = {}) {
+  const root = tmpRepo(config);
+  for (const [id, cfg] of Object.entries(blocks)) {
+    fs.mkdirSync(path.join(root, 'loop', 'stack', id), { recursive: true });
+    fs.writeFileSync(path.join(root, 'loop', 'stack', id, 'block.json'), JSON.stringify({ title: id, description: id, choose: id, config: cfg }));
+  }
+  for (const [name, profile] of Object.entries(profiles)) {
+    fs.mkdirSync(path.join(root, 'loop', 'profiles', name), { recursive: true });
+    fs.writeFileSync(path.join(root, 'loop', 'profiles', name, 'profile.json'), JSON.stringify(profile));
+  }
+  return root;
+}
+const BLOCKS = {
+  'forge/f': { guard: { packs: ['github'] } },
+  'toolchain/t': { localGate: { commands: ['check'], timeoutMin: 5 }, gates: { files: ['scripts/**'] } },
+  'product/p': { workTypes: { screen: { rubric: ['craft'], accept: 'site' } }, gates: { files: ['e2e.config.*'] } },
+  'hosting/none': { deploy: { adapter: 'none' } },
+  'hosting/site': { deploy: { adapter: 'http-health' } },
+};
+
+test('the stack sits between the defaults and the profile: its blocks are put together, then the profile and the project override them', () => {
+  const profiles = { whole: { stack: ['forge/f', 'toolchain/t', 'product/p'], localGate: { timeoutMin: 9 } } };
+  const cfg = loadConfig(repoWithBlocks({ profile: 'whole', localGate: { commands: ['make check'] } }, BLOCKS, profiles));
+  assert.deepEqual(cfg.stack, ['forge/f', 'toolchain/t', 'product/p'], 'the stack the config was made from is part of it');
+  assert.deepEqual(cfg.gates.files, ['scripts/**', 'e2e.config.*'], 'blocks add to a list');
+  assert.deepEqual(cfg.localGate, { commands: ['make check'], timeoutMin: 9 }, 'the project wins over the profile, the profile over the blocks');
+  assert.deepEqual(cfg.workTypes, { default: { rubric: [], accept: 'none' }, screen: { rubric: ['craft'], accept: 'site' } }, 'a work type comes with its product block');
+  assert.equal(cfg.base, 'develop', 'what no layer names keeps its default');
+});
+
+test('a project lists its own blocks, with or without a profile: its list replaces the profile\'s', () => {
+  const profiles = { whole: { stack: ['forge/f', 'toolchain/t', 'product/p'], localGate: { timeoutMin: 9 } } };
+  const alone = loadConfig(repoWithBlocks({ stack: ['forge/f', 'toolchain/t', 'hosting/none'] }, BLOCKS));
+  assert.equal(alone.deploy.adapter, 'none');
+  assert.deepEqual(alone.workTypes, DEFAULTS.workTypes);
+  const both = loadConfig(repoWithBlocks({ profile: 'whole', stack: ['forge/f', 'toolchain/t', 'hosting/none'] }, BLOCKS, profiles));
+  assert.deepEqual(both.stack, ['forge/f', 'toolchain/t', 'hosting/none']);
+  assert.deepEqual(both.gates.files, ['scripts/**'], 'the profile\'s blocks are not in the stack');
+  assert.equal(both.localGate.timeoutMin, 9, 'what the profile overrides still holds');
+  // no stack at all is the core alone
+  assert.deepEqual(loadConfig(repoWithBlocks({ stack: [] }, BLOCKS)), DEFAULTS);
+});
+
+test('a stack that cannot be one throws a named error', () => {
+  assert.throws(() => loadConfig(repoWithBlocks({ stack: ['forge/f', 'toolchain/t', 'hosting/none', 'hosting/site'] }, BLOCKS)), /stack: hosting\/none and hosting\/site are both hosting blocks/);
+  assert.throws(() => loadConfig(repoWithBlocks({ stack: ['toolchain/t'] }, BLOCKS)), /stack: no forge block/);
+  assert.throws(() => loadConfig(repoWithBlocks({ stack: ['forge/f', 'toolchain/t', 'product/gone'] }, BLOCKS)), /"product\/gone" is not a block under loop\/stack\/ \(known: forge\/f, hosting\/none, hosting\/site, product\/p, toolchain\/t\)/);
+  assert.throws(() => loadConfig(repoWithBlocks({ stack: 'forge/f' }, BLOCKS)), /stack must be a list of block names/);
+  // two blocks of categories that may be many, setting one value differently
+  const clash = { ...BLOCKS, 'product/q': { workTypes: { screen: { rubric: ['craft'], accept: 'local' } } } };
+  assert.throws(() => loadConfig(repoWithBlocks({ stack: ['forge/f', 'toolchain/t', 'product/p', 'product/q'] }, clash)), /the stack cannot be put together: product\/p and product\/q both set workTypes\.screen\.accept \("site" and "local"\)\. Take one of the two blocks out of `stack`\./);
+});
+
 test('an invalid profile throws a named error', () => {
   const root = tmpRepo({ profile: 'broken' });
   fs.mkdirSync(path.join(root, 'loop', 'profiles', 'broken'), { recursive: true });

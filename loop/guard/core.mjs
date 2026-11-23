@@ -12,7 +12,7 @@ import path from 'node:path';
 import { matchesAny } from './paths.mjs';
 import { matchRules } from './rules.mjs';
 import { loadPacks } from './packs/index.mjs';
-import { READ_ONLY_PHASES, esc, no, ok } from './shared.mjs';
+import { READ_ONLY_PHASES, esc, migrationDirs, no, ok } from './shared.mjs';
 
 export { READ_ONLY_PHASES };
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -570,8 +570,7 @@ function decideEdit(file, ctx) {
   if (rel === null) return ok; // outside the repository: scratch files
   if (/^loop\/patches\/[^/]+$/.test(rel) && ctx.isOnBase(rel)) return no('core:patch-frozen', `this runner patch is already on ${ctx.cfg.base} and waits for the owner. Write a new patch file instead.`);
   if (isProtected(rel, ctx)) return no('core:protected-path', `${rel} is part of the harness or the owner's; the loop cannot change it. A runner change ships as a new file in loop/patches/.`);
-  const migrations = (ctx.cfg.postMerge || []).map((s) => s.migrationsDir).filter(Boolean);
-  if (migrations.some((d) => rel.startsWith(d.replace(/\/$/, '') + '/')) && /\.sql$/i.test(rel) && ctx.isOnBase(rel)) {
+  if (migrationDirs(ctx.cfg).some((d) => rel.startsWith(d + '/')) && /\.sql$/i.test(rel) && ctx.isOnBase(rel)) {
     return no('core:frozen-migration', `this migration is already on ${ctx.cfg.base}, so it is applied or about to be. Fix forward with a new file.`);
   }
   const hit = matchRules(ctx.projectRules || [], 'path', rel, ctx.phase);

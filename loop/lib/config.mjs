@@ -1,20 +1,24 @@
 // Loop configuration: defaults, loading and validation.
 //
-// Three layers, later ones win:
+// Four layers, later ones win:
 //   1. DEFAULTS below: what the core loop needs whatever the project is built with. No framework,
 //      host or database is named here.
-//   2. loop/profiles/<name>/profile.json: the stack profile that `profile` in loop.config.json
-//      names. Which commands prove a change, which files CI runs through, which guard packs and
-//      adapters the stack needs (loop/profiles/README.md). Every profile ships with the harness,
-//      so the runner's own suite can test each one whatever a project uses.
-//   3. loop/loop.config.json: this project's own values (repo, branches, the dev URL, the git
-//      author). /setup-loop writes it.
+//   2. The stack: the blocks `stack` lists (loop/stack/<category>/<name>/block.json), put
+//      together into one config. Which commands prove a change, which files CI runs through,
+//      which work types, guard packs and adapters the project needs (loop/stack/README.md).
+//      Every block ships with the harness, so the runner's own suite can test each one whatever
+//      a project uses.
+//   3. loop/profiles/<name>/profile.json: the profile `profile` in loop.config.json names. A
+//      profile is a stack that was proven as a whole: it lists the blocks, and may override them.
+//   4. loop/loop.config.json: this project's own values (repo, branches, the dev URL, the git
+//      author). /setup-loop writes it. It names a profile, or lists its own blocks in `stack`.
 // This module merges them and names what is still missing.
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { packProblems } from '../guard/packs/index.mjs';
+import { composeStack, loadStack } from './stack.mjs';
 
 /** Oldest Claude Code the loop runs on: --permission-prompts none, fail-closed hooks, /goal. */
 export const MIN_CLAUDE_VERSION = '2.1.319';
@@ -24,21 +28,25 @@ export const DEFAULTS = Object.freeze({
   base: 'develop', // the loop merges here
   production: 'main', // the loop never touches it
   ciCheck: 'ci', // the one required check-run name
-  profile: '', // the stack profile this project uses: a folder name under loop/profiles/. '' = none
+  profile: '', // a stack proven as a whole: a folder name under loop/profiles/. '' = none
+  stack: [], // the blocks this project is built with ("<category>/<name>", loop/stack/). [] = the core alone
   forge: { adapter: 'github' }, // pull requests, CI results, the merge (loop/adapters/forge-*.mjs)
   // "Does the dev site serve this commit?" http-health polls devUrl + health until the body's
   // commitField starts with the merged sha and every field in expect has an allowed value.
   // adapter 'none': nothing is deployed, so no milestone acceptance on a site.
   deploy: { adapter: 'http-health', devUrl: '', health: '/api/health', commitField: 'commit', expect: {}, bypassSecretEnv: '', bypassHeader: '' },
   postMerge: [], // steps the runner takes after a merge (loop/adapters/postmerge-*.mjs)
+  // Folders whose .sql files are frozen once they are on the base branch, on top of every
+  // postMerge[].migrationsDir: for a database the app migrates itself, with no step after a merge.
+  migrations: { dirs: [] },
   // packs: the tool rules on top of the core guard (loop/guard/packs/). allowedDbProject and
   // dbSchema belong to the database packs.
   guard: { packs: ['github'], allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '', requireBranchProtection: true },
   // What kinds of thing an item can deliver, and how each is reviewed and accepted
   // (loop/lib/worktypes.mjs). An item names one with `type`; `ui: true` is the type "ui",
-  // anything else "default". A profile adds its own and removes one by setting it to null.
+  // anything else "default". The core knows only "default": every other type comes with the
+  // product block that says how its items are driven and scored (loop/stack/product/).
   workTypes: {
-    ui: { rubric: ['design_quality', 'originality', 'craft', 'functionality'], accept: 'site' },
     default: { rubric: [], accept: 'none' },
   },
   // What a PR may not change because CI runs through it (loop/lib/gates.mjs).
@@ -143,7 +151,7 @@ function readJsonIfPresent(root, file) {
   }
 }
 
-/** The stack profile `name` of the repo at `root` ({} for no name). Throws when it does not exist or is invalid JSON. */
+/** The profile `name` of the repo at `root` ({} for no name). Throws when it does not exist or is invalid JSON. */
 export function loadProfile(root, name) {
   if (!name) return {};
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || !fs.existsSync(profilePath(root, name))) {
@@ -152,18 +160,23 @@ export function loadProfile(root, name) {
   return readJsonIfPresent(root, profilePath(root, name));
 }
 
-/** DEFAULTS with a profile over them: what a project of that stack starts from. */
-export function withProfile(profile) {
-  return deepMerge(DEFAULTS, profile || {});
+/**
+ * The config a project runs with whose loop/loop.config.json holds `own`: DEFAULTS, then its
+ * stack's blocks put together, then the profile it names, then `own`. The stack is the project's
+ * own list, or else the profile's. Throws on an unknown profile or block, and on blocks that
+ * cannot be put together.
+ */
+export function configFor(root, own = {}) {
+  const profile = loadProfile(root, own.profile);
+  const stack = own.stack ?? profile.stack ?? [];
+  const { config, conflicts } = composeStack(loadStack(root, stack));
+  if (conflicts.length) throw new Error(`the stack cannot be put together: ${conflicts.join('; ')}. Take one of the two blocks out of \`stack\`.`);
+  return { ...deepMerge(deepMerge(deepMerge(DEFAULTS, config), profile), own), stack };
 }
 
-/**
- * The config for the repo at `root`: DEFAULTS, then the profile loop/loop.config.json names, then
- * loop/loop.config.json itself. Throws on invalid JSON or an unknown profile.
- */
+/** The config for the repo at `root`: configFor what loop/loop.config.json holds. Throws on invalid JSON too. */
 export function loadConfig(root) {
-  const own = readJsonIfPresent(root, configPath(root));
-  return deepMerge(withProfile(loadProfile(root, own.profile)), own);
+  return configFor(root, readJsonIfPresent(root, configPath(root)));
 }
 
 /**
@@ -180,8 +193,9 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!cfg.gitAuthor?.name) p.push('gitAuthor.name: the commit author the loop uses');
   if (!/^[^@\s]+@[^@\s]+$/.test(cfg.gitAuthor?.email || '')) p.push('gitAuthor.email: the commit author email the loop uses (some hosts only build previews for commits by a verified account email)');
   // A dev URL is needed when something is accepted on a deployed site: an item of such a work
-  // type in the backlog, or, before there is a backlog, any such type in the profile.
-  const onSite = (name) => cfg.workTypes?.[name]?.accept === 'site';
+  // type in the backlog, or, before there is a backlog, any such type of the stack.
+  // ("site-or-local" is on the site whenever the stack deploys one, which the last test below asks.)
+  const onSite = (name) => ['site', 'site-or-local'].includes(cfg.workTypes?.[name]?.accept);
   const needsUrl = backlog ? (backlog.items || []).some((i) => onSite(i.type || (i.ui ? 'ui' : 'default'))) : Object.keys(cfg.workTypes || {}).some(onSite);
   if (needsUrl && cfg.deploy?.adapter !== 'none' && !/^https?:\/\//.test(cfg.deploy?.devUrl || '')) p.push('deploy.devUrl: the URL where the base branch is deployed (milestone acceptance runs there)');
   p.push(...packProblems(cfg)); // unknown guard packs, and what each listed pack needs
@@ -202,6 +216,7 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!['always', 'unless-tree-equal'].includes(cfg.baseCiWait)) p.push('baseCiWait must be "always" or "unless-tree-equal"');
   if (!['apply', 'wait'].includes(cfg.postMergeOnRedBase)) p.push('postMergeOnRedBase must be "apply" or "wait"');
   if (!Array.isArray(cfg.sessionEnvDeny)) p.push('sessionEnvDeny must be a list of environment variable names');
+  if (!Array.isArray(cfg.migrations?.dirs) || cfg.migrations.dirs.some((d) => typeof d !== 'string' || !d || d.startsWith('/') || d.split('/').includes('..'))) p.push('migrations.dirs must be a list of folders in the repository ("migrations")');
   const name = '[\\w.@()[\\]+~-]+';
   const block = new RegExp(`^(?:${name}|\\*)(?:/(?:${name}|\\*))*/?$`);
   const usable = (b) => typeof b === 'string' && block.test(b) && b.includes('*') && !b.split('/').some((s) => s === '.' || s === '..');

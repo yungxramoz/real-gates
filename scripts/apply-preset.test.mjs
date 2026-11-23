@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { listPresets, plan } from './apply-preset.mjs';
 
@@ -94,7 +94,7 @@ for (const preset of presets) {
     assert.ok(fs.existsSync(path.join(dir, 'presets')), 'nothing was touched');
   });
 
-  test(`preset ${preset.name}: applied to the template, the project's own gates pass and the loop starts`, () => {
+  test(`preset ${preset.name}: applied to the template, the project's own gates pass and the loop starts`, async () => {
     const dir = copyOfRepo();
     const applied = node(['scripts/apply-preset.mjs', preset.name], dir);
     assert.equal(applied.status, 0, applied.stderr + applied.stdout);
@@ -116,6 +116,7 @@ for (const preset of presets) {
       'loop/run.mjs',
       'loop/guard/core.mjs',
       `loop/profiles/${preset.name}/profile.json`,
+      'loop/stack/README.md',
       'docs/DECISIONS.md',
       'scripts/ac-trace.mjs',
       '.claude/skills/setup-loop/SKILL.md',
@@ -128,11 +129,14 @@ for (const preset of presets) {
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '-m', `apply ${preset.name}`);
 
-    // the profile's local gate is a script of the project, and it passes on the skeleton
-    const profile = JSON.parse(
-      fs.readFileSync(path.join(dir, 'loop', 'profiles', preset.name, 'profile.json'), 'utf8'),
+    // the profile lists stack blocks; the project's own harness puts them together
+    const { loadConfig } = await import(
+      pathToFileURL(path.join(dir, 'loop', 'lib', 'config.mjs')).href
     );
-    for (const command of profile.localGate.commands) {
+    const stack = loadConfig(dir);
+    assert.ok(stack.stack.length > 0, 'the profile lists its blocks');
+    // the stack's local gate is a script of the project, and it passes on the skeleton
+    for (const command of stack.localGate.commands) {
       const script = command.match(/^npm run (\S+)$/)?.[1];
       const file = command.match(/^node (scripts\/\S+)$/)?.[1];
       assert.ok(
@@ -140,8 +144,8 @@ for (const preset of presets) {
         `local gate "${command}" must be an npm script of the preset or a script in scripts/`,
       );
     }
-    // the skeleton's architecture pages name every block the profile's patterns find
-    assert.ok(profile.architecture.blocks.length > 0);
+    // the skeleton's architecture pages name every block the stack's patterns find
+    assert.ok(stack.architecture.blocks.length > 0);
     const arch = node(['scripts/arch-check.mjs'], dir);
     assert.equal(arch.status, 0, `arch-check failed:\n${arch.stdout}\n${arch.stderr}`);
     assert.match(arch.stdout, /arch-check: OK — \d+ page\(s\), [1-9]\d* building block\(s\)/);

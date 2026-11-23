@@ -29,8 +29,10 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
                              PR CI passed on, the next item starts meanwhile (`baseCiWait`)
  └─ post-merge steps       → the script applies new migrations with the Supabase CLI and checks
                              the migration list. Not verified? HELD, and the run stops
- └─ milestone complete?    → acceptance on the deployed dev site, after /api/health reports the
-                             merged commit and db ok. Failures become ACC items, max 2 rounds
+ └─ milestone complete?    → acceptance where the product runs: on the deployed dev site, after
+                             /api/health reports the merged commit and db ok, or on the merged
+                             base itself when nothing is deployed. Failures become ACC items,
+                             max 2 rounds
                            → retro: what went well, what went wrong and why. Its action
                              items become one LEARN item, built before the packet; causes in
                              the harness are recorded as impediments; nothing waits
@@ -42,30 +44,33 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
 Why each step is there: [../WHY.md](../WHY.md). It is deliberately **sequential**: concurrent
 agents sharing one working tree are what broke the setup this loop replaced.
 
-## Core, profile, project
+## Core, stack, project
 
 The loop is three things, kept apart:
 
 | | Where | Knows |
 | --- | --- | --- |
 | **Core** | `loop/run.mjs`, `loop/lib/`, `loop/guard/core.mjs`, `loop/prompts/` | The method: the item engine, the gates, git, the read-only steps. No framework, host or database |
-| **Stack profile** | `loop/profiles/<name>/`, named by `profile` in the project config | What this stack is: the check commands, the files CI runs through, the ratchets, the work types, which guard packs and adapters to use, and the stack's words for each step |
-| **Project config** | `loop/loop.config.json` | Which profile, and this project's own values: repo, branches, the dev URL, the git author |
+| **Stack blocks** | `loop/stack/<category>/<name>/`, listed by `stack` in the project config or by the profile it names | What the project is built with, one block per choice: the forge, the toolchain, the framework, what a user touches, the database, the hosting. Each block adds its check commands, gate files, ratchets, work types, guard packs and adapters, and its words for each step |
+| **Project config** | `loop/loop.config.json` | Which blocks, and this project's own values: repo, branches, the dev URL, the git author |
 
-Behind the profile's choices sit **adapters** (`loop/adapters/`: the forge, the deploy probe, the
+Behind the blocks' choices sit **adapters** (`loop/adapters/`: the forge, the deploy probe, the
 post-merge steps, notifications) and **guard packs** (`loop/guard/packs/`: the rules for one tool
-or service). The core only calls their interfaces. Another stack is another profile and app
-skeleton; another forge or host is another adapter. The contract: [profiles/README.md](profiles/README.md).
+or service). The core only calls their interfaces. Another tool is another block; another forge or
+host is another adapter. The contract: [stack/README.md](stack/README.md).
+`node loop/scripts/stack.mjs` prints this project's blocks and what they add up to.
 
-Two profiles ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
+A block is **proven** (a real project was built with it) or a **draft** (tested, and no project
+has run on it yet); the run says before it starts when its stack uses a draft. A **profile**
+(`loop/profiles/<name>/`) is a stack that was proven as a whole: a named list of proven blocks. Two ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
 (`node scripts/apply-preset.mjs node-cli`). This page describes the web preset where it has to
-name a tool; where the two differ, the profile decides:
+name a tool; where the two differ, the blocks decide:
 
 | | Web app | Node CLI |
 | --- | --- | --- |
 | Local gate | `pnpm check` | `npm run check` |
 | Work types | `ui` (four design scores), `default` | `command` (help and errors, ergonomics, output, robustness), `default` |
-| Milestone acceptance | on the deployed dev site | on the merged base: packed, installed under `.loop/`, used from there |
+| Milestone acceptance | on the deployed dev site (the web UI block on a stack that deploys nothing: on a build of the merged base, started locally) | on the merged base: packed, installed under `.loop/`, used from there |
 | Post-merge steps | migrations to the dev database | none |
 | Guard packs | `github`, `supabase`, `vercel` | `github`, `npm` |
 | Ratchet | coverage thresholds in the Vitest config | `coverage.thresholds.json` |
@@ -189,7 +194,7 @@ or removed. A dry run writes nothing.
 | `base.red` | `item`, `sha`, `background`, `fix` | CI on the base branch failed after a merge |
 | `base.no_verdict` | `item`, `sha`, `why` | CI on the base branch never reported |
 | `postmerge.step` | `item`, `adapter`, `ok`, `note` | a post-merge step ran |
-| `acceptance.round` | `milestone`, `round`, `mode`, `pass`, `failures` | a milestone acceptance session returns |
+| `acceptance.round` | `milestone`, `round`, `mode`, `places`, `pass`, `failures` | a milestone acceptance session returns. `places`: where it was accepted, `site`, `local` or both; `mode` is the first of them |
 | `milestone.packed` | `milestone`, `unverified` | a milestone is closed |
 | `retro.called` | `item`, `signature` | a signal showed up in enough different items to call a retro early |
 | `retro.held` | `retro`, `kind` (`milestone` or `early`), `milestone`, `wentWell`, `problems`, `actions`, `impediments`, `learn` | a retro session returned |
@@ -211,7 +216,7 @@ runs.
 cannot run, the action is refused. The runner starts sessions with a copy of the guard from the
 base branch, so a change in the working tree cannot switch a rule off. Its locked
 core (`loop/guard/core.mjs`) holds the git, file and read-only rules. The rules for a tool or
-service are in guard packs (`loop/guard/packs/`), switched on by `guard.packs` in the profile
+service are in guard packs (`loop/guard/packs/`), switched on by `guard.packs` of the stack's blocks
 (the web preset: `github`, `supabase`, `vercel`; the CLI preset: `github`, `npm`). A pack can only block, an unknown pack name refuses
 every call, and the packs are part of the snapshot. Together they block:
 
@@ -221,7 +226,7 @@ every call, and the packs are part of the snapshot. Together they block:
 | Merging | `gh pr merge` (only the script merges), repo settings, secrets, branch protection, `gh api` writes |
 | Database | any Supabase project except `guard.allowedDbProject`, every ref in `guard.forbiddenRefs`, `apply_migration`, `supabase db push` / `reset`, writing or destructive SQL from a session |
 | SQL | judged with comments removed, the way Postgres reads it, so a comment can neither trip a rule nor hide a write |
-| Files | `loop/**` and the other `guard.protectedPaths`, `.env*`, migrations already on base, broad deletes |
+| Files | `loop/**` and the other `guard.protectedPaths`, `.env*`, migrations already on base (in the folder of a post-merge step, or one `migrations.dirs` names), broad deletes |
 | Read-only steps | review, accept and packet: any write outside `.loop/`, any git write. These sessions also start without write tools |
 | Hosting | Vercel settings writes |
 
@@ -299,7 +304,7 @@ check. Any test runner that writes JUnit can feed it.
 | a page names a decision ID `docs/DECISIONS.md` does not have | no page cites a decision nobody recorded |
 | a relative link on a page leads to no file | the pages stay readable |
 
-What a building block is comes from `architecture.blocks` in the stack profile: `src/lib/*` is
+What a building block is comes from `architecture.blocks` of the stack's blocks: `src/lib/*` is
 every file and folder in `src/lib`, `src/*/` every folder in `src`. A block counts as named when
 the page has its path, or a path inside it, in backticks. Test files, type declarations and
 dotfiles are not blocks. The patterns are in `loop/`, which no loop session can edit, so the loop
@@ -569,7 +574,7 @@ URL. A project that does not have the command yet runs the template's copy from 
 
 | | Paths | What happens |
 | --- | --- | --- |
-| The template's | `loop/`, `.claude/skills/`, the shared scripts, `loop-runner.yml`, the CI workflow of your stack | replaced; a file the template dropped is removed |
+| The template's | `loop/` (the runner, the guard, every stack block and profile), `.claude/skills/`, the shared scripts, `loop-runner.yml`, the CI workflow of your stack | replaced; a file the template dropped is removed |
 | Yours, inside `loop/` | `loop.config.json`, `backlog.json`, `rules/project-rules.json`, `patches/` | never touched |
 | Yours | docs, `CLAUDE.md`, the app, `package.json` | never touched; when the template changed one since your last sync, the command names it |
 

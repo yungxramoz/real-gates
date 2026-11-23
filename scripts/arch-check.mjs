@@ -9,8 +9,8 @@
  * is something a script can check, on every pull request and with nobody watching:
  *
  * 1. **Building blocks.** Every block in the code is named on the building-blocks page
- *    (`*building-blocks.md`). What a block is comes from `architecture.blocks` in the stack
- *    profile, a list of path patterns: `src/lib/*` is every file and folder in `src/lib`,
+ *    (`*building-blocks.md`). What a block is comes from `architecture.blocks` of the loop
+ *    config, a list of path patterns: `src/lib/*` is every file and folder in `src/lib`,
  *    the same pattern with a slash at the end only the folders. A block counts as named when the
  *    page has its path, or a path inside it, in backticks. Test files, type declarations and
  *    dotfiles are not blocks.
@@ -22,7 +22,7 @@
  * Text inside an HTML comment or a fenced code block is not read: a placeholder or a diagram
  * proves nothing either way.
  *
- * The patterns live in the profile (`loop/profiles/<name>/profile.json`) or in
+ * The patterns live in the stack's blocks (`loop/stack/<category>/<name>/block.json`) or in
  * `loop/loop.config.json`, which a loop session cannot edit, so the loop cannot shrink the check
  * to get past it. `--blocks` is for a tree without a loop config.
  *
@@ -242,7 +242,7 @@ export function checkArchitecture({ root, blocks = [] }) {
   const patterns = blocks.filter((b) => !patternProblem(b));
   if (!blocks.length)
     notes.push(
-      'no building blocks are configured (architecture.blocks in the stack profile): the pages were checked for links, decisions and paths only.',
+      'no building blocks are configured (architecture.blocks, set by a block of the stack or in loop/loop.config.json): the pages were checked for links, decisions and paths only.',
     );
   const names = new Set(named.map((n) => n.path));
   const inCode = [...new Set(patterns.flatMap((p) => blocksOf(root, p)))].sort();
@@ -273,7 +273,7 @@ function parseArgs(argv) {
   return options;
 }
 
-/** `architecture.blocks` of the repository's loop config: defaults, then the profile, then the project. */
+/** `architecture.blocks` of the repository's loop config: defaults, then the stack's blocks, then the profile, then the project. */
 async function configuredBlocks(root) {
   const config = join(root, 'loop', 'lib', 'config.mjs');
   if (!existsSync(config)) return [];

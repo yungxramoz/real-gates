@@ -1,0 +1,25 @@
+{
+  "title": "npm and node:test",
+  "description": "A plain Node.js project (ESM, no build step) checked with `npm run check` (syntax, unit tests with node:test, coverage thresholds). A pull request may not change the scripts or engines in package.json or the repository's own scripts, and the numbers in coverage.thresholds.json may only go up.",
+  "choose": "The project is installed with npm and tested with the test runner built into Node, with no build step.",
+  "status": "proven",
+  "config": {
+    "localGate": { "commands": ["npm run check", "node scripts/arch-check.mjs"] },
+    "gates": {
+      "files": ["scripts/**"],
+      "frozenJsonKeys": [
+        { "file": "package.json", "key": "scripts" },
+        { "file": "package.json", "key": "engines" }
+      ],
+      "ratchets": [
+        {
+          "name": "coverage",
+          "files": ["coverage.thresholds.json"],
+          "comments": "none",
+          "number": "\"(lines|branches|functions)\"\\s*:\\s*(\\d+(?:\\.\\d+)?)",
+          "hint": "Add tests instead."
+        }
+      ]
+    }
+  }
+}

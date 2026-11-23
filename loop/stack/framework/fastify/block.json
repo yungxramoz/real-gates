@@ -1,0 +1,9 @@
+{
+  "title": "Fastify",
+  "description": "A Node.js server built with Fastify, with its source in `src/`. Every folder in `src/` is a building block that the architecture pages must name. The block says nothing about how endpoints are reviewed (that is the HTTP API block) or how the code is checked (that is the toolchain).",
+  "choose": "The product has a Node.js server built with Fastify.",
+  "status": "draft",
+  "config": {
+    "architecture": { "blocks": ["src/*/"] }
+  }
+}

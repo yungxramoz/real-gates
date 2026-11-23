@@ -8,9 +8,9 @@
 // A preset is a folder presets/<name>/ with:
 //   preset.json   { name, description, remove: [paths of the web preset this stack does not use] }
 //   files/        copied over the repository root (the app skeleton, its CI workflow, CLAUDE.md,
-//                 loop/loop.config.json naming the stack's profile, …)
-// The stack's profile itself lives in loop/profiles/<name>/ and is not copied: every profile
-// ships with the harness.
+//                 loop/loop.config.json naming the profile, …)
+// The profile itself (loop/profiles/<name>/, the list of the stack's blocks) and the blocks
+// (loop/stack/) are not copied: every profile and every block ships with the harness.
 //
 // It removes the paths in `remove`, copies `files/`, and deletes presets/ (pass --keep-presets to
 // keep it). It refuses a working tree with uncommitted changes unless --force is given, so git
@@ -85,7 +85,9 @@ export function plan(root, name) {
   }
   const preset = JSON.parse(fs.readFileSync(path.join(dir, 'preset.json'), 'utf8'));
   if (!fs.existsSync(path.join(root, 'loop', 'profiles', name, 'profile.json')))
-    problems.push(`loop/profiles/${name}/profile.json is missing: the preset has no stack profile`);
+    problems.push(
+      `loop/profiles/${name}/profile.json is missing: the preset has no profile that lists its stack`,
+    );
   const remove = [];
   for (const rel of preset.remove || []) {
     const norm = path.posix.normalize(String(rel).replace(/\\/g, '/'));

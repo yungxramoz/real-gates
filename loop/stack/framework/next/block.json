@@ -1,0 +1,9 @@
+{
+  "title": "Next.js",
+  "description": "A Next.js app (App Router) with its source in `src/`. Every folder in `src/` and every file or folder in `src/lib/` is a building block that the architecture pages must name.",
+  "choose": "The app is built with Next.js.",
+  "status": "proven",
+  "config": {
+    "architecture": { "blocks": ["src/*/", "src/lib/*"] }
+  }
+}

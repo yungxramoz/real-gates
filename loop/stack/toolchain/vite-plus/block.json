@@ -1,0 +1,23 @@
+{
+  "title": "Vite+ (Oxlint, Oxfmt, Vitest)",
+  "description": "A TypeScript project on the Vite+ toolchain, installed with pnpm and checked with `pnpm check`: the gate wiring check, then `vp check` (Oxfmt, Oxlint and the type check) and the unit tests with coverage. Vite+ keeps the settings of every tool in vite.config.ts, which a session has to be free to edit, so the rules live in files of their own that the config imports: `gates/lint.ts`, `gates/fmt.ts` and `gates/test.ts`. A pull request may not change the first two, may only raise the coverage thresholds in the third, and may add no config file a tool would read instead. `scripts/check-gates.mjs` fails when the config Vite+ really loads no longer hands them to their tools unchanged, or when a tracked file is hidden from the tools by an ignore file. The block brings those files (`files/`).",
+  "choose": "The project is built or tested with Vite (a React app, a Node server, a library) and uses Vite+ with Oxlint and Oxfmt.",
+  "status": "draft",
+  "config": {
+    "localGate": { "commands": ["pnpm check", "node scripts/arch-check.mjs"] },
+    "gates": {
+      "files": ["scripts/**", "gates/lint.ts", "gates/fmt.ts", "tsconfig.json", "tsconfig.*.json", ".oxlintrc*", "oxlint.config.*", ".oxfmtrc*", ".prettierrc*", ".prettierignore", "vitest.config.*", "vitest.workspace.*"],
+      "frozenJsonKeys": [{ "file": "package.json", "key": "scripts" }],
+      "ratchets": [
+        {
+          "name": "coverage",
+          "files": ["gates/test.ts"],
+          "comments": "js",
+          "within": "thresholds\\s*:\\s*\\{([\\s\\S]*?)\\}",
+          "number": "\\b(lines|functions|branches|statements)\\s*:\\s*(\\d+(?:\\.\\d+)?)",
+          "hint": "Add tests instead."
+        }
+      ]
+    }
+  }
+}

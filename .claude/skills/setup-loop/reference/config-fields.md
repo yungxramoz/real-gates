@@ -1,14 +1,16 @@
 # Config fields
 
 Every key of `loop/loop.config.json`: the question to ask, the recommended answer, and where the
-value comes from. `profile` names the stack profile (a folder under `loop/profiles/`); it is
-already set by the template or by `scripts/apply-preset.mjs`, so read it, do not ask. A key left
-out of the file keeps the value from that profile, and what the profile does not set keeps its
+value comes from. `profile` names a proven stack (a folder under `loop/profiles/`), which is a
+list of stack blocks (`loop/stack/`); a project may list its blocks itself under `stack`. Either
+is already set by the template or by `scripts/apply-preset.mjs`, so read it, do not ask. A key
+left out of the file keeps the value the blocks give it, and what no block sets keeps its
 default from `loop/lib/config.mjs` (`DEFAULTS`). Ask only for this project's own values. What
 belongs to the stack (check commands, gate files, work types, guard packs, adapters, the health
-contract) is the profile's and is described in `loop/profiles/README.md`; do not copy it into the
-project config. A profile with `deploy.adapter` `none` and no `postMerge` steps (the CLI
-profile) has no database and no deploy step: skip those questions.
+contract) is the blocks' and is described in `loop/stack/README.md`; do not copy it into the
+project config. `node loop/scripts/stack.mjs` prints what the stack adds up to. A stack that is
+not deployed and has no step after a merge (the CLI profile) has no database and no deploy step:
+skip those questions.
 
 ## Contents
 
@@ -125,6 +127,8 @@ user asks, and keep `budgets.maxUsdPerSession` set: it stops a single runaway se
 
 | Key | What it does | Default |
 |---|---|---|
+| `stack` | the project's own list of stack blocks, instead of a profile's (`node loop/scripts/stack.mjs --list` prints every block) | the profile's list |
+| `migrations.dirs` | folders whose `.sql` files are frozen once they are on the base branch, for a database the app migrates itself | what the database block sets; `[]` |
 | `budgets.maxUsdPerRun` | stops the run once its sessions cost this much; `0` = no cap | `0` |
 | `localGate.commands` | shell commands the runner runs on the pushed head before waiting for CI | preset: `["pnpm check"]` |
 | `sessionEnvDeny` | extra environment variables no agent session may see | `[]` |
