@@ -436,14 +436,15 @@ describe('the Vite+ toolchain keeps its rules although every tool reads one conf
   // built-ins only and runs before any install). Where the repository has Vite installed, as
   // the template does in CI, this runs; elsewhere it says why it did not.
   test('run against a real config, the check passes the honest one and fails every way of weakening it', async (t) => {
-    const vite = await import('vite').catch(() => null);
-    if (!vite) return t.skip('Vite is not installed in this repository: the check needs its config loader');
+    // Vite+ in a project on that toolchain, plain Vite in the template itself
+    const loader = (await import('vite-plus').catch(() => null)) ? 'vite-plus' : (await import('vite').catch(() => null)) ? 'vite' : null;
+    if (!loader) return t.skip('neither Vite+ nor Vite is installed in this repository: the check needs their config loader');
     // inside the repository, so the config's import of Vite resolves; under .loop/, which git ignores
     fs.mkdirSync(path.join(REPO, '.loop'), { recursive: true });
     const root = fs.mkdtempSync(path.join(REPO, '.loop', 'check-gates-'));
     tmp.push(root);
     fs.cpSync(files, root, { recursive: true });
-    const honest = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8').replace("from 'vite-plus'", "from 'vite'");
+    const honest = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8').replace("from 'vite-plus'", `from '${loader}'`);
     const run = (config) => {
       fs.writeFileSync(path.join(root, 'vite.config.ts'), config);
       return spawnSync(process.execPath, [path.join(root, 'scripts', 'check-gates.mjs')], { cwd: root, encoding: 'utf8' });
