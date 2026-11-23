@@ -3,6 +3,7 @@
   "description": "A TypeScript project checked with `pnpm check` (lint, types, unit tests with coverage). A pull request may not change the scripts in package.json, the repository's own scripts or the lint, type and format configs, and the coverage thresholds in the Vitest config may only go up.",
   "choose": "The project is installed with pnpm, linted with ESLint, formatted with Prettier and unit-tested with Vitest.",
   "status": "proven",
+  "comesWith": "next-supabase-vercel",
   "config": {
     "localGate": { "commands": ["pnpm check", "node scripts/arch-check.mjs"] },
     "gates": {

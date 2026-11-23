@@ -157,21 +157,27 @@ export async function plan(root, ids) {
     return fail(
       'there is no presets/ folder: this repository already is the project of one stack. Build a stack in a fresh copy of the template.',
     );
-  const toolchain = blocks.find((b) => b.category === 'toolchain');
-  if (!fs.existsSync(path.join(toolchain.dir, 'files', 'package.json'))) {
+  // A block whose code exists only in the project of a profile cannot be built into another
+  // stack: nothing here would write that code, and what the block asks of the project (a health
+  // answer that names the database, a config the gates freeze) would be asked of nothing.
+  const buildable = (category) =>
+    h
+      .blockIds(root)
+      .filter((id) => id.startsWith(`${category}/`) && !h.loadBlock(root, id).comesWith)
+      .join(', ') || 'none ships yet';
+  const tied = blocks.filter((b) => b.comesWith);
+  if (tied.length)
     return fail(
-      `${toolchain.id} brings no project files: it comes only as part of a profile. Build on a toolchain that does (${
-        h
-          .blockIds(root)
-          .filter(
-            (id) =>
-              id.startsWith('toolchain/') &&
-              fs.existsSync(path.join(h.stackDir(root), id, 'files', 'package.json')),
-          )
-          .join(', ') || 'none ships yet'
-      }).`,
+      ...tied.map(
+        (b) =>
+          `${b.id} comes only as part of the profile "${b.comesWith}": its part of a project is that profile's. Take the profile whole, or choose a ${b.category} block that can be built into any stack (${buildable(b.category)}).`,
+      ),
     );
-  }
+  const toolchain = blocks.find((b) => b.category === 'toolchain');
+  if (!fs.existsSync(path.join(toolchain.dir, 'files', 'package.json')))
+    return fail(
+      `${toolchain.id} brings no package.json: a stack is built on a toolchain that does`,
+    );
 
   // 1. what the root holds of the web profile, and no chosen block still needs
   const manifest = readJson(path.join(root, 'loop', 'profiles', ROOT_PROFILE, 'root.json'));

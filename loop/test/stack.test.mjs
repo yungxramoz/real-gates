@@ -251,7 +251,10 @@ describe('node loop/scripts/stack.mjs', () => {
     const listed = run('--list', '--root', REPO);
     assert.equal(listed.status, 0, listed.stderr);
     assert.match(listed.stdout, /product \(any number\): what a user touches/);
-    assert.match(listed.stdout, / {2}product\/cli-command: CLI command\n {4}Commands a person or a script runs in a terminal/);
+    assert.match(listed.stdout, / {2}product\/cli-command: CLI command \[only as part of the profile node-cli\]\n {4}Commands a person or a script runs in a terminal/);
+    assert.match(listed.stdout, / {2}forge\/github: GitHub\n {4}Pull requests, CI results and the merge live on GitHub/);
+    // a block whose code exists only in a profile's project says which profile
+    assert.deepEqual(cats.flatMap((c) => c.blocks).filter((b) => b.comesWith).map((b) => b.id).sort(), ['database/supabase', 'framework/next', 'product/cli-command', 'toolchain/npm-node-test', 'toolchain/pnpm-vitest']);
     assert.match(listed.stdout, /Choose it when: The repository is on GitHub\./);
   });
   test('a project sees what its stack adds up to, with a profile and with its own list', () => {
@@ -497,6 +500,26 @@ describe('what the blocks bring into a project fits together', () => {
         assert.ok((script && pkg.scripts[script]) || file, `${id}: local gate "${command}"`);
       }
     }
+  });
+  test('a block whose code exists only in a profile\'s project names that profile, and brings no files of its own', () => {
+    const tied = ids.map((id) => loadBlock(REPO, id)).filter((b) => b.comesWith);
+    assert.deepEqual(tied.map((b) => `${b.id} with ${b.comesWith}`), ['database/supabase with next-supabase-vercel', 'framework/next with next-supabase-vercel', 'product/cli-command with node-cli', 'toolchain/npm-node-test with node-cli', 'toolchain/pnpm-vitest with next-supabase-vercel']);
+    for (const b of tied) {
+      assert.ok(loadProfile(REPO, b.comesWith).stack.includes(b.id), `${b.id}: the profile ${b.comesWith} lists it`);
+      assert.deepEqual(filesOf(b.id).files, [], `${b.id}: its files are the profile's project, not the block's`);
+    }
+    // every other toolchain is one a stack can be built on, and every category but the forge's
+    // has a block that can be built into any stack
+    assert.deepEqual(ids.filter((id) => id.startsWith('toolchain/') && !loadBlock(REPO, id).comesWith), bases);
+    for (const category of Object.keys(CATEGORIES)) assert.ok(ids.some((id) => id.startsWith(`${category}/`) && !loadBlock(REPO, id).comesWith), `${category}: a block to build with`);
+    // a block that asks something of the health answer has its code in a profile: nothing a
+    // built server would have to know about
+    for (const id of ids) {
+      const b = loadBlock(REPO, id);
+      if (Object.keys(b.config.deploy?.expect || {}).length) assert.ok(b.comesWith, `${id} asks the health endpoint for ${Object.keys(b.config.deploy.expect).join(', ')}: the server a stack is built with does not answer that`);
+    }
+    const root = repoWith({ 'product/free': { raw: '{}' }, 'product/tied': { raw: '{"comesWith":"some-profile"}' }, 'product/odd': { raw: '{"comesWith":true}' } });
+    assert.deepEqual(['free', 'tied', 'odd'].map((n) => loadBlock(root, `product/${n}`).comesWith), ['', 'some-profile', '']);
   });
   test('only a toolchain owns the four names; the other blocks bring scripts of their own under them', () => {
     for (const id of ids.filter((i) => !i.startsWith('toolchain/'))) {

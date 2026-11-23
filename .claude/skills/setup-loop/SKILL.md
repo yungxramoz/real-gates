@@ -62,11 +62,12 @@ else the stack is chosen: show it in one line (`node loop/scripts/stack.mjs`) an
    endpoints), where it runs and where the data lives. One question at a time.
 2. **Recommend.** `node loop/scripts/stack.mjs --list --json` lists every block with the sentence
    that says when to choose it. Recommend the blocks whose sentence is true for the answers.
-3. **Let the user choose.** One question per category (forge, toolchain, framework, product,
-   database, hosting) with every block of it as an option: the recommended one first and marked,
-   a draft marked as one, several selectable where a category holds several, "none" where it may
-   be empty. Use the question tool when there is one. The user's choice stands, also against
-   your recommendation.
+3. **Let the user choose.** First a whole profile or an own combination. For an own
+   combination, one question per category (forge, toolchain, framework, product, database,
+   hosting) with every block that can be combined as an option: the recommended one first and
+   marked, a draft marked as one, several selectable where a category holds several, "none"
+   where it may be empty. Use the question tool when there is one. The user's choice stands,
+   also against your recommendation.
 4. **Build.** The web profile needs nothing. The CLI profile is
    `node scripts/apply-preset.mjs node-cli`. Any other list:
 

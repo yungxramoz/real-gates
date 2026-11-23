@@ -167,11 +167,52 @@ test(
       await problems(['forge/github', 'toolchain/vite-plus', 'hosting/none', 'hosting/vercel']),
       /are both hosting blocks/,
     );
-    // a toolchain that comes only with its profile
+    // a block whose code exists only in a profile's project is not built into another stack
     assert.match(
       await problems(['forge/github', 'toolchain/pnpm-vitest', 'product/web-ui', 'hosting/none']),
-      /toolchain\/pnpm-vitest brings no project files: it comes only as part of a profile\. Build on a toolchain that does \(toolchain\/vite-plus\)\./,
+      /^toolchain\/pnpm-vitest comes only as part of the profile "next-supabase-vercel": its part of a project is that profile's\. Take the profile whole, or choose a toolchain block that can be built into any stack \(toolchain\/vite-plus\)\.$/,
     );
+    // the same for a database whose health answer the built server would never give: a deployed
+    // stack waits for the health endpoint to say what every block asks of it
+    const hosted = [
+      'forge/github',
+      'toolchain/vite-plus',
+      'framework/fastify',
+      'product/http-api',
+      'database/supabase',
+      'hosting/vercel',
+    ];
+    assert.match(
+      await problems(hosted),
+      /^database\/supabase comes only as part of the profile "next-supabase-vercel": .* choose a database block that can be built into any stack \(database\/sqlite\)\.$/,
+    );
+    // every such block is named, not only the first
+    const several = await problems([
+      'forge/github',
+      'toolchain/vite-plus',
+      'framework/next',
+      'product/cli-command',
+      'hosting/none',
+    ]);
+    assert.match(
+      several,
+      /framework\/next comes only as part of the profile "next-supabase-vercel"/,
+    );
+    assert.match(
+      several,
+      /product\/cli-command comes only as part of the profile "node-cli": .* \(product\/http-api, product\/web-ui\)/,
+    );
+    // what a block may ask of a deployed project is what a block of the stack answers: without
+    // the database, the hosting block asks for the commit alone
+    const { loadConfig } = await import(
+      pathToFileURL(path.join(dir, 'loop', 'lib', 'config.mjs')).href
+    );
+    fs.writeFileSync(
+      path.join(dir, 'loop', 'loop.config.json'),
+      JSON.stringify({ stack: hosted.filter((id) => id !== 'database/supabase') }),
+    );
+    assert.deepEqual(loadConfig(dir).deploy.expect, {});
+    git(dir, 'checkout', '--', 'loop/loop.config.json');
     assert.equal(git(dir, 'status', '--porcelain'), '');
 
     // what two blocks bring has to fit together

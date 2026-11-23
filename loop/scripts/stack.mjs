@@ -24,7 +24,7 @@ const USAGE = 'usage: node loop/scripts/stack.mjs [--list] [--json] [--root <dir
 /** Every shipped block, by category: { category, what, blocks: [{ id, title, description, choose }] }. */
 export function catalogue(root) {
   const blocks = blockIds(root).map((id) => loadBlock(root, id));
-  return Object.entries(CATEGORIES).map(([category, rule]) => ({ category, what: rule.what, holds: rule.one ? 'exactly one' : rule.atMostOne ? 'one or none' : 'any number', blocks: blocks.filter((b) => b.category === category).map(({ id, title, description, choose, status }) => ({ id, title, description, choose, status })) }));
+  return Object.entries(CATEGORIES).map(([category, rule]) => ({ category, what: rule.what, holds: rule.one ? 'exactly one' : rule.atMostOne ? 'one or none' : 'any number', blocks: blocks.filter((b) => b.category === category).map(({ id, title, description, choose, status, comesWith }) => ({ id, title, description, choose, status, ...(comesWith ? { comesWith } : {}) })) }));
 }
 
 /** The stack of the repo at `root` and what its config comes to. Throws what loadConfig throws. */
@@ -49,7 +49,7 @@ function printCatalogue(root) {
   for (const c of catalogue(root)) {
     console.log(`\n${c.category} (${c.holds}): ${c.what}`);
     if (!c.blocks.length) console.log('  (no block yet)');
-    for (const b of c.blocks) console.log(`  ${b.id}: ${b.title}${draft(b)}\n    ${b.description}\n    Choose it when: ${b.choose}`);
+    for (const b of c.blocks) console.log(`  ${b.id}: ${b.title}${draft(b)}${b.comesWith ? ` [only as part of the profile ${b.comesWith}]` : ''}\n    ${b.description}\n    Choose it when: ${b.choose}`);
   }
 }
 

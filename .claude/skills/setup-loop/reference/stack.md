@@ -47,9 +47,14 @@ It returns every category with its blocks, each with `title`, `description`, `ch
 sentence is true for what the user said.
 
 - **One forge and one toolchain**, always. **At most one hosting block.** Any number of the others.
-- **The toolchain follows the framework.** Next.js comes with `toolchain/pnpm-vitest`, and only as
-  the whole profile. Anything built with Vite (a React app, a Fastify server) takes
-  `toolchain/vite-plus`.
+- **Some blocks come only with their profile.** The list marks them with `comesWith`: the Next.js
+  framework, its toolchain and Supabase belong to the profile `next-supabase-vercel`, the CLI
+  command and its toolchain to `node-cli`. Their code exists only in that profile's project, so
+  they cannot be mixed into another stack and the builder refuses a list that holds one. Offer
+  them as the whole profile: "the web profile (Next.js, Supabase, Vercel)" and "the CLI profile"
+  are two options of their own, beside the blocks that can be combined freely.
+- **The toolchain follows the framework.** Anything built with Vite (a React app, a Fastify
+  server) takes `toolchain/vite-plus`.
 - **A product block needs a framework that serves it.** `product/web-ui` needs one that renders
   pages, `product/http-api` one that answers requests.
 - **Prefer a proven block** when two fit equally. Say so when the recommendation is a draft:
@@ -63,7 +68,10 @@ sentence is true for what the user said.
 Show the choice so the user selects, not types. One question per category, in this order: forge,
 toolchain, framework, product, database, hosting.
 
-- Every block of the category is an option: its `title`, then its `choose` sentence.
+- First one question that decides the rest: a whole profile, or a stack of the user's own. The
+  options are the two profiles and "my own combination". A profile ends the chooser.
+- For an own combination, every block of the category without `comesWith` is an option: its
+  `title`, then its `choose` sentence.
 - The recommended option comes first and is marked "(recommended)".
 - A draft is marked "[draft]".
 - A category that may hold several blocks (framework, product, database) lets the user pick
@@ -89,7 +97,7 @@ For a built stack:
 
 1. Show the dry run: what is removed (the web profile's files), what each block writes, which
    blocks are drafts and which bring no files. A problem it names (two blocks that do not fit, a
-   toolchain that comes only with its profile) goes back to the chooser.
+   block that comes only with its profile) goes back to the chooser.
 2. Ask for a yes, then run it. It refuses a working tree with uncommitted changes.
 3. Ask, then install the dependencies (`pnpm install`). The lockfile it writes belongs in the
    commit: CI installs with `--frozen-lockfile`.

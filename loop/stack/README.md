@@ -96,6 +96,7 @@ That is the order of the guard packs, of the local gate's commands and of the wo
 | `description` | What the block does to the loop: what is checked, what is refused, how its items are judged |
 | `choose` | When a project takes it, as one sentence that is true or false for a project |
 | `status` | `proven` or `draft` (see above). A block that does not say is a draft |
+| `comesWith` | The profile whose project is the only place this block's code exists. Such a block is taken with that profile and is not built into another stack |
 | `config` | What it adds to the loop config. Any key of `DEFAULTS` in `loop/lib/config.mjs` except a project's own values (repo, branches, git author) |
 
 ### How the config of several blocks becomes one
@@ -273,10 +274,20 @@ toolchain block owns those four. A framework block brings scripts of its own und
 (`build:web`, `start:server`), and `scripts/run-scripts.mjs` runs the ones a project has: every
 `build:*` to build, the first `start:*` to start.
 
-**Which blocks bring files.** A toolchain block brings the base of the project: `package.json`,
-the configs, the CI workflow, `CLAUDE.md` and the docs pages. A stack is built on a toolchain
-that does. The blocks of the two profiles bring none, or only what a built project needs of
-them: their code is the template's root, or the preset.
+**Which blocks can be built with.** A toolchain block brings the base of the project:
+`package.json`, the configs, the CI workflow, `CLAUDE.md` and the docs pages. A stack is built on
+a toolchain that does.
+
+Five blocks cannot be built into another stack: `toolchain/pnpm-vitest`, `framework/next` and
+`database/supabase` (the web profile), `toolchain/npm-node-test` and `product/cli-command` (the
+CLI profile). Their code exists only in the project of their profile: the template's root, or the
+preset. Each names that profile (`"comesWith"`), and the builder refuses a list that holds one:
+nothing would write the code the block's settings count on. The Supabase block asks the health
+endpoint to report the database; the server a stack is built with knows no database. The loop
+itself does not mind such a list in `stack`: a project that wires the code by hand may use it.
+
+What a block may ask of the project it is built into is what a block of that stack answers. The
+hosting block asks the health endpoint for the commit, and the Fastify block's server gives it.
 
 ### The Vite+ gates
 
