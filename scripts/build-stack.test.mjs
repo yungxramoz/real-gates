@@ -515,6 +515,29 @@ test(
     assert.deepEqual(p.problems, []);
     const cfg = JSON.parse(p.write.find((w) => w.path === 'loop/loop.config.json').text);
     assert.deepEqual(cfg.deploy, { devUrl: '' });
+    // the runner waits for a deployment by reading the commit in the health answer: the server
+    // this stack is built with reports it under the name the hosting block asks for
+    const { loadConfig } = await import(
+      pathToFileURL(path.join(dir, 'loop', 'lib', 'config.mjs')).href
+    );
+    fs.writeFileSync(path.join(dir, 'loop', 'loop.config.json'), JSON.stringify(cfg));
+    const deploy = loadConfig(dir).deploy;
+    git(dir, 'checkout', '--', 'loop/loop.config.json');
+    assert.deepEqual(
+      [deploy.adapter, deploy.health, deploy.commitField],
+      ['http-health', '/api/health', 'commit'],
+    );
+    const server = fs.readFileSync(
+      p.write.find((w) => w.path === 'src/server/app.ts').file,
+      'utf8',
+    );
+    assert.match(
+      server,
+      new RegExp(
+        `app\\.get\\('${deploy.health}', \\(\\) => \\(\\{ status: 'ok', ${deploy.commitField}: `,
+      ),
+    );
+    assert.match(p.write.find((w) => w.path === '.env.example').text, /\nCOMMIT_SHA=\n$/);
     // no web UI block: the design system of the web profile goes with the rest
     assert.ok(p.remove.includes('DESIGN.md') && p.remove.includes('design'));
     assert.ok(!p.write.some((w) => /^src\/web\//.test(w.path) || w.path === 'index.html'));

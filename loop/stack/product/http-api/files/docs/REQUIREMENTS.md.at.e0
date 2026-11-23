@@ -1,2 +1,2 @@
-- AC-0.2 `GET /api/health` answers 200 with `{ "status": "ok" }`, and an endpoint that does not
-  exist answers 404 with a JSON body.
+- AC-0.2 `GET /api/health` answers 200 with `"status": "ok"` and the commit the build was made
+  from, and an endpoint that does not exist answers 404 with a JSON body.

@@ -11,7 +11,7 @@ test('AC-0.2 health answers', async ({ request }) => {
   const response = await request.get('/api/health');
   expect(response.status()).toBe(200);
   expect(response.headers()['content-type']).toContain('application/json');
-  expect(await response.json()).toEqual({ status: 'ok' });
+  expect(await response.json()).toEqual({ status: 'ok', commit: expect.any(String) });
 });
 
 test('AC-0.2 an unknown endpoint is a 404 with a JSON body', async ({ request }) => {

@@ -47,4 +47,6 @@ Every answer from 400 up has the same body:
 
 ## Health
 
-`GET /api/health` answers `{ "status": "ok" }` when the server can do its work.
+`GET /api/health` answers `{ "status": "ok", "commit": "…" }` when the server can do its work.
+`commit` is the commit the build was made from (`unknown` on a build that was not told): whoever
+waits for a deployment reads it to know that the new build is the one that runs.

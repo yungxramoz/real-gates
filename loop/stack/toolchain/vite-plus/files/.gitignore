@@ -17,6 +17,8 @@ blob-report/
 .env
 .env.*
 !.env.example
+# what a stack block adds to a project's example (loop/stack/**/files/.env.example.at.<slot>)
+!.env.example.at.*
 
 # machine noise
 .DS_Store

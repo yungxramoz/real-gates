@@ -15,7 +15,13 @@ test('the health endpoint answers', async () => {
   const app = await buildApp();
   const res = await app.inject({ method: 'GET', url: '/api/health' });
   expect(res.statusCode).toBe(200);
-  expect(res.json()).toEqual({ status: 'ok' });
+  expect(res.json()).toEqual({ status: 'ok', commit: 'unknown' });
+});
+
+test('the health endpoint names the commit the build was made from', async () => {
+  const app = await buildApp({ commit: '0123abc' });
+  const res = await app.inject({ method: 'GET', url: '/api/health' });
+  expect(res.json()).toEqual({ status: 'ok', commit: '0123abc' });
 });
 
 test('an unknown route is a 404, with or without a web app', async () => {
