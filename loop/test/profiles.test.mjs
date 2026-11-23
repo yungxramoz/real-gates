@@ -1,6 +1,7 @@
-// Every stack profile the harness ships must fit the contract the core reads (loop/profiles/README.md),
-// and the CLI profile is run end to end through the scripted runner: a stack with no deployed site,
-// no database and its own work type.
+// Every profile the harness ships (a stack proven as a whole, loop/profiles/) must give the core a
+// complete config and words for every step (loop/stack/README.md), and the CLI profile is run end
+// to end through the scripted runner: a stack with no deployed site, no database and its own work
+// type. What a single block has to be is in stack.test.mjs.
 
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 import { configProblems, deepMerge, profileNames } from '../lib/config.mjs';
 import { adapterProblems } from '../adapters/index.mjs';
-import { acceptMode, acceptTypeName, workType, workTypeName, workTypeProblems } from '../lib/worktypes.mjs';
+import { acceptMode, acceptTypeName, acceptedTypes, workType, workTypeName, workTypeProblems } from '../lib/worktypes.mjs';
+import { hasFragment, includesOf, loadStack } from '../lib/stack.mjs';
 import { reviewSchema } from '../lib/schemas.mjs';
 import { decide } from '../guard/core.mjs';
 import { repoRelative } from '../guard/paths.mjs';
@@ -40,17 +42,13 @@ describe('every shipped profile fits the contract', () => {
       // before /setup-loop every problem is about a value only the project can know
       for (const p of configProblems(preset)) assert.match(p, /^(repo|gitAuthor\.|deploy\.devUrl|guard\.allowedDbProject)/, p);
     });
-    test(`${name}: has every fragment the core prompts include`, () => {
+    test(`${name}: its blocks have words for every fragment the core prompts include`, () => {
+      const blocks = loadStack(REPO, presetConfig(name).stack);
+      assert.ok(blocks.length > 0, 'a profile lists its blocks');
       const dir = path.join(LOOP, 'prompts');
       for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
-        for (const m of fs.readFileSync(path.join(dir, f), 'utf8').matchAll(/\{\{>([\w-]+)\}\}/g)) {
-          assert.ok(fs.existsSync(path.join(LOOP, 'profiles', name, 'prompts', `${m[1]}.md`)), `${name} lacks prompts/${m[1]}.md, which loop/prompts/${f} includes`);
-        }
+        for (const frag of includesOf(fs.readFileSync(path.join(dir, f), 'utf8'))) assert.ok(hasFragment(blocks, frag), `no block of ${name} has a prompts/${frag}.md, which loop/prompts/${f} includes`);
       }
-    });
-    test(`${name}: every fragment is used by a core prompt`, () => {
-      const used = new Set(fs.readdirSync(path.join(LOOP, 'prompts')).flatMap((f) => [...fs.readFileSync(path.join(LOOP, 'prompts', f), 'utf8').matchAll(/\{\{>([\w-]+)\}\}/g)].map((m) => m[1])));
-      for (const f of fs.readdirSync(path.join(LOOP, 'profiles', name, 'prompts'))) assert.ok(used.has(f.replace(/\.md$/, '').split('.')[0]), `${name}/prompts/${f} is included nowhere`);
     });
   }
 });
@@ -75,6 +73,11 @@ describe('work types', () => {
     assert.equal(acceptTypeName(cli, [{}, { type: 'command' }]), 'command');
     assert.equal(acceptTypeName(web, [{ ui: false }, { ui: true }]), 'ui');
     assert.equal(acceptTypeName(cli, [{}]), 'default');
+    // the product blocks that have the words for a milestone's acceptance: the types accepted that way, each once
+    assert.deepEqual(acceptedTypes(web, [{ ui: false }, { ui: true }, { type: 'ui' }], 'site'), ['ui']);
+    assert.deepEqual(acceptedTypes(cli, [{}, { type: 'command' }], 'local'), ['command']);
+    assert.deepEqual(acceptedTypes(cli, [{}], 'none'), ['default']);
+    assert.deepEqual(acceptedTypes(cli, undefined, 'local'), []);
   });
   test('the review schema asks for exactly the rubric of the item\'s type', () => {
     assert.deepEqual(Object.keys(reviewSchema(['help_and_errors', 'output']).properties.scores.properties), ['help_and_errors', 'output']);
@@ -85,8 +88,8 @@ describe('work types', () => {
     const backlog = { items: [{ id: 'A', type: 'command' }, { id: 'B', ui: true }, { id: 'C', type: 'screen' }, { id: 'D' }] };
     const p = workTypeProblems(cli, backlog);
     assert.equal(p.length, 2, p.join('|'));
-    assert.match(p[0], /backlog item B: work type "ui" is not one of the profile's \(command, default\); `ui: true` means the type "ui"/);
-    assert.match(p[1], /backlog item C: work type "screen" is not one of the profile's/);
+    assert.match(p[0], /backlog item B: work type "ui" is not one of the stack's \(command, default\); `ui: true` means the type "ui"/);
+    assert.match(p[1], /backlog item C: work type "screen" is not one of the stack's/);
     assert.deepEqual(workTypeProblems(web, { items: [{ id: 'B', ui: true }] }), []);
     const noSite = deepMerge(web, { deploy: { adapter: 'none' } });
     assert.match(workTypeProblems(noSite, { items: [{ id: 'B', ui: true }] })[0], /work type "ui" is accepted on a deployed site, but deploy\.adapter is "none"/);
@@ -276,7 +279,7 @@ describe('the CLI profile through the runner', () => {
     sb.queue(smokeStep(), happyItem('U1'));
     const r = await sb.run();
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /backlog item U1: work type "ui" is not one of the profile's \(command, default\)/);
+    assert.match(r.stderr, /backlog item U1: work type "ui" is not one of the stack's \(command, default\)/);
     assert.equal(sb.calls().length, 0);
   });
 

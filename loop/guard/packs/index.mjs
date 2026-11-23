@@ -1,8 +1,8 @@
 // Guard packs: the rules for one tool or service, switched on by name in `guard.packs`.
 //
 // The core (../core.mjs) holds what every project needs whatever it is built with: git, the
-// harness files, the read-only steps. A pack holds the rest. A profile lists the packs its stack
-// needs; a pack that is not listed does not run.
+// harness files, the read-only steps. A pack holds the rest. Each block of the stack lists the
+// packs its tool needs (loop/stack/); a pack that is not listed does not run.
 //
 // A pack is a module that exports:
 //   name             the name `guard.packs` uses

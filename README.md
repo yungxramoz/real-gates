@@ -93,17 +93,18 @@ your docs, the app). Details: [loop/README.md](loop/README.md#taking-a-later-tem
 
 Each layer only knows the one below it. Read from the top down. Layers 1 and 2 have two parts
 each. The core loop names no framework,
-host or database: it reads a stack profile. Two ship with the template: a web app (Next.js,
+host or database: it reads the stack blocks a project lists, one block per choice (the forge, the
+toolchain, the framework, what a user touches, the database, the hosting). A stack that was
+proven as a whole has a name, a profile. Two ship with the template: a web app (Next.js,
 Supabase, Vercel), which the repository is as it stands, and a Node.js command-line tool, which
-`node scripts/apply-preset.mjs node-cli` turns it into. Another stack is another profile and
-app skeleton; layer 1 stays as it is. The contract between them is in
-[loop/profiles/README.md](loop/profiles/README.md).
+`node scripts/apply-preset.mjs node-cli` turns it into. Another tool is another block; layer 1
+stays as it is. The contract between them is in [loop/stack/README.md](loop/stack/README.md).
 
 ```mermaid
 flowchart TB
   L4["4 · Project — written by you and the skills<br/>BRIEF · REQUIREMENTS · DECISIONS · LESSONS · DESIGN.md · arc42 · backlog.json"]
   L3["3 · Skills — .claude/skills/<br/>/setup-loop · /shape-project · /draft-design · /run-retro · /sync-arc42"]
-  L2a["2a · Stack profile — loop/profiles/&lt;name&gt;/<br/>check commands · gate files · ratchets · work types · guard packs · adapter choice · prompt fragments"]
+  L2a["2a · Stack blocks — loop/stack/&lt;category&gt;/&lt;name&gt;/<br/>check commands · gate files · ratchets · work types · guard packs · adapter choice · prompt fragments"]
   L2b["2b · App skeleton and CI — repo root, or presets/&lt;name&gt;/files/<br/>the app · its CI job · coverage · e2e · AC trace"]
   L1b["1b · Adapters and guard packs — loop/adapters/, loop/guard/packs/<br/>forge · deploy probe · post-merge · notify · tool rules"]
   L1["1a · Core loop — human-owned, never edited by the loop<br/>loop/run.mjs · engine · gates · guard core · prompts · state · budgets"]
@@ -116,7 +117,7 @@ flowchart TB
 | -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | 1a · Core loop       | `loop/`                                                               | Never by the loop. A change it wants ships as `loop/patches/<id>.patch` |
 | 1b · Adapters, packs | `loop/adapters/`, `loop/guard/packs/`                                 | When a new forge, host or tool is supported                             |
-| 2a · Stack profile   | `loop/profiles/<name>/`                                               | Per stack; a project names one in `loop/loop.config.json`               |
+| 2a · Stack blocks    | `loop/stack/<category>/<name>/`, profiles in `loop/profiles/`         | Per tool; a project lists its blocks in `loop/loop.config.json`         |
 | 2b · App skeleton    | `src/`, `tests/`, `.github/`, `supabase/`; other stacks in `presets/` | Per stack                                                               |
 | 3 · Skills           | `.claude/skills/`                                                     | Rarely. Hidden from the loop (`disable-model-invocation: true`)         |
 | 4 · Project          | `docs/`, `DESIGN.md`, `CLAUDE.md`, `loop/backlog.json`                | Every project                                                           |

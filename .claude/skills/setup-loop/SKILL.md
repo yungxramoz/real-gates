@@ -23,10 +23,11 @@ Done means: `node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"` prints `ready`
 4. **Write only these files**: `loop/loop.config.json`, `.env.example`, the `branches:` filters in
    `.github/workflows/*.yml`, and new rows in `docs/OWNER-ACTIONS.md`. Never edit `loop/run.mjs`,
    `loop/lib/`, `loop/guard*` or `loop/backlog.json`.
-5. **Ask only what this stack needs.** `profile` in `loop/loop.config.json` names the stack profile
-   (`loop/profiles/<name>/profile.json`). Read it first. No `postMerge` steps there: skip step 4
-   (database). `deploy.adapter` is `none`: skip step 5 (deploy). Use the project's package manager
-   in every command you show (`pnpm` with a `pnpm-lock.yaml`, otherwise `npm`).
+5. **Ask only what this stack needs.** The project's stack is a list of blocks (`loop/stack/`),
+   named by `profile` or listed under `stack` in `loop/loop.config.json`. Run
+   `node loop/scripts/stack.mjs` first: it prints the blocks and what they add up to. "After a
+   merge: nothing": skip step 4 (database). "Deployed: no": skip step 5 (deploy). Use the project's
+   package manager in every command you show (`pnpm` with a `pnpm-lock.yaml`, otherwise `npm`).
 6. **Secrets stay out of git.** `.env.example` holds names with empty values. Never ask the user to
    paste a secret into the chat; tell them where it goes.
 
@@ -39,8 +40,8 @@ Setup progress:
 - [ ] 1. Baseline: run the validator, read the current config
 - [ ] 2. Tools: Node, Claude Code, gh, dependencies installed, a browser for the tests if the stack uses one
 - [ ] 3. Repo and branches (repo, base, production, ciCheck)
-- [ ] 4. Database (allowed project, forbidden projects, DB URL variable), if the profile has one
-- [ ] 5. Deploy (dev URL, health path, bypass secret variable), if the profile deploys
+- [ ] 4. Database (allowed project, forbidden projects, DB URL variable), if the stack has one
+- [ ] 5. Deploy (dev URL, health path, bypass secret variable), if the stack deploys
 - [ ] 6. Notify topic and git author
 - [ ] 7. Write the config, .env.example, CI branch filters, owner actions
 - [ ] 8. Validate: run check-config, fix, repeat until "ready"

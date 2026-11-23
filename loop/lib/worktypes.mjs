@@ -1,8 +1,8 @@
 // Work types: what kind of thing a backlog item delivers, and so how it is reviewed and accepted.
 //
 // A web screen is judged by looking at it on the deployed site. A CLI command is judged by running
-// it from an installed package. A library function needs neither. The profile says which kinds a
-// stack has (`workTypes`), and for each one:
+// it from an installed package. A library function needs neither. Each product block of the stack
+// defines the kind it is about (`workTypes` in loop/stack/product/<name>/block.json), and for it:
 //   rubric   the scores the reviewer must give, 1–10 each; any below review.minDesignScore blocks.
 //            [] = no scores
 //   accept   how a milestone with such items is accepted:
@@ -30,6 +30,11 @@ export function acceptMode(cfg, items) {
   return modes.has('site') ? 'site' : modes.has('local') ? 'local' : 'none';
 }
 
+/** The work types of these items that are accepted in `mode`, each once: the product blocks that have the words for it. */
+export function acceptedTypes(cfg, items, mode) {
+  return [...new Set((items || []).filter((i) => workType(cfg, i).accept === mode).map(workTypeName))];
+}
+
 /** The work type an acceptance fix item gets: the first type in the milestone that is accepted at all. */
 export function acceptTypeName(cfg, items) {
   const mode = acceptMode(cfg, items);
@@ -37,19 +42,19 @@ export function acceptTypeName(cfg, items) {
   return it && mode !== 'none' ? workTypeName(it) : 'default';
 }
 
-/** What is wrong with the profile's work types, or with the backlog's use of them. */
+/** What is wrong with the stack's work types, or with the backlog's use of them. */
 export function workTypeProblems(cfg, backlog) {
   const p = [];
   const types = cfg.workTypes || {};
   for (const [name, t] of Object.entries(types)) {
-    if (t === null) continue; // a profile removes a default type by setting it to null
+    if (t === null) continue; // a project removes a type its stack brings by setting it to null
     if (!Array.isArray(t?.rubric) || t.rubric.some((r) => !/^[a-z][a-z0-9_]*$/.test(r))) p.push(`workTypes.${name}.rubric must be a list of score names (lowercase, digits, underscores)`);
     if (!ACCEPT_MODES.includes(t?.accept)) p.push(`workTypes.${name}.accept must be one of ${ACCEPT_MODES.join(', ')}`);
     if (t?.accept === 'site' && cfg.deploy?.adapter === 'none' && (backlog?.items || []).some((i) => workTypeName(i) === name)) p.push(`work type "${name}" is accepted on a deployed site, but deploy.adapter is "none"`);
   }
   for (const i of backlog?.items || []) {
     const name = workTypeName(i);
-    if (name !== 'default' && !types[name]) p.push(`backlog item ${i.id}: work type "${name}" is not one of the profile's (${Object.keys(types).filter((k) => types[k]).sort().join(', ') || 'none defined'})${i.type ? '' : '; `ui: true` means the type "ui"'}`);
+    if (name !== 'default' && !types[name]) p.push(`backlog item ${i.id}: work type "${name}" is not one of the stack's (${Object.keys(types).filter((k) => types[k]).sort().join(', ') || 'none defined'})${i.type ? '' : '; `ui: true` means the type "ui"'}`);
   }
   return p;
 }

@@ -42,24 +42,26 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
 Why each step is there: [../WHY.md](../WHY.md). It is deliberately **sequential**: concurrent
 agents sharing one working tree are what broke the setup this loop replaced.
 
-## Core, profile, project
+## Core, stack, project
 
 The loop is three things, kept apart:
 
 | | Where | Knows |
 | --- | --- | --- |
 | **Core** | `loop/run.mjs`, `loop/lib/`, `loop/guard/core.mjs`, `loop/prompts/` | The method: the item engine, the gates, git, the read-only steps. No framework, host or database |
-| **Stack profile** | `loop/profiles/<name>/`, named by `profile` in the project config | What this stack is: the check commands, the files CI runs through, the ratchets, the work types, which guard packs and adapters to use, and the stack's words for each step |
-| **Project config** | `loop/loop.config.json` | Which profile, and this project's own values: repo, branches, the dev URL, the git author |
+| **Stack blocks** | `loop/stack/<category>/<name>/`, listed by `stack` in the project config or by the profile it names | What the project is built with, one block per choice: the forge, the toolchain, the framework, what a user touches, the database, the hosting. Each block adds its check commands, gate files, ratchets, work types, guard packs and adapters, and its words for each step |
+| **Project config** | `loop/loop.config.json` | Which blocks, and this project's own values: repo, branches, the dev URL, the git author |
 
-Behind the profile's choices sit **adapters** (`loop/adapters/`: the forge, the deploy probe, the
+Behind the blocks' choices sit **adapters** (`loop/adapters/`: the forge, the deploy probe, the
 post-merge steps, notifications) and **guard packs** (`loop/guard/packs/`: the rules for one tool
-or service). The core only calls their interfaces. Another stack is another profile and app
-skeleton; another forge or host is another adapter. The contract: [profiles/README.md](profiles/README.md).
+or service). The core only calls their interfaces. Another tool is another block; another forge or
+host is another adapter. The contract: [stack/README.md](stack/README.md).
+`node loop/scripts/stack.mjs` prints this project's blocks and what they add up to.
 
-Two profiles ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
+A **profile** (`loop/profiles/<name>/`) is a stack that was proven as a whole: a named list of
+blocks. Two ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
 (`node scripts/apply-preset.mjs node-cli`). This page describes the web preset where it has to
-name a tool; where the two differ, the profile decides:
+name a tool; where the two differ, the blocks decide:
 
 | | Web app | Node CLI |
 | --- | --- | --- |
@@ -211,7 +213,7 @@ runs.
 cannot run, the action is refused. The runner starts sessions with a copy of the guard from the
 base branch, so a change in the working tree cannot switch a rule off. Its locked
 core (`loop/guard/core.mjs`) holds the git, file and read-only rules. The rules for a tool or
-service are in guard packs (`loop/guard/packs/`), switched on by `guard.packs` in the profile
+service are in guard packs (`loop/guard/packs/`), switched on by `guard.packs` of the stack's blocks
 (the web preset: `github`, `supabase`, `vercel`; the CLI preset: `github`, `npm`). A pack can only block, an unknown pack name refuses
 every call, and the packs are part of the snapshot. Together they block:
 
@@ -299,7 +301,7 @@ check. Any test runner that writes JUnit can feed it.
 | a page names a decision ID `docs/DECISIONS.md` does not have | no page cites a decision nobody recorded |
 | a relative link on a page leads to no file | the pages stay readable |
 
-What a building block is comes from `architecture.blocks` in the stack profile: `src/lib/*` is
+What a building block is comes from `architecture.blocks` of the stack's blocks: `src/lib/*` is
 every file and folder in `src/lib`, `src/*/` every folder in `src`. A block counts as named when
 the page has its path, or a path inside it, in backticks. Test files, type declarations and
 dotfiles are not blocks. The patterns are in `loop/`, which no loop session can edit, so the loop
@@ -569,7 +571,7 @@ URL. A project that does not have the command yet runs the template's copy from 
 
 | | Paths | What happens |
 | --- | --- | --- |
-| The template's | `loop/`, `.claude/skills/`, the shared scripts, `loop-runner.yml`, the CI workflow of your stack | replaced; a file the template dropped is removed |
+| The template's | `loop/` (the runner, the guard, every stack block and profile), `.claude/skills/`, the shared scripts, `loop-runner.yml`, the CI workflow of your stack | replaced; a file the template dropped is removed |
 | Yours, inside `loop/` | `loop.config.json`, `backlog.json`, `rules/project-rules.json`, `patches/` | never touched |
 | Yours | docs, `CLAUDE.md`, the app, `package.json` | never touched; when the template changed one since your last sync, the command names it |
 

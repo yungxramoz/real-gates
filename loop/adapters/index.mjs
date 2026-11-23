@@ -1,6 +1,6 @@
-// Adapters, by the name the profile and loop.config.json use. The core loop only ever calls these
-// interfaces; what stands behind them (which forge, which host, which database tool) is the
-// profile's choice. Each adapter file documents its interface at the top.
+// Adapters, by the name the stack's blocks and loop.config.json use. The core loop only ever calls
+// these interfaces; what stands behind them (which forge, which host, which database tool) is the
+// choice of a block. Each adapter file documents its interface at the top.
 //
 //   forge.adapter        pull requests, CI results, the merge           forge-github.mjs
 //   deploy.adapter       "does the dev site serve this commit?"         deploy-http-health.mjs, none

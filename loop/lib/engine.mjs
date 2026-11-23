@@ -133,7 +133,7 @@ async function buildSession(L, item, s, fix) {
     WORK: L.work.path(item.id, 'build'),
   };
   vars.LEARN = item.kind === 'learn' ? (item.retro ? L.render('learn.md', vars) : LEGACY_LEARN) : item.kind === 'fix' && /^ACC-/.test(item.id) ? '## This is an acceptance fix\n\nFix what the evaluator found **and** the cause: add the test, check, lesson or project guard rule that would have caught it before acceptance (see `loop/prompts/learn.md` for the rungs).' : '';
-  fs.writeFileSync(L.paths.task, L.render('build.md', vars));
+  fs.writeFileSync(L.paths.task, L.render('build.md', vars, { types: [workTypeName(item)] }));
   const condition = `Complete the unattended task in .loop/current-task.md for backlog item ${item.id} (read that file fully first and follow it). The goal is met only when .loop/result.json exists with "item": "${item.id}", its outcome is one of ready, partial, blocked or failed exactly as that file defines them, an open PR against ${base} exists for ready or partial, and you have printed the file with cat as your last step.`;
   L.setStatus(`build:${mode}`, item, { round: s.rounds });
   if (L.args.dry) {
@@ -182,7 +182,7 @@ async function reviewSession(L, item, s, headSha) {
         : '',
     ].filter(Boolean).join('\n\n'),
     PREVIOUS_REVIEW: s.lastReview ? `## Your previous round's findings\n\n\`\`\`json\n${JSON.stringify(s.lastReview, null, 2)}\n\`\`\`` : '',
-  }, { variant: workTypeName(item) }));
+  }, { variant: workTypeName(item), types: [workTypeName(item)] }));
   L.setStatus('review', item, { pr: s.pr, round: s.reviewRounds + 1 });
   for (let tryNo = 0; tryNo < 2; tryNo++) {
     const off = guardOffset(L);

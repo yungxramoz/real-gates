@@ -1,0 +1,22 @@
+{
+  "title": "pnpm, ESLint, Prettier and Vitest",
+  "description": "A TypeScript project checked with `pnpm check` (lint, types, unit tests with coverage). A pull request may not change the scripts in package.json, the repository's own scripts or the lint, type and format configs, and the coverage thresholds in the Vitest config may only go up.",
+  "choose": "The project is installed with pnpm, linted with ESLint, formatted with Prettier and unit-tested with Vitest.",
+  "config": {
+    "localGate": { "commands": ["pnpm check", "node scripts/arch-check.mjs"] },
+    "gates": {
+      "files": ["scripts/**", "eslint.config.*", "tsconfig.json", ".prettierrc*", ".prettierignore"],
+      "frozenJsonKeys": [{ "file": "package.json", "key": "scripts" }],
+      "ratchets": [
+        {
+          "name": "coverage",
+          "files": ["vitest.config.mts", "vitest.config.ts", "vitest.config.mjs", "vitest.config.js"],
+          "comments": "js",
+          "within": "thresholds\\s*:\\s*\\{([\\s\\S]*?)\\}",
+          "number": "\\b(lines|functions|branches|statements)\\s*:\\s*(\\d+(?:\\.\\d+)?)",
+          "hint": "Add tests instead."
+        }
+      ]
+    }
+  }
+}

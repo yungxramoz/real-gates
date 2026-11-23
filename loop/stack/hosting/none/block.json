@@ -1,0 +1,8 @@
+{
+  "title": "Not deployed",
+  "description": "Nothing is deployed. The runner waits for no site, and a milestone is accepted on the merged base branch itself, on the machine the loop runs on.",
+  "choose": "The product is not deployed anywhere: a package, a command-line tool, or an app that only runs locally.",
+  "config": {
+    "deploy": { "adapter": "none" }
+  }
+}

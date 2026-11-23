@@ -24,6 +24,7 @@ import { packMilestones } from './lib/milestones.mjs';
 import { earlyRetro, retroState } from './lib/learn.mjs';
 import { holdRetro, noteHarness } from './lib/retro.mjs';
 import { workTypeProblems } from './lib/worktypes.mjs';
+import { expandIncludes, hasFragment, includesOf, loadStack } from './lib/stack.mjs';
 import { adapterProblems, forgeAdapter, notifyAdapter } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
 import { createWork } from './lib/workdir.mjs';
@@ -156,28 +157,25 @@ async function sleepUnlessStopped(ms) {
     await new Promise((r) => setTimeout(r, Math.min(30_000, end - Date.now())));
   }
 }
-/** `{{>name}}` in a core prompt pulls in loop/profiles/<profile>/prompts/<name>.md: the stack's own words for that step. */
-const INCLUDE = /\{\{>([\w-]+)\}\}/g;
-const fragmentFile = (frag) => path.join(ROOT, 'loop', 'profiles', cfg.profile || '(no profile)', 'prompts', `${frag}.md`);
-const fragmentPath = (frag) => `loop/profiles/${cfg.profile || '<profile>'}/prompts/${frag}.md`;
-/** A profile with several work types may word a step per type or per acceptance mode: `<name>.<variant>.md` wins over `<name>.md`. */
-const fragmentFor = (frag, variant) => (variant && fs.existsSync(fragmentFile(`${frag}.${variant}`)) ? fragmentFile(`${frag}.${variant}`) : fragmentFile(frag));
+/** `{{>name}}` in a core prompt pulls in the words the stack's blocks have for that step (loop/stack/<category>/<name>/prompts/<name>.md). */
+const blocks = loadStack(ROOT, cfg.stack);
 function promptProblems() {
   const p = [];
   const dir = path.join(ROOT, 'loop', 'prompts');
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
-    for (const m of fs.readFileSync(path.join(dir, f), 'utf8').matchAll(INCLUDE)) {
-      if (!fs.existsSync(fragmentFile(m[1]))) p.push(`loop/prompts/${f} includes {{>${m[1]}}}, but ${cfg.profile ? 'the profile has no' : 'loop.config.json names no profile, so there is no'} ${fragmentPath(m[1])}`);
+    for (const frag of includesOf(fs.readFileSync(path.join(dir, f), 'utf8'))) {
+      if (!hasFragment(blocks, frag)) p.push(`loop/prompts/${f} includes {{>${frag}}}, but ${blocks.length ? `no block of the stack (${blocks.map((b) => b.id).join(', ')}) has a prompts/${frag}.md` : 'loop.config.json names no stack, so no block has words for it'}`);
     }
   }
   return p;
 }
-function render(name, vars, { variant } = {}) {
-  const tpl = fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8').replace(INCLUDE, (_, frag) => {
-    const file = fragmentFor(frag, variant);
-    if (!fs.existsSync(file)) throw new Error(`loop/prompts/${name} includes {{>${frag}}}, but the profile has no ${fragmentPath(frag)}`);
-    return fs.readFileSync(file, 'utf8').trim();
-  });
+/**
+ * A core prompt with the stack's words and the runner's values filled in. `types`: the work types
+ * the step is about, which decides the product blocks that speak. `variant`: the wording a block
+ * has for one case of the step (`<name>.<variant>.md`), where it has one.
+ */
+function render(name, vars, { variant, types } = {}) {
+  const tpl = expandIncludes(fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8'), blocks, { variant, types, where: `loop/prompts/${name}` });
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => {
     if (vars[k] === undefined) throw new Error(`loop/prompts/${name} uses {{${k}}}, but the runner supplies no value for it`);
     return String(vars[k] ?? '');

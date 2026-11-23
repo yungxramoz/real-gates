@@ -588,29 +588,47 @@ test('postMergeOnRedBase "wait": migrations are applied only after the fix item 
   assert.match(progress, new RegExp(`A1 · ${fix.id} is done: running the post-merge steps now`));
 });
 
-test('a prompt that includes a fragment the profile does not have stops the run in the preflight', async () => {
+test('a prompt that includes a fragment no block of the stack has words for stops the run in the preflight', async () => {
   const sb = box();
-  fs.rmSync(path.join(sb.root, 'loop', 'profiles', 'next-supabase-vercel', 'prompts', 'review-drive.md'));
+  fs.rmSync(path.join(sb.root, 'loop', 'stack', 'product', 'web-ui', 'prompts', 'review-drive.md'));
   sb.queue(smokeStep(), happyItem('A1'));
   const r = await sb.run();
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /loop\/prompts\/review\.md includes \{\{>review-drive\}\}, but the profile has no loop\/profiles\/next-supabase-vercel\/prompts\/review-drive\.md/);
+  assert.match(r.stderr, /loop\/prompts\/review\.md includes \{\{>review-drive\}\}, but no block of the stack \(forge\/github, toolchain\/pnpm-vitest, framework\/next, product\/web-ui, database\/supabase, hosting\/vercel\) has a prompts\/review-drive\.md/);
   assert.equal(sb.calls().length, 0);
 });
 
-test('the build task carries the profile\'s own words for proving a change', async () => {
+test('a project lists its own blocks instead of naming a profile, and a list that cannot be a stack stops the run', async () => {
+  // the CLI stack without a profile: the same blocks, named by the project
+  const own = box({ profile: 'node-cli', config: { profile: '' }, backlog: { milestones: ['M1'], items: [{ id: 'C1', milestone: 'M1', title: 'a command', type: 'command' }] } });
+  own.queue(smokeStep(), { text: 'no result' });
+  await own.run(['--once', '--max-iterations', '2']);
+  assert.match(own.file('.loop/current-task.md'), /`npm run check` \(syntax, unit tests, coverage thresholds\) and `npm run test:e2e` must pass/);
+  // two hosting blocks, and a block that is not there
+  const two = box({ config: { stack: ['forge/github', 'toolchain/pnpm-vitest', 'product/web-ui', 'hosting/vercel', 'hosting/none'] } });
+  let r = await two.run();
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /stack: hosting\/vercel and hosting\/none are both hosting blocks\. A stack has one/);
+  const unknown = box({ config: { stack: ['forge/github', 'toolchain/pnpm-vitest', 'product/desktop'] } });
+  r = await unknown.run();
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /stack: "product\/desktop" is not a block under loop\/stack\/ \(known: database\/supabase, /);
+  assert.equal(two.calls().length + unknown.calls().length, 0);
+});
+
+test('the build task carries the stack\'s own words for proving a change', async () => {
   const sb = box();
   sb.queue(smokeStep(), { text: 'no result' });
   await sb.run(['--once', '--max-iterations', '2']);
   const task = sb.file('.loop/current-task.md');
   assert.match(task, /`pnpm check` and `pnpm build` must pass/);
   assert.doesNotMatch(task, /\{\{>/);
-  // the same core prompt with another profile's fragment
+  // the same core prompt with another toolchain's words
   const other = box();
-  fs.writeFileSync(path.join(other.root, 'loop', 'profiles', 'next-supabase-vercel', 'prompts', 'build-proof.md'), '- `make check` must pass. Item {{ITEM_ID}}.\n');
-  // committed on the base, as a real profile is: the runner keeps uncommitted tracked changes aside
-  other.git('add', 'loop/profiles/next-supabase-vercel/prompts/build-proof.md');
-  other.git('commit', '-q', '-m', 'another profile');
+  fs.writeFileSync(path.join(other.root, 'loop', 'stack', 'toolchain', 'pnpm-vitest', 'prompts', 'build-proof.md'), '- `make check` must pass. Item {{ITEM_ID}}.\n');
+  // committed on the base, as a real block is: the runner keeps uncommitted tracked changes aside
+  other.git('add', 'loop/stack/toolchain/pnpm-vitest/prompts/build-proof.md');
+  other.git('commit', '-q', '-m', 'another toolchain');
   other.git('push', '-q', 'origin', 'develop');
   other.queue(smokeStep(), { text: 'no result' });
   await other.run(['--once', '--max-iterations', '2']);

@@ -1,7 +1,7 @@
 // The gates that need only git: the pre-merge checks and the landed check. The script decides
 // these, never an agent. They know nothing about the forge (see adapters/forge-*.mjs) and nothing
-// about the stack: which files CI runs through and which numbers may only go up come from the
-// profile (`gates` in loop/profiles/<name>/profile.json).
+// about the stack: which files CI runs through and which numbers may only go up come from its
+// blocks (`gates` in loop/stack/<category>/<name>/block.json).
 //
 // Lessons behind them (docs/LESSONS.md, WHY.md):
 //   L-01  CI must run on what will land: the branch must contain the current base before merge.
@@ -35,7 +35,7 @@ function contractProblems(proc, cfg, branch, item) {
 
 // ------------------------------------------------------------------------------------- ratchets
 // A ratchet is a set of numbers in a config file that may only go up (coverage thresholds, a
-// minimum score). The profile describes it:
+// minimum score). A block of the stack describes it:
 //   { name, files: [...], comments: 'js' | 'hash' | 'none',
 //     within?: regex whose group 1 is the block the numbers live in (several blocks: lowest wins),
 //     number: regex with group 1 = the key and group 2 = the number }
@@ -63,7 +63,7 @@ const ratchetShape = (text, r) => stripComments(text, r).replace(numberRe(r), (_
 
 /**
  * Files CI runs through. A PR that changes them could switch a gate off and still be green, so the
- * loop may not change them. From the profile's `gates`:
+ * loop may not change them. From the `gates` of the stack's blocks:
  *   files          globs that may not change at all (test, lint and type configs, the repo scripts)
  *   frozenJsonKeys [{ file, key }]: one key of a JSON file that may not change (the commands CI
  *                  runs), while the rest of the file may (dependencies)

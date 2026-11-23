@@ -8,7 +8,7 @@ import path from 'node:path';
 import { runClaude } from './claude.mjs';
 import { goalPrompt, settleBaseCi } from './engine.mjs';
 import { deployAdapter } from '../adapters/index.mjs';
-import { acceptMode, acceptTypeName } from './worktypes.mjs';
+import { acceptMode, acceptTypeName, acceptedTypes } from './worktypes.mjs';
 import { ACCEPT_SCHEMA, PACKET_SCHEMA } from './schemas.mjs';
 import { writeJson, readJson } from './state.mjs';
 import { noteAcceptanceFailed, retroState } from './learn.mjs';
@@ -41,7 +41,7 @@ async function acceptSession(L, m, round, sha, mode) {
     GUARD_RULES: readOnlyRules(L.work.path(m, 'accept')),
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status} · refs: ${(i.refs || []).join('; ')}`).join('\n'),
     PREVIOUS: prev?.failures?.length ? `## The previous round failed on these — verify each is fixed\n\n\`\`\`json\n${JSON.stringify(prev.failures, null, 2)}\n\`\`\`` : '',
-  }, { variant: mode }));
+  }, { variant: mode, types: acceptedTypes(L.cfg, items, mode) }));
   L.setStatus('accept', { id: m, title: `acceptance ${m} round ${round}` });
   const cond = `The milestone acceptance described in .loop/current-task.md is complete: every user journey of milestone ${m} was exercised the way that file says and the structured result lists every failure (pass true only if there are none).`;
   const r = await runClaude(L.session, { prompt: goalPrompt(L, cond), phase: 'accept', item: { id: m }, timeoutMin: L.cfg.timeouts.acceptMin, model: L.cfg.reviewModel || L.cfg.model, schema: ACCEPT_SCHEMA });
@@ -70,7 +70,7 @@ async function packetSession(L, m, mode) {
     OWNER_ACTIONS: L.ownerActionsTail(60),
     RETRO: retro && retro !== 'none' ? `The loop's retro for this milestone is in \`.loop/retros/${retro}.md\`: what went well, what went wrong, the action items and the impediments that wait for the owner (\`.loop/IMPEDIMENTS.md\`).` : 'No retro was held for this milestone.',
     ACCEPT_JSON: JSON.stringify({ ...readJson(path.join(L.paths.run, `accept-${m}.json`), { note: 'no acceptance run (no item of an accepted work type)' }), ...(L.store.S.accept[m]?.unverified ? { fixesNotReAccepted: 'These failures are from the last acceptance round. Their fix items merged through CI and review but were not re-tested: say so in the packet.' } : {}) }, null, 2),
-  }, { variant: mode }));
+  }, { variant: mode, types: acceptedTypes(L.cfg, items, mode) }));
   L.setStatus('packet', { id: m, title: `packet ${m}` });
   const cond = `The milestone packet described in .loop/current-task.md is returned as structured output, with its screenshots taken.`;
   const r = await runClaude(L.session, { prompt: goalPrompt(L, cond), phase: 'packet', item: { id: m }, timeoutMin: L.cfg.timeouts.packetMin, model: L.cfg.model, schema: PACKET_SCHEMA });
