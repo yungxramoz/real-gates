@@ -47,6 +47,26 @@
         "Continues with the config questions that do not depend on the tools, then reruns the validator once the user reports the fix"
       ],
       "expected_files": ["loop/loop.config.json"]
+    },
+    {
+      "id": "choose-the-stack",
+      "skills": ["setup-loop"],
+      "query": "/setup-loop — fresh copy of the template. I want a small tool with a web page and its own server that only runs on my machine and keeps its data in a file. I don't want Supabase or Vercel.",
+      "files": ["presets/ (the copy is fresh)", "loop/loop.config.json naming the profile next-supabase-vercel, no stack", "loop/stack/ with every block"],
+      "expected_behavior": [
+        "Starts with step 0 because presets/ exists and the config has no stack list",
+        "Asks at most the interview questions the first message did not already answer, one per message",
+        "Runs node loop/scripts/stack.mjs --list --json and recommends blocks by their choose sentence",
+        "Shows one question per category with every block as an option, the recommended one first and marked, drafts marked as drafts",
+        "Recommends toolchain/vite-plus, framework/react-vite and framework/fastify, product/web-ui and product/http-api, database/sqlite, hosting/none",
+        "Says that five of the recommended blocks are drafts: tested, not yet proven by a project",
+        "Accepts a choice that differs from its recommendation without arguing",
+        "Runs build-stack.mjs with --dry-run first, shows what is removed and written, and waits for a yes",
+        "Does not write any project file itself: only the builder does",
+        "Asks before pnpm install, runs pnpm check once, proposes the commit with the lockfile, asks before git push",
+        "Continues with step 1 (the validator) on the built project"
+      ],
+      "expected_files": ["package.json", "loop/loop.config.json", "CLAUDE.md", "gates/lint.ts", "src/server/app.ts", "src/web/App.tsx"]
     }
   ]
 }

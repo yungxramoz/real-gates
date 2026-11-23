@@ -9,4 +9,7 @@ export default {
     'no-debugger': 'error',
     eqeqeq: 'error',
   },
+  // The loop, the skills and the repository's own scripts come from the template, written and
+  // checked there. A session cannot edit them, so a finding in them is one nobody here could fix.
+  ignorePatterns: ['loop/**', '.claude/**', 'scripts/**'],
 } satisfies NonNullable<UserConfig['lint']>;

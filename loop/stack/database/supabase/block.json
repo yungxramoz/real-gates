@@ -3,6 +3,7 @@
   "description": "A Postgres database in one Supabase dev project. Schema changes are migration files in `supabase/migrations/`; after a merge the runner applies them with the Supabase CLI and checks the migration list, and holds the item when it cannot. Sessions may only read, and only in the one allowed project. The health endpoint has to report the database as reachable.",
   "choose": "The data lives in Supabase.",
   "status": "proven",
+  "comesWith": "next-supabase-vercel",
   "config": {
     "guard": { "packs": ["supabase"] },
     "postMerge": [{ "adapter": "supabase-cli", "dbUrlEnv": "DEV_DB_URL", "migrationsDir": "supabase/migrations", "holdOnUnverified": true }],

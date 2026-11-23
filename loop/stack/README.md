@@ -23,7 +23,7 @@ loop/stack/
   hosting/none/
     block.json              what the block is, when to choose it, what it adds to the config
     prompts/*.md            its words for the steps a session takes
-    files/                  what it brings into a project: config files, a check script
+    files/                  what it brings into a project, written by scripts/build-stack.mjs
 ```
 
 **Proven and draft.** A block says which it is (`"status"`). *Proven*: a real project was built
@@ -52,6 +52,10 @@ A project names its blocks in `loop/loop.config.json`, in one of two ways:
 A **profile** (`loop/profiles/<name>/profile.json`) is a stack that was proven as a whole: a named
 list of blocks that a real project was built with. Two ship: `next-supabase-vercel` and
 `node-cli`. A project's own `stack` replaces the profile's list.
+
+A project gets its files the same two ways. A profile comes whole: the template as it stands is
+the web profile, and `node scripts/apply-preset.mjs node-cli` swaps in the other. Any other list
+of blocks is built: `node scripts/build-stack.mjs --stack …` (see [files/](#files)).
 
 Config is read in four layers, later ones win: the defaults in `loop/lib/config.mjs`, then the
 blocks of the stack put together, then the profile's other keys, then `loop/loop.config.json` (this
@@ -92,6 +96,7 @@ That is the order of the guard packs, of the local gate's commands and of the wo
 | `description` | What the block does to the loop: what is checked, what is refused, how its items are judged |
 | `choose` | When a project takes it, as one sentence that is true or false for a project |
 | `status` | `proven` or `draft` (see above). A block that does not say is a draft |
+| `comesWith` | The profile whose project is the only place this block's code exists. Such a block is taken with that profile and is not built into another stack |
 | `config` | What it adds to the loop config. Any key of `DEFAULTS` in `loop/lib/config.mjs` except a project's own values (repo, branches, git author) |
 
 ### How the config of several blocks becomes one
@@ -247,8 +252,44 @@ but nothing removes that folder.
 ## files/
 
 What a block brings into a project, at the paths it has there: `files/gates/lint.ts` becomes
-`gates/lint.ts`. Only a block whose gates need a file of their own has this folder. Today that is
-the Vite+ toolchain:
+`gates/lint.ts`. `node scripts/build-stack.mjs --stack <block>,<block>,…` turns a fresh copy of
+the template into the project of that stack: it removes the files of the web profile the
+template's root holds, and writes what every chosen block brings, in stack order. `--dry-run`
+shows what it would do. `/setup-loop` asks what is being built, recommends the blocks, lets the
+user choose and runs it.
+
+| A file in `files/` | What the builder does with it |
+| --- | --- |
+| `package.json` | Every block brings its part: its scripts and its dependencies. The parts are put together like the config: objects merge, and a value two blocks set differently is a problem |
+| `<file>.at.<slot>` | Added to `<file>`, in front of its `<!-- stack:<slot> -->` line. `<file>.at.end` goes to the end of the file. The file is one another block brings, or one the template keeps |
+| any other file | Written as it is. Two blocks that bring the same file are a problem |
+
+A line `<!-- stack:<slot> -->` nobody adds to is taken out. So a page that several blocks share
+(`CLAUDE.md`, the architecture pages, the requirements) is brought whole by one block, with a slot
+where the others have something to say.
+
+**The names a project is called by.** `check`, `build`, `start` and `test:e2e` are what the
+loop, CI and a person run, and a pull request cannot change the scripts in `package.json`. The
+toolchain block owns those four. A framework block brings scripts of its own under them
+(`build:web`, `start:server`), and `scripts/run-scripts.mjs` runs the ones a project has: every
+`build:*` to build, the first `start:*` to start.
+
+**Which blocks can be built with.** A toolchain block brings the base of the project:
+`package.json`, the configs, the CI workflow, `CLAUDE.md` and the docs pages. A stack is built on
+a toolchain that does.
+
+Five blocks cannot be built into another stack: `toolchain/pnpm-vitest`, `framework/next` and
+`database/supabase` (the web profile), `toolchain/npm-node-test` and `product/cli-command` (the
+CLI profile). Their code exists only in the project of their profile: the template's root, or the
+preset. Each names that profile (`"comesWith"`), and the builder refuses a list that holds one:
+nothing would write the code the block's settings count on. The Supabase block asks the health
+endpoint to report the database; the server a stack is built with knows no database. The loop
+itself does not mind such a list in `stack`: a project that wires the code by hand may use it.
+
+What a block may ask of the project it is built into is what a block of that stack answers. The
+hosting block asks the health endpoint for the commit, and the Fastify block's server gives it.
+
+### The Vite+ gates
 
 | File | What it is for |
 | --- | --- |
@@ -263,9 +304,14 @@ ratchet, and the check closes what freezing cannot: a config that leaves a rule 
 a changed copy, or changes the object it imported. It also refuses a tracked file that an ignore
 file names, because the formatter and the linter skip what git ignores. It runs first in `check`.
 
-Nothing copies `files/` into a project yet: take them over by hand when you start one on this
-toolchain. The files are formatted the way the block's own format rules ask, so `vp check`
-passes on them as they are.
+The files are formatted the way the block's own format rules ask, so `vp check` passes on a
+project as it is built.
+
+### After the build
+
+What a block brought is the project's from then on, with two exceptions that stay the
+template's: the CI workflow and everything in `scripts/`. A loop session cannot change either, so
+`scripts/sync-template.mjs` brings a later version of them from the project's blocks.
 
 ## A new block
 

@@ -3,6 +3,7 @@
   "description": "Commands a person or a script runs in a terminal, shipped as an npm package. An item of the work type `command` needs an end-to-end test that starts the real binary, is run by the reviewer the way a reader of `--help` would, and is scored on help and errors, ergonomics, output and robustness against docs/CLI-CONVENTIONS.md. A milestone with such items is accepted from the packed and installed package. Publishing, version bumps and global installs are refused.",
   "choose": "The product has commands people run in a terminal.",
   "status": "proven",
+  "comesWith": "node-cli",
   "config": {
     "workTypes": {
       "command": { "rubric": ["help_and_errors", "ergonomics", "output", "robustness"], "accept": "local" }

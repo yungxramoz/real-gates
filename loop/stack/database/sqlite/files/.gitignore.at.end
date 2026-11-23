@@ -1,0 +1,5 @@
+
+# database files: the schema is in migrations/, the data stays on the machine
+*.sqlite
+*.sqlite-*
+*.db

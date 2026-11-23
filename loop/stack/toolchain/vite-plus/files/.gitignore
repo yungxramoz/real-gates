@@ -1,0 +1,26 @@
+# loop runtime state, logs, guard snapshot (never committed)
+/.loop/
+
+# dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# test output
+playwright-report/
+test-results/
+artifacts/
+blob-report/
+
+# env files: only the example is committed
+.env
+.env.*
+!.env.example
+# what a stack block adds to a project's example (loop/stack/**/files/.env.example.at.<slot>)
+!.env.example.at.*
+
+# machine noise
+.DS_Store
+Thumbs.db
+*.stackdump

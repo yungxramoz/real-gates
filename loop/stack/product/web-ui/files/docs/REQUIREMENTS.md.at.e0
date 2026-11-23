@@ -1,0 +1,2 @@
+- AC-0.1 The home page renders with one main heading, does not scroll sideways at 360 px and has
+  no automated accessibility violation.

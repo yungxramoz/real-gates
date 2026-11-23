@@ -56,11 +56,15 @@ function copyOfRepo(name) {
 }
 
 /** A project made from the template: its own config, backlog, a learned rule, a pending patch, its docs. */
-function makeProject(template, { preset } = {}) {
+function makeProject(template, { preset, stack } = {}) {
   const dir = copyOfRepo('project');
   if (preset) {
     const applied = node(['scripts/apply-preset.mjs', preset], dir);
     assert.equal(applied.status, 0, applied.stderr);
+  }
+  if (stack) {
+    const built = node(['scripts/build-stack.mjs', '--stack', stack.join(',')], dir);
+    assert.equal(built.status, 0, built.stderr);
   }
   const cfg = JSON.parse(read(dir, 'loop/loop.config.json'));
   Object.assign(cfg, {
@@ -100,6 +104,33 @@ function makeProject(template, { preset } = {}) {
   return dir;
 }
 
+/**
+ * Where the CI workflow of the project a repository is comes from, when a later template changes
+ * it: the root's own file, or, in a repository that was built from stack blocks, the file its
+ * blocks bring. This suite runs in every kind of project, so "the template's workflow changed"
+ * has to mean the one a project of this kind would be given.
+ */
+function ownWorkflows(template) {
+  const stack = JSON.parse(read(template, 'loop/loop.config.json')).stack;
+  const root = path.join(template, '.github', 'workflows', 'ci.yml');
+  if (!Array.isArray(stack) || !stack.length) return [root];
+  const brought = stack
+    .map((id) =>
+      path.join(
+        template,
+        'loop',
+        'stack',
+        ...id.split('/'),
+        'files',
+        '.github',
+        'workflows',
+        'ci.yml',
+      ),
+    )
+    .filter((file) => fs.existsSync(file));
+  return brought.length ? brought : [root];
+}
+
 /** A later template: a fix in the runner, a new file, a removed file, a changed skill and script, a changed doc skeleton. */
 function evolve(template) {
   fs.appendFileSync(path.join(template, 'loop', 'lib', 'state.mjs'), '\n// fixed upstream\n');
@@ -110,10 +141,9 @@ function evolve(template) {
     '\nA new rule.\n',
   );
   fs.appendFileSync(path.join(template, 'scripts', 'ac-trace.mjs'), '\n// fixed upstream\n');
-  fs.appendFileSync(
-    path.join(template, '.github', 'workflows', 'ci.yml'),
-    '\n# web workflow changed\n',
-  );
+  for (const workflow of ownWorkflows(template)) {
+    fs.appendFileSync(workflow, '\n# web workflow changed\n');
+  }
   if (fs.existsSync(path.join(template, 'presets', 'node-cli')))
     fs.appendFileSync(
       path.join(template, 'presets', 'node-cli', 'files', '.github', 'workflows', 'ci.yml'),
@@ -278,6 +308,59 @@ test(
       const g = node(args, project);
       assert.equal(g.status, 0, `${args[0]}:\n${g.stdout}\n${g.stderr}`);
     }
+  },
+);
+
+// Building a stack needs a fresh copy of the template: a repository that already is a project has
+// no presets/ folder and nothing to build from.
+const fresh = fs.existsSync(path.join(REPO, 'presets'));
+
+test(
+  'a project built from its own blocks takes the workflow and the scripts of those blocks, never the web ones',
+  { skip: !fresh },
+  () => {
+    const stack = [
+      'forge/github',
+      'toolchain/vite-plus',
+      'framework/fastify',
+      'product/http-api',
+      'hosting/none',
+    ];
+    const template = copyOfRepo('template');
+    const project = makeProject(template, { stack });
+    const gates = read(project, 'gates/test.ts');
+    const files = path.join(template, 'loop', 'stack', 'toolchain', 'vite-plus', 'files');
+    evolve(template);
+    fs.appendFileSync(
+      path.join(files, '.github', 'workflows', 'ci.yml'),
+      '\n# block workflow changed\n',
+    );
+    fs.appendFileSync(
+      path.join(files, 'scripts', 'check-gates.mjs'),
+      '\n// block script changed\n',
+    );
+    fs.appendFileSync(path.join(files, 'gates', 'test.ts'), '\n// block gate changed\n');
+    fs.appendFileSync(path.join(files, 'CLAUDE.md'), '\nA block rule changed.\n');
+    commitAll(template, 'later');
+    const r = node(['scripts/sync-template.mjs', '--from', template], project);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(read(project, '.github/workflows/ci.yml'), /block workflow changed/);
+    assert.doesNotMatch(read(project, '.github/workflows/ci.yml'), /web workflow changed/);
+    assert.match(read(project, 'scripts/check-gates.mjs'), /block script changed/);
+    // what the project owns after the build stays as it is: its rules, its thresholds
+    assert.equal(read(project, 'gates/test.ts'), gates);
+    assert.doesNotMatch(read(project, 'CLAUDE.md'), /A block rule changed/);
+    assert.deepEqual(JSON.parse(read(project, 'loop/loop.config.json')).stack, stack);
+    assert.ok(!fs.existsSync(path.join(project, 'src', 'app')), 'the web app is not brought back');
+    // a block the template no longer has is a problem, not a silent loss
+    fs.rmSync(path.join(template, 'loop', 'stack', 'product', 'http-api'), { recursive: true });
+    commitAll(template, 'a block is gone');
+    const gone = node(['scripts/sync-template.mjs', '--from', template, '--dry-run'], project);
+    assert.equal(gone.status, 1, gone.stdout);
+    assert.match(
+      gone.stderr + gone.stdout,
+      /the template has no block "product\/http-api" \(loop\/stack\/product\/http-api\/\): this project's stack would lose it/,
+    );
   },
 );
 

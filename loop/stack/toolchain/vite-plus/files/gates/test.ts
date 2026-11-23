@@ -9,7 +9,8 @@ export default {
   coverage: {
     provider: 'v8',
     include: ['src/**'],
-    exclude: ['src/**/*.test.{ts,tsx}'],
+    // An entry point only starts what the tests cover: it mounts the app or opens the port.
+    exclude: ['src/**/*.test.{ts,tsx}', 'src/**/main.{ts,tsx}'],
     thresholds: { lines: 80, functions: 80, branches: 70, statements: 80 },
   },
 } satisfies NonNullable<UserConfig['test']>;

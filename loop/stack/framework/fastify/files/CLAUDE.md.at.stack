@@ -1,0 +1,3 @@
+- **Fastify** for the server, in `src/server/`. `buildApp()` makes it without opening a port, so
+  a test calls it with `inject`. Node runs the TypeScript as it is: imports name the file with
+  its `.ts` ending, and no syntax that needs compiling (no `enum`, no parameter properties)

@@ -7,6 +7,8 @@
     "scripts/apply-preset.test.mjs",
     "scripts/arch-check.mjs",
     "scripts/arch-check.test.mjs",
+    "scripts/build-stack.mjs",
+    "scripts/build-stack.test.mjs",
     "scripts/check-backlog.test.mjs",
     "scripts/check-skills.mjs",
     "scripts/check-skills.test.mjs",

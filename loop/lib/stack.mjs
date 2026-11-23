@@ -6,6 +6,9 @@
 //                 choose               when a project takes it
 //                 status               'proven': a real project was built with it. 'draft': its
 //                                      tests pass and no project has run on it yet
+//                 comesWith            the profile whose project is the only place this block's
+//                                      code exists. Such a block is taken with that profile,
+//                                      not built into another stack (scripts/build-stack.mjs)
 //                 config               what it adds to the loop config: commands, gate files, work
 //                                      types, guard packs, adapters (the keys of loop/lib/config.mjs)
 //   prompts/*.md  its words for the steps a session takes. A core prompt pulls them in with
@@ -57,7 +60,7 @@ export function blockIds(root) {
   return dirs(stackDir(root)).flatMap((c) => dirs(path.join(stackDir(root), c)).filter((n) => fs.existsSync(path.join(stackDir(root), c, n, 'block.json'))).map((n) => `${c}/${n}`)).sort();
 }
 
-/** One block: { id, category, name, dir, title, description, choose, status, config }. Throws a named error when it is not there or not readable. */
+/** One block: { id, category, name, dir, title, description, choose, status, comesWith, config }. Throws a named error when it is not there or not readable. */
 export function loadBlock(root, id) {
   const m = BLOCK_ID.exec(String(id));
   const file = m ? path.join(stackDir(root), m[1], m[2], 'block.json') : '';
@@ -70,7 +73,7 @@ export function loadBlock(root, id) {
   }
   if (!isPlainObject(json) || (json.config !== undefined && !isPlainObject(json.config))) throw new Error(`loop/stack/${id}/block.json must be an object, with \`config\` an object`);
   // a block that does not say is a draft: nothing is called proven by leaving a word out
-  return { id: m[0], category: m[1], name: m[2], dir: path.dirname(file), title: json.title || '', description: json.description || '', choose: json.choose || '', status: json.status === 'proven' ? 'proven' : 'draft', config: json.config || {} };
+  return { id: m[0], category: m[1], name: m[2], dir: path.dirname(file), title: json.title || '', description: json.description || '', choose: json.choose || '', status: json.status === 'proven' ? 'proven' : 'draft', comesWith: typeof json.comesWith === 'string' ? json.comesWith : '', config: json.config || {} };
 }
 
 /** What is wrong with a list of block ids before any is read: its form, a repeated block, a category that holds too many or too few. */

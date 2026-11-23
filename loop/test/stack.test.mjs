@@ -251,7 +251,10 @@ describe('node loop/scripts/stack.mjs', () => {
     const listed = run('--list', '--root', REPO);
     assert.equal(listed.status, 0, listed.stderr);
     assert.match(listed.stdout, /product \(any number\): what a user touches/);
-    assert.match(listed.stdout, / {2}product\/cli-command: CLI command\n {4}Commands a person or a script runs in a terminal/);
+    assert.match(listed.stdout, / {2}product\/cli-command: CLI command \[only as part of the profile node-cli\]\n {4}Commands a person or a script runs in a terminal/);
+    assert.match(listed.stdout, / {2}forge\/github: GitHub\n {4}Pull requests, CI results and the merge live on GitHub/);
+    // a block whose code exists only in a profile's project says which profile
+    assert.deepEqual(cats.flatMap((c) => c.blocks).filter((b) => b.comesWith).map((b) => b.id).sort(), ['database/supabase', 'framework/next', 'product/cli-command', 'toolchain/npm-node-test', 'toolchain/pnpm-vitest']);
     assert.match(listed.stdout, /Choose it when: The repository is on GitHub\./);
   });
   test('a project sees what its stack adds up to, with a profile and with its own list', () => {
@@ -436,14 +439,15 @@ describe('the Vite+ toolchain keeps its rules although every tool reads one conf
   // built-ins only and runs before any install). Where the repository has Vite installed, as
   // the template does in CI, this runs; elsewhere it says why it did not.
   test('run against a real config, the check passes the honest one and fails every way of weakening it', async (t) => {
-    const vite = await import('vite').catch(() => null);
-    if (!vite) return t.skip('Vite is not installed in this repository: the check needs its config loader');
+    // Vite+ in a project on that toolchain, plain Vite in the template itself
+    const loader = (await import('vite-plus').catch(() => null)) ? 'vite-plus' : (await import('vite').catch(() => null)) ? 'vite' : null;
+    if (!loader) return t.skip('neither Vite+ nor Vite is installed in this repository: the check needs their config loader');
     // inside the repository, so the config's import of Vite resolves; under .loop/, which git ignores
     fs.mkdirSync(path.join(REPO, '.loop'), { recursive: true });
     const root = fs.mkdtempSync(path.join(REPO, '.loop', 'check-gates-'));
     tmp.push(root);
     fs.cpSync(files, root, { recursive: true });
-    const honest = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8').replace("from 'vite-plus'", "from 'vite'");
+    const honest = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8').replace("from 'vite-plus'", `from '${loader}'`);
     const run = (config) => {
       fs.writeFileSync(path.join(root, 'vite.config.ts'), config);
       return spawnSync(process.execPath, [path.join(root, 'scripts', 'check-gates.mjs')], { cwd: root, encoding: 'utf8' });
@@ -473,6 +477,88 @@ describe('the Vite+ toolchain keeps its rules although every tool reads one conf
     const none = spawnSync(process.execPath, [path.join(root, 'scripts', 'check-gates.mjs')], { cwd: root, encoding: 'utf8' });
     assert.equal(none.status, 1);
     assert.match(none.stderr, /could not read the config: no vite\.config\.ts in the project root/);
+  });
+});
+
+describe('what the blocks bring into a project fits together', () => {
+  const ids = blockIds(REPO);
+  const filesOf = (id) => {
+    const dir = path.join(loadBlock(REPO, id).dir, 'files');
+    const walk = (d) => (fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.relative(dir, path.join(d, e.name)).replace(/\\/g, '/')])) : []);
+    return { dir, files: walk(dir) };
+  };
+  const bases = ids.filter((id) => id.startsWith('toolchain/') && fs.existsSync(path.join(filesOf(id).dir, 'package.json')));
+  test('a toolchain that a stack can be built on brings the four names a project is called by', () => {
+    assert.deepEqual(bases, ['toolchain/vite-plus']);
+    for (const id of bases) {
+      const pkg = JSON.parse(fs.readFileSync(path.join(filesOf(id).dir, 'package.json'), 'utf8'));
+      for (const name of ['check', 'build', 'start', 'test:e2e']) assert.ok(pkg.scripts[name], `${id}: no "${name}" script`);
+      // the local gate of the block is a script it brings
+      for (const command of loadBlock(REPO, id).config.localGate.commands) {
+        const script = command.match(/^pnpm (\S+)$/)?.[1];
+        const file = command.match(/^node (scripts\/\S+)$/)?.[1];
+        assert.ok((script && pkg.scripts[script]) || file, `${id}: local gate "${command}"`);
+      }
+    }
+  });
+  test('a block whose code exists only in a profile\'s project names that profile, and brings no files of its own', () => {
+    const tied = ids.map((id) => loadBlock(REPO, id)).filter((b) => b.comesWith);
+    assert.deepEqual(tied.map((b) => `${b.id} with ${b.comesWith}`), ['database/supabase with next-supabase-vercel', 'framework/next with next-supabase-vercel', 'product/cli-command with node-cli', 'toolchain/npm-node-test with node-cli', 'toolchain/pnpm-vitest with next-supabase-vercel']);
+    for (const b of tied) {
+      assert.ok(loadProfile(REPO, b.comesWith).stack.includes(b.id), `${b.id}: the profile ${b.comesWith} lists it`);
+      assert.deepEqual(filesOf(b.id).files, [], `${b.id}: its files are the profile's project, not the block's`);
+    }
+    // every other toolchain is one a stack can be built on, and every category but the forge's
+    // has a block that can be built into any stack
+    assert.deepEqual(ids.filter((id) => id.startsWith('toolchain/') && !loadBlock(REPO, id).comesWith), bases);
+    for (const category of Object.keys(CATEGORIES)) assert.ok(ids.some((id) => id.startsWith(`${category}/`) && !loadBlock(REPO, id).comesWith), `${category}: a block to build with`);
+    // a block that asks something of the health answer has its code in a profile: nothing a
+    // built server would have to know about
+    for (const id of ids) {
+      const b = loadBlock(REPO, id);
+      if (Object.keys(b.config.deploy?.expect || {}).length) assert.ok(b.comesWith, `${id} asks the health endpoint for ${Object.keys(b.config.deploy.expect).join(', ')}: the server a stack is built with does not answer that`);
+    }
+    const root = repoWith({ 'product/free': { raw: '{}' }, 'product/tied': { raw: '{"comesWith":"some-profile"}' }, 'product/odd': { raw: '{"comesWith":true}' } });
+    assert.deepEqual(['free', 'tied', 'odd'].map((n) => loadBlock(root, `product/${n}`).comesWith), ['', 'some-profile', '']);
+  });
+  test('only a toolchain owns the four names; the other blocks bring scripts of their own under them', () => {
+    for (const id of ids.filter((i) => !i.startsWith('toolchain/'))) {
+      const file = path.join(filesOf(id).dir, 'package.json');
+      if (!fs.existsSync(file)) continue;
+      const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+      for (const key of Object.keys(pkg)) assert.ok(['scripts', 'dependencies', 'devDependencies'].includes(key), `${id}: package.json part sets "${key}", which is the toolchain's`);
+      for (const name of Object.keys(pkg.scripts || {})) assert.match(name, /^(build|start|dev):[a-z]+$/, `${id}: script "${name}"`);
+      for (const [name, version] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) assert.match(version, /^\d+\.\d+\.\d+$/, `${id}: ${name} is pinned to one version`);
+    }
+  });
+  test('every part a block adds to a shared page has its slot in a page a toolchain brings', () => {
+    let parts = 0;
+    for (const id of ids) {
+      for (const rel of filesOf(id).files) {
+        const slot = /^(.*)\.at\.([a-z][a-z0-9-]*)$/.exec(rel);
+        if (!slot) continue;
+        parts++;
+        if (slot[2] === 'end') continue; // goes to the end of a file, wherever that comes from
+        for (const base of bases) {
+          const page = path.join(filesOf(base).dir, slot[1]);
+          assert.ok(fs.existsSync(page), `${id} adds to ${slot[1]}, which ${base} does not bring`);
+          assert.match(fs.readFileSync(page, 'utf8'), new RegExp(`^<!-- stack:${slot[2]} -->$`, 'm'), `${id} adds to ${slot[1]} at "${slot[2]}", and ${base}'s page has no such line`);
+        }
+      }
+    }
+    assert.ok(parts >= 10, 'the blocks of a built stack say their part on the shared pages');
+  });
+  test('no two blocks that may be in one stack bring the same file', () => {
+    const owner = new Map();
+    for (const id of ids) {
+      for (const rel of filesOf(id).files.filter((f) => f !== 'package.json' && !/\.at\.[a-z][a-z0-9-]*$/.test(f))) {
+        const other = owner.get(rel);
+        // two toolchains, or two hosting blocks, are never in one stack
+        const exclusive = other && other.split('/')[0] === id.split('/')[0] && ['toolchain', 'forge', 'hosting'].includes(id.split('/')[0]);
+        assert.ok(!other || exclusive, `${other} and ${id} both bring ${rel}`);
+        owner.set(rel, id);
+      }
+    }
   });
 });
 

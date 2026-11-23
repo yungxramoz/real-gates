@@ -1,0 +1,2 @@
+- **Data:** SQLite in one local file; the schema is the migration files in `migrations/`,
+  applied by the app at start

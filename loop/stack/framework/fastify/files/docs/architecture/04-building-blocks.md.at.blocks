@@ -1,0 +1,1 @@
+- **Server** — `src/server/` — the HTTP server: its routes and how it starts. Depends on: nothing yet

@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "dev:server": "node --watch src/server/main.ts",
+    "start:server": "node src/server/main.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "10.1.12",
+    "fastify": "5.12.8"
+  }
+}
