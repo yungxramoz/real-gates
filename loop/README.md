@@ -60,8 +60,9 @@ or service). The core only calls their interfaces. Another tool is another block
 host is another adapter. The contract: [stack/README.md](stack/README.md).
 `node loop/scripts/stack.mjs` prints this project's blocks and what they add up to.
 
-A **profile** (`loop/profiles/<name>/`) is a stack that was proven as a whole: a named list of
-blocks. Two ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
+A block is **proven** (a real project was built with it) or a **draft** (tested, and no project
+has run on it yet); the run says before it starts when its stack uses a draft. A **profile**
+(`loop/profiles/<name>/`) is a stack that was proven as a whole: a named list of proven blocks. Two ship: `next-supabase-vercel` (the repository as it stands) and `node-cli`
 (`node scripts/apply-preset.mjs node-cli`). This page describes the web preset where it has to
 name a tool; where the two differ, the blocks decide:
 
@@ -225,7 +226,7 @@ every call, and the packs are part of the snapshot. Together they block:
 | Merging | `gh pr merge` (only the script merges), repo settings, secrets, branch protection, `gh api` writes |
 | Database | any Supabase project except `guard.allowedDbProject`, every ref in `guard.forbiddenRefs`, `apply_migration`, `supabase db push` / `reset`, writing or destructive SQL from a session |
 | SQL | judged with comments removed, the way Postgres reads it, so a comment can neither trip a rule nor hide a write |
-| Files | `loop/**` and the other `guard.protectedPaths`, `.env*`, migrations already on base, broad deletes |
+| Files | `loop/**` and the other `guard.protectedPaths`, `.env*`, migrations already on base (in the folder of a post-merge step, or one `migrations.dirs` names), broad deletes |
 | Read-only steps | review, accept and packet: any write outside `.loop/`, any git write. These sessions also start without write tools |
 | Hosting | Vercel settings writes |
 

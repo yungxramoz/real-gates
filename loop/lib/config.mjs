@@ -36,6 +36,9 @@ export const DEFAULTS = Object.freeze({
   // adapter 'none': nothing is deployed, so no milestone acceptance on a site.
   deploy: { adapter: 'http-health', devUrl: '', health: '/api/health', commitField: 'commit', expect: {}, bypassSecretEnv: '', bypassHeader: '' },
   postMerge: [], // steps the runner takes after a merge (loop/adapters/postmerge-*.mjs)
+  // Folders whose .sql files are frozen once they are on the base branch, on top of every
+  // postMerge[].migrationsDir: for a database the app migrates itself, with no step after a merge.
+  migrations: { dirs: [] },
   // packs: the tool rules on top of the core guard (loop/guard/packs/). allowedDbProject and
   // dbSchema belong to the database packs.
   guard: { packs: ['github'], allowedDbProject: '', forbiddenRefs: [], protectedPaths: ['.env*', 'loop/**', '.github/**', '.claude/**'], dbSchema: '', requireBranchProtection: true },
@@ -213,6 +216,7 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!['always', 'unless-tree-equal'].includes(cfg.baseCiWait)) p.push('baseCiWait must be "always" or "unless-tree-equal"');
   if (!['apply', 'wait'].includes(cfg.postMergeOnRedBase)) p.push('postMergeOnRedBase must be "apply" or "wait"');
   if (!Array.isArray(cfg.sessionEnvDeny)) p.push('sessionEnvDeny must be a list of environment variable names');
+  if (!Array.isArray(cfg.migrations?.dirs) || cfg.migrations.dirs.some((d) => typeof d !== 'string' || !d || d.startsWith('/') || d.split('/').includes('..'))) p.push('migrations.dirs must be a list of folders in the repository ("migrations")');
   const name = '[\\w.@()[\\]+~-]+';
   const block = new RegExp(`^(?:${name}|\\*)(?:/(?:${name}|\\*))*/?$`);
   const usable = (b) => typeof b === 'string' && block.test(b) && b.includes('*') && !b.split('/').some((s) => s === '.' || s === '..');

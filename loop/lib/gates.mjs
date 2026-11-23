@@ -10,6 +10,7 @@
 
 import { matchesAny } from '../guard/paths.mjs';
 import { isProtected } from '../guard/core.mjs';
+import { migrationDirs } from '../guard/shared.mjs';
 
 // ------------------------------------------------------------------------------------- contract
 /** The AC IDs a backlog item names, in its refs, title or scope. */
@@ -134,13 +135,13 @@ export function preMergeChecks(ctx, s, item) {
     return { ok: false, text: `\`${cfg.base}\` has moved since this branch was cut. Merge \`origin/${cfg.base}\` into \`${s.branch}\` (no rebase, no force-push), resolve conflicts, re-run the local gates and push. CI must run on what will actually land (L-01).` };
   }
   const changes = nameStatus(proc, `origin/${cfg.base}...${branch}`);
-  const migrationDirs = (cfg.postMerge || []).map((x) => x.migrationsDir).filter(Boolean);
+  const frozenDirs = migrationDirs(cfg);
   const guardCtx = { cfg, isOnBase: (rel) => proc.gitTry('cat-file', '-e', `origin/${cfg.base}:${rel}`).ok };
   const problems = gateProblems(proc, cfg, branch, changes);
   if (item) problems.push(...contractProblems(proc, cfg, branch, item));
   for (const { status, files } of changes) {
     for (const file of files) {
-      if (migrationDirs.some((d) => file.startsWith(d.replace(/\/$/, '') + '/')) && /\.sql$/.test(file) && !status.startsWith('A')) problems.push(`\`${file}\` (${status}): migrations already on ${cfg.base} are frozen — revert this change and fix forward with a new file.`);
+      if (frozenDirs.some((d) => file.startsWith(d + '/')) && /\.sql$/.test(file) && !status.startsWith('A')) problems.push(`\`${file}\` (${status}): migrations already on ${cfg.base} are frozen — revert this change and fix forward with a new file.`);
       if (/(^|\/)\.env($|\.(?!example$))/.test(file)) problems.push(`\`${file}\`: env files must never be committed.`);
       else if (/^\.loop\//.test(file)) problems.push(`\`${file}\`: loop runtime files must not be committed.`);
       else if (isProtected(file, guardCtx) || (matchesAny(file, ['loop/patches/*']) && !status.startsWith('A'))) problems.push(`\`${file}\` (${status}): part of the harness or the owner's. A runner change ships as a new file in loop/patches/.`);

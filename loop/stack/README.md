@@ -10,15 +10,26 @@ loop/stack/
   forge/github/             where pull requests, CI results and the merge live
   toolchain/pnpm-vitest/    how the code is checked, tested and kept from getting worse
   toolchain/npm-node-test/
+  toolchain/vite-plus/      (draft)
   framework/next/           what the code is written with
+  framework/react-vite/     (draft)
+  framework/fastify/        (draft)
   product/web-ui/           what a user touches: how an item is reviewed, a milestone accepted
   product/cli-command/
+  product/http-api/         (draft)
   database/supabase/        where the data lives, and what happens to it after a merge
+  database/sqlite/          (draft)
   hosting/vercel/           where the merged base runs
   hosting/none/
     block.json              what the block is, when to choose it, what it adds to the config
     prompts/*.md            its words for the steps a session takes
+    files/                  what it brings into a project: config files, a check script
 ```
+
+**Proven and draft.** A block says which it is (`"status"`). *Proven*: a real project was built
+with it, and what its runs taught is in its words. *Draft*: it fits the contract and its tests
+pass, and no project has run on it yet. A draft can be used. The run says so before it starts,
+and `node loop/scripts/stack.mjs` marks it. A profile lists proven blocks only.
 
 Every block ships with the harness, whatever a project uses. That is why the runner's own suite
 (`loop/test/stack.test.mjs`) can test each of them in any project.
@@ -80,6 +91,7 @@ That is the order of the guard packs, of the local gate's commands and of the wo
 | `title` | The block's name for a person |
 | `description` | What the block does to the loop: what is checked, what is refused, how its items are judged |
 | `choose` | When a project takes it, as one sentence that is true or false for a project |
+| `status` | `proven` or `draft` (see above). A block that does not say is a draft |
 | `config` | What it adds to the loop config. Any key of `DEFAULTS` in `loop/lib/config.mjs` except a project's own values (repo, branches, git author) |
 
 ### How the config of several blocks becomes one
@@ -107,6 +119,7 @@ pack; it does not repeat the forge's pack.
 | `forge.adapter` | Where pull requests, CI results and the merge live (`loop/adapters/forge-*.mjs`) |
 | `deploy` | How the runner learns that the dev site serves the merged commit, or `"adapter": "none"` |
 | `postMerge` | Steps the runner takes after a merge, each `{ adapter, … }` (`loop/adapters/postmerge-*.mjs`) |
+| `migrations.dirs` | Folders whose `.sql` files are frozen once they are on the base branch, on top of every `postMerge[].migrationsDir`. For a database the app migrates itself, which has no step after a merge |
 | `notify.adapter` | How the owner is told (`loop/adapters/notify-*.mjs`) |
 
 A project may override any of these in `loop/loop.config.json`.
@@ -231,6 +244,29 @@ that has to outlast the session goes where it always went: `.loop/shots/{{ITEM_I
 `.loop/reviews/{{MILESTONE}}/`. A fragment that names its own folder under `.loop/` still works,
 but nothing removes that folder.
 
+## files/
+
+What a block brings into a project, at the paths it has there: `files/gates/lint.ts` becomes
+`gates/lint.ts`. Only a block whose gates need a file of their own has this folder. Today that is
+the Vite+ toolchain:
+
+| File | What it is for |
+| --- | --- |
+| `gates/lint.ts`, `gates/fmt.ts` | The lint and format rules. A pull request may not change them |
+| `gates/test.ts` | Which tests run and the coverage floor. Only its thresholds may change, upwards |
+| `vite.config.ts` | The config that imports the three and passes them on as they are |
+| `scripts/check-gates.mjs` | Fails when the config the toolchain really loads no longer does that |
+
+Vite+ reads the settings of every tool from the one `vite.config.ts`, and a session has to be
+free to edit that file. So the rules are files of their own, frozen by `gates.files` and the
+ratchet, and the check closes what freezing cannot: a config that leaves a rule set out, passes
+a changed copy, or changes the object it imported. It also refuses a tracked file that an ignore
+file names, because the formatter and the linter skip what git ignores. It runs first in `check`.
+
+Nothing copies `files/` into a project yet: take them over by hand when you start one on this
+toolchain. The files are formatted the way the block's own format rules ask, so `vp check`
+passes on them as they are.
+
 ## A new block
 
 1. **The folder**: `loop/stack/<category>/<name>/` with `block.json` and, where the block has
@@ -240,8 +276,10 @@ but nothing removes that folder.
    the gate files, a product block the review and the acceptance of its items).
 2. **Only what is its own.** A block does not repeat another block's settings. If it needs a rule
    for a tool, that is a guard pack; if it needs the runner to do something, that is an adapter.
-3. **Proven by a project.** A block ships once a real project was built with it. Until then it is
-   a draft, whatever its tests say.
+3. **A gate that is not empty.** A ratchet is tested against the file it reads: the test names
+   the numbers it finds there. A pattern that matches nothing checks nothing and never complains.
+4. **A draft first.** A new block says `"status": "draft"`. It becomes `proven` once a real
+   project was built with it and what its runs taught is in its words. Its tests cannot say that.
 
 ## A new profile
 

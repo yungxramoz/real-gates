@@ -412,6 +412,46 @@ test('a work type that is accepted where no block has words for stops the run in
   assert.doesNotMatch(ok.stderr, /is accepted on the merged/);
 });
 
+const LOCAL_APP = ['forge/github', 'toolchain/vite-plus', 'framework/react-vite', 'framework/fastify', 'product/web-ui', 'product/http-api', 'database/sqlite', 'hosting/none'];
+
+test('a local full-stack app built from blocks alone runs through the loop: an endpoint is reviewed as one and accepted on the base', async () => {
+  const sb = box({ stack: LOCAL_APP, backlog: { milestones: ['M1'], items: [{ id: 'A1', milestone: 'M1', title: 'an endpoint', type: 'api' }] } });
+  const scores = { contract: 8, errors: 8, robustness: 9, security: 8 };
+  sb.queue(smokeStep(), happyItem('A1')[0], { structured: { verdict: 'approve', blocking: [], scores, summary: 'fine' } }, { structured: { pass: true, failures: [], summary: 'good' } }, { structured: { markdown: '# M1\n', screenshots: [] } });
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'accept', 'packet']);
+  assert.equal(sb.state().items.A1.status, 'done');
+  assert.deepEqual(sb.state().packed, ['M1']);
+  // the run says once, before it starts, that part of this stack is not proven yet
+  assert.match(r.stdout + r.stderr, /the stack uses blocks no project has run on yet \(toolchain\/vite-plus, framework\/react-vite, framework\/fastify, product\/http-api, database\/sqlite\): the gates and words they bring are tested, not proven/);
+  const [, build, review, accept, packet] = sb.calls().map((c) => c.task);
+  assert.match(build, /`pnpm check` \(the gate wiring check, then format, lint and types with `vp check`/);
+  assert.match(build, /A new or changed endpoint \(work type `api`\) gets at least one end-to-end test/);
+  assert.match(build, /A change to the database schema is a new file in `migrations\/`/);
+  assert.match(review, /under\s+exactly these keys: `contract`, `errors`, `robustness`, `security`/);
+  assert.match(review, /\*\*Use it like a client\*\* \(items of work type `api`\)/);
+  assert.match(accept, /Nothing is deployed for this project: you test the merged `develop` itself/);
+  assert.match(accept, /3\. Call \*\*every endpoint\*\* this milestone enables on that local address/);
+  assert.match(accept, /4\. Score every endpoint on the rubric/);
+  assert.match(packet, /save a transcript of its main example/);
+  for (const task of [build, review, accept, packet]) assert.doesNotMatch(task, /Playwright|Dev URL|Supabase|Vercel|\{\{/);
+  const schema = JSON.parse(sb.calls()[2].args[sb.calls()[2].args.indexOf('--json-schema') + 1]);
+  assert.deepEqual(Object.keys(schema.properties.scores.properties), Object.keys(scores));
+  // an endpoint reviewed without one of its scores is not approved
+  const short = box({ stack: LOCAL_APP, backlog: { milestones: ['M1'], items: [{ id: 'A1', milestone: 'M1', title: 'an endpoint', type: 'api' }] } });
+  short.queue(smokeStep(), happyItem('A1')[0], { structured: { verdict: 'approve', blocking: [], scores: { contract: 8, errors: 8, robustness: 4 }, summary: 'fine' } }, { sleepMs: 1, text: 'stop here' });
+  await short.run(['--once', '--max-iterations', '3']);
+  assert.match(short.state().items.A1.lastReview.blocking.map((b) => b.issue).join('|'), /robustness scored 4 < 7\|the item was reviewed without a score for: security/);
+});
+
+test('a stack of proven blocks starts without the note about drafts', async () => {
+  const sb = box();
+  sb.queue(smokeStep(), { text: 'no result' });
+  const r = await sb.run(['--once', '--max-iterations', '2']);
+  assert.doesNotMatch(r.stdout + r.stderr, /no project has run on yet/);
+});
+
 test('a UI review without design scores is not an approval', async () => {
   const sb = box({ backlog: { milestones: ['M1'], items: [{ id: 'U1', milestone: 'M1', title: 'screen', ui: true }] } });
   const [build] = happyItem('U1', { ui: true });
@@ -701,7 +741,7 @@ test('a project lists its own blocks instead of naming a profile, and a list tha
   const unknown = box({ config: { stack: ['forge/github', 'toolchain/pnpm-vitest', 'product/desktop'] } });
   r = await unknown.run();
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /stack: "product\/desktop" is not a block under loop\/stack\/ \(known: database\/supabase, /);
+  assert.match(r.stderr, /stack: "product\/desktop" is not a block under loop\/stack\/ \(known: database\/sqlite, database\/supabase, /);
   assert.equal(two.calls().length + unknown.calls().length, 0);
 });
 

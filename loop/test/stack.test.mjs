@@ -8,13 +8,18 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { CATEGORIES, blockIds, composeStack, expandIncludes, fragmentParts, hasFragment, includesOf, loadBlock, loadStack, stackProblems, typesOf } from '../lib/stack.mjs';
+import { CATEGORIES, STATUSES, blockIds, composeStack, expandIncludes, fragmentParts, hasFragment, includesOf, loadBlock, loadStack, stackProblems, typesOf } from '../lib/stack.mjs';
 import { DEFAULTS, configFor, configProblems, deepMerge, loadProfile, profileNames } from '../lib/config.mjs';
 import { PACKS } from '../guard/packs/index.mjs';
 import { adapterProblems } from '../adapters/index.mjs';
-import { acceptPlace, workTypeProblems } from '../lib/worktypes.mjs';
+import { acceptPlace, acceptPlan, workTypeProblems } from '../lib/worktypes.mjs';
+import { ratchetValues } from '../lib/gates.mjs';
+import { decide } from '../guard/core.mjs';
+import { matchesAny, repoRelative } from '../guard/paths.mjs';
+import { migrationDirs } from '../guard/shared.mjs';
+import { PRESET } from './helpers/preset.mjs';
 import { catalogue, describeStack } from '../scripts/stack.mjs';
 
 const LOOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -183,12 +188,16 @@ describe('every shipped block fits the contract', () => {
   const included = new Set(corePrompts().flatMap((p) => includesOf(p.text)));
   test('the blocks the two profiles are made of are there', () => {
     for (const id of ['forge/github', 'toolchain/pnpm-vitest', 'toolchain/npm-node-test', 'framework/next', 'product/web-ui', 'product/cli-command', 'database/supabase', 'hosting/vercel', 'hosting/none']) assert.ok(ids.includes(id), `${id} is missing (have: ${ids.join(', ')})`);
+    // every category but the forge has a second choice
+    for (const category of ['toolchain', 'framework', 'product', 'database', 'hosting']) assert.ok(ids.filter((id) => id.startsWith(`${category}/`)).length >= 2, category);
   });
   for (const id of ids) {
     test(`${id}: says what it is and when to choose it, and adds only what the loop config knows`, () => {
       const b = loadBlock(REPO, id);
       assert.ok(CATEGORIES[b.category], `${b.category} is no category`);
       for (const k of ['title', 'description', 'choose']) assert.ok(b[k].trim().length > 0, `${id}: block.json needs "${k}"`);
+      assert.ok(STATUSES.includes(JSON.parse(fs.readFileSync(path.join(b.dir, 'block.json'), 'utf8')).status), `${id}: block.json says "status": "proven" or "draft"`);
+      for (const entry of fs.readdirSync(b.dir)) assert.ok(['block.json', 'prompts', 'files'].includes(entry), `${id}: ${entry} is not part of a block (block.json, prompts/, files/)`);
       assert.ok(b.description.length >= 60, `${id}: the description has to say what the block does to the loop`);
       for (const k of Object.keys(b.config)) assert.ok(k in DEFAULTS, `${id}: config.${k} is not a key of the loop config`);
       // a block never carries a project's own values
@@ -252,7 +261,7 @@ describe('node loop/scripts/stack.mjs', () => {
     fs.writeFileSync(path.join(cli, 'loop', 'loop.config.json'), JSON.stringify({ profile: 'node-cli' }));
     assert.deepEqual(describeStack(cli), {
       profile: 'node-cli',
-      stack: [{ id: 'forge/github', title: 'GitHub' }, { id: 'toolchain/npm-node-test', title: 'npm and node:test' }, { id: 'product/cli-command', title: 'CLI command' }, { id: 'hosting/none', title: 'Not deployed' }],
+      stack: [{ id: 'forge/github', title: 'GitHub', status: 'proven' }, { id: 'toolchain/npm-node-test', title: 'npm and node:test', status: 'proven' }, { id: 'product/cli-command', title: 'CLI command', status: 'proven' }, { id: 'hosting/none', title: 'Not deployed', status: 'proven' }],
       workTypes: { default: { rubric: [], accept: 'none' }, command: { rubric: ['help_and_errors', 'ergonomics', 'output', 'robustness'], accept: 'local' } },
       localGate: ['npm run check', 'node scripts/arch-check.mjs'],
       guardPacks: ['github', 'npm'],
@@ -283,6 +292,212 @@ describe('node loop/scripts/stack.mjs', () => {
     const bad = run('--everything');
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /stack: unknown argument "--everything"\nusage: node loop\/scripts\/stack\.mjs/);
+  });
+});
+
+// ------------------------------------------------------------------- proven blocks and drafts
+describe('a block is proven or a draft', () => {
+  test('a block is proven only when it says so; the blocks a real project ran on are, the newer ones are drafts', () => {
+    assert.deepEqual(STATUSES, ['proven', 'draft']);
+    const root = repoWith({ 'product/said': { raw: '{"status":"proven"}' }, 'product/silent': { raw: '{}' }, 'product/other': { raw: '{"status":"finished"}' } });
+    assert.deepEqual(['said', 'silent', 'other'].map((n) => loadBlock(root, `product/${n}`).status), ['proven', 'draft', 'draft']);
+    const status = Object.fromEntries(blockIds(REPO).map((id) => [id, loadBlock(REPO, id).status]));
+    assert.deepEqual(Object.keys(status).filter((id) => status[id] === 'proven').sort(), ['database/supabase', 'forge/github', 'framework/next', 'hosting/none', 'hosting/vercel', 'product/cli-command', 'product/web-ui', 'toolchain/npm-node-test', 'toolchain/pnpm-vitest']);
+    assert.deepEqual(Object.keys(status).filter((id) => status[id] === 'draft').sort(), ['database/sqlite', 'framework/fastify', 'framework/react-vite', 'product/http-api', 'toolchain/vite-plus']);
+    // a profile is a stack proven as a whole: it lists no draft
+    for (const name of profileNames(REPO)) for (const id of loadProfile(REPO, name).stack) assert.equal(status[id], 'proven', `${name} lists ${id}`);
+  });
+  test('the stack command marks a draft, in the catalogue and in a project that uses one', () => {
+    const script = path.join(LOOP, 'scripts', 'stack.mjs');
+    const listed = spawnSync(process.execPath, [script, '--list', '--root', REPO], { encoding: 'utf8' }).stdout;
+    assert.match(listed, / {2}product\/http-api: HTTP API \[draft: tested, not yet proven by a project\]\n/);
+    assert.match(listed, / {2}product\/web-ui: Web UI\n/);
+    const local = repoWith({});
+    fs.cpSync(path.join(LOOP, 'stack'), path.join(local, 'loop', 'stack'), { recursive: true });
+    fs.writeFileSync(path.join(local, 'loop', 'loop.config.json'), JSON.stringify({ stack: LOCAL_APP }));
+    const printed = spawnSync(process.execPath, [script, '--root', local], { encoding: 'utf8' }).stdout;
+    assert.match(printed, / {2}toolchain\/vite-plus: Vite\+ \(Oxlint, Oxfmt, Vitest\) \[draft: tested, not yet proven by a project\]\n/);
+    assert.match(printed, / {2}forge\/github: GitHub\n/);
+  });
+});
+
+// ------------------------------------------------- the newer blocks, alone and as one local app
+// A web app with a server and a file database that runs on this machine only: the first stack
+// that is not one of the two profiles. It is put together from blocks alone.
+const LOCAL_APP = ['forge/github', 'toolchain/vite-plus', 'framework/react-vite', 'framework/fastify', 'product/web-ui', 'product/http-api', 'database/sqlite', 'hosting/none'];
+
+describe('a local full-stack app, put together from blocks', () => {
+  const cfg = configFor(REPO, { stack: LOCAL_APP });
+  const blocks = loadStack(REPO, LOCAL_APP);
+  const runnable = { repo: 'acme/app', gitAuthor: { name: 'A Person', email: 'person@example.com' } };
+  test('the blocks fit together, and only the project\'s own values are missing', () => {
+    assert.deepEqual(composeStack(blocks).conflicts, []);
+    assert.deepEqual(adapterProblems(cfg), []);
+    assert.deepEqual(workTypeProblems(cfg, { items: [{ id: 'U1', ui: true }, { id: 'A1', type: 'api' }, { id: 'L1' }] }), []);
+    for (const p of configProblems(cfg)) assert.match(p, /^(repo|gitAuthor\.)/, p);
+    assert.deepEqual(configProblems(deepMerge(cfg, runnable)), [], 'no dev URL and no database project: nothing is deployed and the data is a local file');
+  });
+  test('what it adds up to: two kinds of product accepted on the base, one gate, no step after a merge', () => {
+    assert.deepEqual(cfg.workTypes, {
+      default: { rubric: [], accept: 'none' },
+      ui: { rubric: ['design_quality', 'originality', 'craft', 'functionality'], accept: 'site-or-local' },
+      api: { rubric: ['contract', 'errors', 'robustness', 'security'], accept: 'site-or-local' },
+    });
+    assert.deepEqual(acceptPlan(cfg, [{ id: 'U1', ui: true }, { id: 'A1', type: 'api' }, { id: 'L1' }]), [{ place: 'local', types: ['ui', 'api'] }]);
+    assert.deepEqual(cfg.localGate.commands, ['pnpm check', 'node scripts/arch-check.mjs']);
+    assert.deepEqual(cfg.guard.packs, ['github']);
+    assert.deepEqual(cfg.postMerge, []);
+    assert.equal(cfg.deploy.adapter, 'none');
+    assert.deepEqual(cfg.architecture.blocks, ['src/*/'], 'both frameworks name the same folders once');
+    assert.deepEqual(cfg.migrations, { dirs: ['migrations'] });
+    assert.deepEqual(migrationDirs(cfg), ['migrations']);
+  });
+  test('every step has its words, from the block they belong to, and none of another stack\'s', () => {
+    const prompt = (name) => fs.readFileSync(path.join(PROMPTS, name), 'utf8');
+    const render = (name, c) => expandIncludes(prompt(name), blocks, { cases: Array.isArray(c) ? c : [c], where: name });
+    // the build of a screen: the toolchain, the screen's own proof, the database's rule. Not the API's
+    const buildUi = render('build.md', { types: ['ui'] });
+    assert.match(buildUi, /`pnpm check` \(the gate wiring check, then format, lint and types with `vp check`/);
+    assert.match(buildUi, /UI work gets at least one Playwright journey/);
+    assert.match(buildUi, /A change to the database schema is a new file in `migrations\/`/);
+    assert.match(buildUi, /neither is CI's wiring: the `scripts` in `package\.json`, `scripts\/`, the lint and format rules in\n {3}`gates\/lint\.ts` and `gates\/fmt\.ts`/);
+    assert.doesNotMatch(buildUi, /A new or changed endpoint/);
+    // the build of an endpoint: its own proof instead of the screen's
+    const buildApi = render('build.md', { types: ['api'] });
+    assert.match(buildApi, /A new or changed endpoint \(work type `api`\) gets at least one end-to-end test/);
+    assert.doesNotMatch(buildApi, /Playwright journey/);
+    // a plain item: every product block says for which items its words hold
+    const buildPlain = render('build.md', { types: ['default'] });
+    assert.match(buildPlain, /UI work gets at least one Playwright journey[\s\S]*A new or changed endpoint \(work type `api`\)/);
+    // the review of an endpoint is the API's
+    const review = render('review.md', { variant: 'api', types: ['api'] });
+    assert.match(review, /\*\*Use it like a client\*\* \(items of work type `api`\)/);
+    assert.match(review, /The scores are for `api` items, calibrated against `docs\/API-CONVENTIONS\.md`/);
+    assert.doesNotMatch(review, /UI items/);
+    // one acceptance for both kinds, both on the merged base
+    const cases = [
+      { variant: 'local', types: ['ui'], label: '**The `ui` items:**' },
+      { variant: 'local', types: ['api'], label: '**The `api` items:**' },
+    ];
+    const accept = render('accept.md', cases);
+    assert.match(accept, /\*\*The `ui` items:\*\*\n2\. Run what was merged, never the working tree\.[\s\S]*3\. With Playwright against that local address/);
+    assert.match(accept, /\*\*The `api` items:\*\*\n2\. Run what was merged, never the working tree\.[\s\S]*3\. Call \*\*every endpoint\*\* this milestone enables on that local address/);
+    assert.match(accept, /\*\*The `ui` items:\*\*\n4\. Score every screen[\s\S]*\*\*The `api` items:\*\*\n4\. Score every endpoint on the rubric/);
+    const packet = render('packet.md', cases);
+    assert.match(packet, /\*\*The `api` items:\*\*\n1\. Nothing is deployed for this project\. Work from the build the acceptance step left/);
+    for (const text of [buildUi, buildApi, buildPlain, review, accept, packet]) assert.doesNotMatch(text, /\{\{>|Dev URL|Supabase|Vercel|eslint|`npm run check`|CLI-CONVENTIONS/i);
+    // and deployed, the same two blocks are accepted on the site
+    const hosted = loadStack(REPO, [...LOCAL_APP.filter((id) => id !== 'hosting/none'), 'hosting/vercel']);
+    assert.match(expandIncludes(prompt('accept.md'), hosted, { cases: [{ variant: 'site', types: ['api'] }] }), /3\. Call \*\*every endpoint\*\* this milestone enables on the dev URL/);
+  });
+});
+
+describe('the Vite+ toolchain keeps its rules although every tool reads one config file', () => {
+  const block = loadBlock(REPO, 'toolchain/vite-plus');
+  const files = path.join(block.dir, 'files');
+  const { gates } = block.config;
+  test('the block brings the three gate files, the config that imports them and the check that holds them together', () => {
+    for (const f of ['gates/lint.ts', 'gates/fmt.ts', 'gates/test.ts', 'vite.config.ts', 'scripts/check-gates.mjs']) assert.ok(fs.existsSync(path.join(files, f)), `files/${f}`);
+    const config = fs.readFileSync(path.join(files, 'vite.config.ts'), 'utf8');
+    for (const key of ['lint', 'fmt', 'test']) {
+      assert.match(config, new RegExp(`import ${key} from './gates/${key}\\.ts';`));
+      assert.match(config, new RegExp(`^  ${key},$`, 'm'), `${key} is passed as it is imported`);
+    }
+  });
+  test('the lint and format rules are frozen, and no config file a tool would read instead can be added', () => {
+    for (const f of ['gates/lint.ts', 'gates/fmt.ts', 'scripts/check-gates.mjs', 'tsconfig.json', 'tsconfig.node.json', '.oxlintrc.json', 'oxlint.config.ts', '.oxfmtrc.json', '.prettierrc', '.prettierignore', 'vitest.config.ts', 'vitest.workspace.ts']) assert.ok(matchesAny(f, gates.files), `${f} is a gate file`);
+    // the config itself, the test settings (a ratchet) and the code stay free
+    for (const f of ['vite.config.ts', 'gates/test.ts', 'src/app.ts', 'package.json']) assert.ok(!matchesAny(f, gates.files), `${f} may change`);
+    assert.deepEqual(gates.frozenJsonKeys, [{ file: 'package.json', key: 'scripts' }]);
+  });
+  test('the coverage ratchet reads the thresholds of the gate file the block brings: it is not an empty gate', () => {
+    const [ratchet] = gates.ratchets;
+    assert.deepEqual(ratchet.files, ['gates/test.ts']);
+    const text = fs.readFileSync(path.join(files, 'gates', 'test.ts'), 'utf8');
+    assert.deepEqual(ratchetValues(text, ratchet), { lines: 80, functions: 80, branches: 70, statements: 80 });
+    // a lowered number is seen, a number in a comment is not
+    assert.equal(ratchetValues(text.replace('lines: 80', 'lines: 10'), ratchet).lines, 10);
+    assert.equal(ratchetValues(text.replace('lines: 80', 'lines: 10 /* lines: 95 */'), ratchet).lines, 10);
+  });
+  test('the wiring check names a setting that is left out, changed or not from its gate file, and a file hidden from the tools', async () => {
+    const { GATES, gateProblems } = await import(pathToFileURL(path.join(files, 'scripts', 'check-gates.mjs')).href);
+    assert.deepEqual(GATES, { lint: 'gates/lint.ts', fmt: 'gates/fmt.ts', test: 'gates/test.ts' });
+    const want = { lint: { rules: { eqeqeq: 'error' } }, fmt: { singleQuote: true }, test: { coverage: { thresholds: { lines: 80 } } } };
+    assert.deepEqual(gateProblems({ config: { ...structuredClone(want), plugins: [], server: { port: 4300 } }, gates: want }), [], 'what else the config holds is its own');
+    assert.match(gateProblems({ config: { ...want, lint: { ...want.lint, rules: {} } }, gates: want }).join('|'), /^`lint` in vite\.config\.ts is not what gates\/lint\.ts exports: pass the import as it is/);
+    assert.match(gateProblems({ config: { ...want, test: { coverage: { thresholds: { lines: 1 } } } }, gates: want }).join('|'), /^`test` in vite\.config\.ts is not what gates\/test\.ts exports/);
+    assert.match(gateProblems({ config: { lint: want.lint, test: want.test }, gates: want }).join('|'), /^vite\.config\.ts has no `fmt`: import gates\/fmt\.ts and pass it as it is \(`fmt,`\)$/);
+    assert.match(gateProblems({ config: want, gates: { ...want, lint: undefined } }).join('|'), /^gates\/lint\.ts is missing or has no default export/);
+    assert.match(gateProblems({ config: want, gates: want, hidden: ['src/sloppy.ts'] }).join('|'), /^`src\/sloppy\.ts` is tracked by git although an ignore file names it: the formatter and the linter skip it/);
+    assert.equal(gateProblems({ config: {}, gates: {} }).length, 3);
+  });
+  // The check as a project runs it: a real config file, loaded the way the toolchain loads it.
+  // That needs Vite's config loader, which the runner's own suite does not have (it is Node
+  // built-ins only and runs before any install). Where the repository has Vite installed, as
+  // the template does in CI, this runs; elsewhere it says why it did not.
+  test('run against a real config, the check passes the honest one and fails every way of weakening it', async (t) => {
+    const vite = await import('vite').catch(() => null);
+    if (!vite) return t.skip('Vite is not installed in this repository: the check needs its config loader');
+    // inside the repository, so the config's import of Vite resolves; under .loop/, which git ignores
+    fs.mkdirSync(path.join(REPO, '.loop'), { recursive: true });
+    const root = fs.mkdtempSync(path.join(REPO, '.loop', 'check-gates-'));
+    tmp.push(root);
+    fs.cpSync(files, root, { recursive: true });
+    const honest = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8').replace("from 'vite-plus'", "from 'vite'");
+    const run = (config) => {
+      fs.writeFileSync(path.join(root, 'vite.config.ts'), config);
+      return spawnSync(process.execPath, [path.join(root, 'scripts', 'check-gates.mjs')], { cwd: root, encoding: 'utf8' });
+    };
+    const ok = run(honest);
+    assert.equal(ok.status, 0, ok.stderr + ok.stdout);
+    assert.match(ok.stdout, /check-gates: OK — vite\.config\.ts hands gates\/lint\.ts, gates\/fmt\.ts and gates\/test\.ts to their tools unchanged/);
+    // a build setting of its own, and a config written as a function, are the project's business
+    assert.equal(run(honest.replace('  lint,', "  server: { port: 4300 },\n  lint,")).status, 0);
+    assert.equal(run(honest.replace('defineConfig({', 'defineConfig(() => ({').replace(/\}\);\s*$/, '}));\n')).status, 0);
+    const fails = (config, why) => {
+      const r = run(config);
+      assert.equal(r.status, 1, `expected a failure: ${r.stdout}`);
+      assert.match(r.stderr, why);
+    };
+    // a changed copy, the imported object changed in place, a setting left out
+    fails(honest.replace('  lint,', '  lint: { ...lint, rules: {} },'), /`lint` in vite\.config\.ts is not what gates\/lint\.ts exports/);
+    fails(honest.replace('  test,', '  test: { ...test, coverage: { ...test.coverage, thresholds: {} } },'), /`test` in vite\.config\.ts is not what gates\/test\.ts exports/);
+    fails(honest.replace('export default', "test.coverage.thresholds.lines = 1;\nexport default"), /`test` in vite\.config\.ts is not what gates\/test\.ts exports/);
+    fails(honest.replace('  fmt,\n', ''), /vite\.config\.ts has no `fmt`: import gates\/fmt\.ts and pass it as it is/);
+    // a gate file that is gone, and a config that cannot be loaded, are failures too
+    fs.renameSync(path.join(root, 'gates', 'fmt.ts'), path.join(root, 'gates', 'fmt.away'));
+    fails(honest.replace("import fmt from './gates/fmt.ts';\n", 'const fmt = { singleQuote: true };\n'), /gates\/fmt\.ts is missing or has no default export/);
+    fs.renameSync(path.join(root, 'gates', 'fmt.away'), path.join(root, 'gates', 'fmt.ts'));
+    fails('export default {', /check-gates: could not read the config/);
+    fs.rmSync(path.join(root, 'vite.config.ts'));
+    const none = spawnSync(process.execPath, [path.join(root, 'scripts', 'check-gates.mjs')], { cwd: root, encoding: 'utf8' });
+    assert.equal(none.status, 1);
+    assert.match(none.stderr, /could not read the config: no vite\.config\.ts in the project root/);
+  });
+});
+
+describe('a database the app migrates itself: its migrations are frozen without a step after a merge', () => {
+  test('the frozen folders are the post-merge steps\' and the ones the config names, each once', () => {
+    assert.deepEqual(migrationDirs({}), []);
+    assert.deepEqual(migrationDirs(undefined), []);
+    assert.deepEqual(migrationDirs({ postMerge: [{ adapter: 'supabase-cli', migrationsDir: 'supabase/migrations' }, { adapter: 'other' }] }), ['supabase/migrations']);
+    assert.deepEqual(migrationDirs({ migrations: { dirs: ['migrations/', 'db/migrations'] }, postMerge: [{ migrationsDir: 'migrations' }] }), ['migrations', 'db/migrations']);
+    assert.deepEqual(migrationDirs(PRESET), ['supabase/migrations'], 'the web profile freezes what it froze');
+  });
+  test('the guard refuses an edit to a migration on the base, in a stack with SQLite and no post-merge step', () => {
+    const ROOT = process.platform === 'win32' ? 'C:\\work\\app' : '/work/app';
+    const cfg = deepMerge(configFor(REPO, { stack: LOCAL_APP }), { repo: 'acme/app' });
+    const edit = (rel, onBase) => decide({ tool_name: 'Edit', tool_input: { file_path: path.join(ROOT, rel) } }, { phase: 'build', item: 'T1', branch: 'feat/x', cfg, rel: (p) => repoRelative(ROOT, p), isOnBase: (r) => onBase.includes(r), projectRules: [] });
+    const first = 'migrations/0001_init.sql';
+    assert.deepEqual([edit(first, [first]).block, edit(first, [first]).rule], [true, 'core:frozen-migration']);
+    assert.equal(edit('migrations/0002_next.sql', [first]).block, false, 'a new migration');
+    assert.equal(edit('src/migrations/0001_init.sql', ['src/migrations/0001_init.sql']).block, false, 'a folder of the same name elsewhere');
+    assert.equal(edit('migrations/README.md', ['migrations/README.md']).block, false, 'only the migrations themselves');
+  });
+  test('a list of folders that is not one is a named problem', () => {
+    const bad = (dirs) => configProblems(deepMerge(PRESET, { migrations: { dirs } })).filter((p) => /migrations\.dirs/.test(p)).length;
+    assert.equal(bad(['migrations', 'db/migrations']), 0);
+    for (const dirs of ['migrations', [''], [3], ['/abs'], ['../outside'], ['a/../b']]) assert.equal(bad(dirs), 1, JSON.stringify(dirs));
   });
 });
 

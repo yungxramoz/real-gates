@@ -401,6 +401,8 @@ function preflight() {
   problems.push(...backlogProblems(backlog));
   const badAdapters = adapterProblems(cfg);
   problems.push(...badAdapters, ...promptProblems(), ...workTypeProblems(cfg, backlog));
+  const drafts = blocks.filter((b) => b.status !== 'proven').map((b) => b.id);
+  if (drafts.length) warn.push(`the stack uses ${drafts.length === 1 ? 'a block' : 'blocks'} no project has run on yet (${drafts.join(', ')}): the gates and words ${drafts.length === 1 ? 'it brings' : 'they bring'} are tested, not proven. Read the first reviews and the first acceptance with that in mind.`);
   for (const s of cfg.postMerge || []) if (s.dbUrlEnv && !process.env[s.dbUrlEnv]) warn.push(`${s.dbUrlEnv} is not set: the first merge with a migration will hold until it is.`);
   if (!proc.sh('git', ['--version'], { allowFail: true }).ok) problems.push('git is not on PATH');
   else if (!proc.gitTry('rev-parse', '--verify', `origin/${cfg.base}`).ok) (args.dry ? warn : problems).push(`origin/${cfg.base} does not exist: create and push the ${cfg.base} branch (/setup-loop does)`);

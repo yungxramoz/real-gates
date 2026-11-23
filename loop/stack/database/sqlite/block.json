@@ -1,0 +1,9 @@
+{
+  "title": "SQLite",
+  "description": "A SQLite database in a file next to the app. Schema changes are migration files in `migrations/`, which the app applies itself when it starts, so the runner has no step after a merge. A migration that is on the base branch is frozen all the same: a database that ran it will not run it again. Sessions use a database file of their own for tests and for trying a change.",
+  "choose": "The data lives in a SQLite file on the machine the app runs on.",
+  "status": "draft",
+  "config": {
+    "migrations": { "dirs": ["migrations"] }
+  }
+}

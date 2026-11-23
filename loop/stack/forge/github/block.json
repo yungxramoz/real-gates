@@ -2,6 +2,7 @@
   "title": "GitHub",
   "description": "Pull requests, CI results and the merge live on GitHub, reached through the gh CLI. Sessions may open and comment on pull requests; merging, repository settings, secrets, branch protection and refs stay with the runner and the owner.",
   "choose": "The repository is on GitHub.",
+  "status": "proven",
   "config": {
     "forge": { "adapter": "github" },
     "guard": { "packs": ["github"] }

@@ -127,6 +127,8 @@ user asks, and keep `budgets.maxUsdPerSession` set: it stops a single runaway se
 
 | Key | What it does | Default |
 |---|---|---|
+| `stack` | the project's own list of stack blocks, instead of a profile's (`node loop/scripts/stack.mjs --list` prints every block) | the profile's list |
+| `migrations.dirs` | folders whose `.sql` files are frozen once they are on the base branch, for a database the app migrates itself | what the database block sets; `[]` |
 | `budgets.maxUsdPerRun` | stops the run once its sessions cost this much; `0` = no cap | `0` |
 | `localGate.commands` | shell commands the runner runs on the pushed head before waiting for CI | preset: `["pnpm check"]` |
 | `sessionEnvDeny` | extra environment variables no agent session may see | `[]` |

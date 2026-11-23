@@ -2,7 +2,8 @@
 // What this project is built with, as the loop sees it.
 //
 //   node loop/scripts/stack.mjs           the project's stack: its blocks, and what they add up to
-//   node loop/scripts/stack.mjs --list    every block the harness ships, by category
+//   node loop/scripts/stack.mjs --list    every block the harness ships, by category; a block no
+//                                         project has run on yet is marked as a draft
 //   node loop/scripts/stack.mjs --json    the same as JSON, for a program
 //
 // A project's settings are spread over its blocks (loop/stack/), the profile it names and its own
@@ -23,7 +24,7 @@ const USAGE = 'usage: node loop/scripts/stack.mjs [--list] [--json] [--root <dir
 /** Every shipped block, by category: { category, what, blocks: [{ id, title, description, choose }] }. */
 export function catalogue(root) {
   const blocks = blockIds(root).map((id) => loadBlock(root, id));
-  return Object.entries(CATEGORIES).map(([category, rule]) => ({ category, what: rule.what, holds: rule.one ? 'exactly one' : rule.atMostOne ? 'one or none' : 'any number', blocks: blocks.filter((b) => b.category === category).map(({ id, title, description, choose }) => ({ id, title, description, choose })) }));
+  return Object.entries(CATEGORIES).map(([category, rule]) => ({ category, what: rule.what, holds: rule.one ? 'exactly one' : rule.atMostOne ? 'one or none' : 'any number', blocks: blocks.filter((b) => b.category === category).map(({ id, title, description, choose, status }) => ({ id, title, description, choose, status })) }));
 }
 
 /** The stack of the repo at `root` and what its config comes to. Throws what loadConfig throws. */
@@ -31,7 +32,7 @@ export function describeStack(root) {
   const cfg = loadConfig(root);
   return {
     profile: cfg.profile || null,
-    stack: loadStack(root, cfg.stack).map(({ id, title }) => ({ id, title })),
+    stack: loadStack(root, cfg.stack).map(({ id, title, status }) => ({ id, title, status })),
     workTypes: Object.fromEntries(Object.entries(cfg.workTypes || {}).filter(([, t]) => t)),
     localGate: cfg.localGate?.commands || [],
     guardPacks: cfg.guard?.packs || [],
@@ -41,17 +42,20 @@ export function describeStack(root) {
   };
 }
 
+/** What a block that no project has run on yet is marked with. */
+const draft = (b) => (b.status === 'proven' ? '' : ' [draft: tested, not yet proven by a project]');
+
 function printCatalogue(root) {
   for (const c of catalogue(root)) {
     console.log(`\n${c.category} (${c.holds}): ${c.what}`);
     if (!c.blocks.length) console.log('  (no block yet)');
-    for (const b of c.blocks) console.log(`  ${b.id}: ${b.title}\n    ${b.description}\n    Choose it when: ${b.choose}`);
+    for (const b of c.blocks) console.log(`  ${b.id}: ${b.title}${draft(b)}\n    ${b.description}\n    Choose it when: ${b.choose}`);
   }
 }
 
 function printStack(d) {
   console.log(d.profile ? `Profile: ${d.profile}` : 'No profile: the project lists its own blocks.');
-  console.log(d.stack.length ? `Stack:\n${d.stack.map((b) => `  ${b.id}: ${b.title}`).join('\n')}` : 'Stack: none. The loop runs with the core alone: `stack` in loop/loop.config.json lists the blocks.');
+  console.log(d.stack.length ? `Stack:\n${d.stack.map((b) => `  ${b.id}: ${b.title}${draft(b)}`).join('\n')}` : 'Stack: none. The loop runs with the core alone: `stack` in loop/loop.config.json lists the blocks.');
   console.log(`Work types:\n${Object.entries(d.workTypes).map(([name, t]) => `  ${name}: ${t.rubric?.length ? `scored on ${t.rubric.join(', ')}` : 'no scores'}; accepted: ${t.accept}`).join('\n')}`);
   console.log(`Local gate: ${d.localGate.join(' && ') || '(none)'}`);
   console.log(`Guard packs: ${d.guardPacks.join(', ') || '(none)'}`);

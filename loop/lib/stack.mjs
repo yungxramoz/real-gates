@@ -1,9 +1,11 @@
 // Stack blocks: what a project is built with, one block per choice.
 //
 // A block is a folder loop/stack/<category>/<name>/ with:
-//   block.json    { title, description, choose, config }
+//   block.json    { title, description, choose, status, config }
 //                 title, description   what the block is, in a line and in a paragraph
 //                 choose               when a project takes it
+//                 status               'proven': a real project was built with it. 'draft': its
+//                                      tests pass and no project has run on it yet
 //                 config               what it adds to the loop config: commands, gate files, work
 //                                      types, guard packs, adapters (the keys of loop/lib/config.mjs)
 //   prompts/*.md  its words for the steps a session takes. A core prompt pulls them in with
@@ -30,6 +32,9 @@ export const CATEGORIES = Object.freeze({
   hosting: { atMostOne: true, what: 'where the merged base runs, if anywhere' },
 });
 
+/** What a block says about itself under `status`. */
+export const STATUSES = ['proven', 'draft'];
+
 const BLOCK_ID = /^([a-z][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)$/;
 const INCLUDE = /\{\{>([\w-]+)\}\}/g;
 
@@ -52,7 +57,7 @@ export function blockIds(root) {
   return dirs(stackDir(root)).flatMap((c) => dirs(path.join(stackDir(root), c)).filter((n) => fs.existsSync(path.join(stackDir(root), c, n, 'block.json'))).map((n) => `${c}/${n}`)).sort();
 }
 
-/** One block: { id, category, name, dir, title, description, choose, config }. Throws a named error when it is not there or not readable. */
+/** One block: { id, category, name, dir, title, description, choose, status, config }. Throws a named error when it is not there or not readable. */
 export function loadBlock(root, id) {
   const m = BLOCK_ID.exec(String(id));
   const file = m ? path.join(stackDir(root), m[1], m[2], 'block.json') : '';
@@ -64,7 +69,8 @@ export function loadBlock(root, id) {
     throw new Error(`loop/stack/${id}/block.json is not valid JSON: ${e.message}`);
   }
   if (!isPlainObject(json) || (json.config !== undefined && !isPlainObject(json.config))) throw new Error(`loop/stack/${id}/block.json must be an object, with \`config\` an object`);
-  return { id: m[0], category: m[1], name: m[2], dir: path.dirname(file), title: json.title || '', description: json.description || '', choose: json.choose || '', config: json.config || {} };
+  // a block that does not say is a draft: nothing is called proven by leaving a word out
+  return { id: m[0], category: m[1], name: m[2], dir: path.dirname(file), title: json.title || '', description: json.description || '', choose: json.choose || '', status: json.status === 'proven' ? 'proven' : 'draft', config: json.config || {} };
 }
 
 /** What is wrong with a list of block ids before any is read: its form, a repeated block, a category that holds too many or too few. */
