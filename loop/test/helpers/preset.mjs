@@ -11,4 +11,6 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 /** The profile the older scenarios were written against. */
 export const WEB = 'next-supabase-vercel';
 export const presetConfig = (name) => configFor(REPO, { profile: name });
+/** The config of a project that lists these blocks itself, without a profile. */
+export const stackConfig = (stack) => configFor(REPO, { stack });
 export const PRESET = presetConfig(WEB);

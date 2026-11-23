@@ -170,15 +170,27 @@ export function hasFragment(blocks, name) {
 /**
  * A prompt with every `{{>name}}` replaced by the blocks' words for it, one block after the other.
  * The words are written flush left; here every line after the first gets the indentation of the
- * line the include stands on, so they sit in the list they are part of. Throws when no block has
- * words for an include.
+ * line the include stands on, so they sit in the list they are part of.
+ *
+ * `cases`: what the step is about, [{ variant, types, label }]. Mostly one: an item of one work
+ * type. A milestone accepted in two places, or with two kinds of product, is several: each
+ * include then gives the words for every case in turn, each under its `label`, so the session
+ * does the step once per case. Throws when no block has words for an include in one of the cases.
  */
-export function expandIncludes(template, blocks, { variant, types, where = 'the prompt' } = {}) {
+export function expandIncludes(template, blocks, { cases = [{}], where = 'the prompt' } = {}) {
+  const none = (name, c) => {
+    if (!blocks.length) return 'loop.config.json names no stack';
+    const about = c.types?.length ? ` for ${c.types.map((t) => `"${t}"`).join(', ')} items` : '';
+    return `no block of the stack (${blocks.map((b) => b.id).join(', ')}) has a prompts/${c.variant ? `${name}.${c.variant}.md or ${name}.md` : `${name}.md`}${about}`;
+  };
   return template.replace(/^([ \t]*).*$/gm, (line, indent) =>
     line.replace(INCLUDE, (_, name) => {
-      const parts = fragmentParts(blocks, name, { variant, types });
-      if (!parts.length) throw new Error(`${where} includes {{>${name}}}, but ${blocks.length ? `no block of the stack (${blocks.map((b) => b.id).join(', ')}) has a prompts/${name}.md` : 'loop.config.json names no stack'}`);
-      return parts.map((p) => p.text).join('\n').replace(/\n(?=[^\r\n])/g, `\n${indent}`);
+      const words = cases.map((c) => {
+        const parts = fragmentParts(blocks, name, c);
+        if (!parts.length) throw new Error(`${where} includes {{>${name}}}, but ${none(name, c)}`);
+        return [...(cases.length > 1 && c.label ? [c.label] : []), ...parts.map((p) => p.text)].join('\n');
+      });
+      return words.join('\n').replace(/\n(?=[^\r\n])/g, `\n${indent}`);
     }),
   );
 }

@@ -29,8 +29,10 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
                              PR CI passed on, the next item starts meanwhile (`baseCiWait`)
  └─ post-merge steps       → the script applies new migrations with the Supabase CLI and checks
                              the migration list. Not verified? HELD, and the run stops
- └─ milestone complete?    → acceptance on the deployed dev site, after /api/health reports the
-                             merged commit and db ok. Failures become ACC items, max 2 rounds
+ └─ milestone complete?    → acceptance where the product runs: on the deployed dev site, after
+                             /api/health reports the merged commit and db ok, or on the merged
+                             base itself when nothing is deployed. Failures become ACC items,
+                             max 2 rounds
                            → retro: what went well, what went wrong and why. Its action
                              items become one LEARN item, built before the packet; causes in
                              the harness are recorded as impediments; nothing waits
@@ -67,7 +69,7 @@ name a tool; where the two differ, the blocks decide:
 | --- | --- | --- |
 | Local gate | `pnpm check` | `npm run check` |
 | Work types | `ui` (four design scores), `default` | `command` (help and errors, ergonomics, output, robustness), `default` |
-| Milestone acceptance | on the deployed dev site | on the merged base: packed, installed under `.loop/`, used from there |
+| Milestone acceptance | on the deployed dev site (the web UI block on a stack that deploys nothing: on a build of the merged base, started locally) | on the merged base: packed, installed under `.loop/`, used from there |
 | Post-merge steps | migrations to the dev database | none |
 | Guard packs | `github`, `supabase`, `vercel` | `github`, `npm` |
 | Ratchet | coverage thresholds in the Vitest config | `coverage.thresholds.json` |
@@ -191,7 +193,7 @@ or removed. A dry run writes nothing.
 | `base.red` | `item`, `sha`, `background`, `fix` | CI on the base branch failed after a merge |
 | `base.no_verdict` | `item`, `sha`, `why` | CI on the base branch never reported |
 | `postmerge.step` | `item`, `adapter`, `ok`, `note` | a post-merge step ran |
-| `acceptance.round` | `milestone`, `round`, `mode`, `pass`, `failures` | a milestone acceptance session returns |
+| `acceptance.round` | `milestone`, `round`, `mode`, `places`, `pass`, `failures` | a milestone acceptance session returns. `places`: where it was accepted, `site`, `local` or both; `mode` is the first of them |
 | `milestone.packed` | `milestone`, `unverified` | a milestone is closed |
 | `retro.called` | `item`, `signature` | a signal showed up in enough different items to call a retro early |
 | `retro.held` | `retro`, `kind` (`milestone` or `early`), `milestone`, `wentWell`, `problems`, `actions`, `impediments`, `learn` | a retro session returned |

@@ -11,12 +11,12 @@ import { fileURLToPath } from 'node:url';
 
 import { configProblems, deepMerge, profileNames } from '../lib/config.mjs';
 import { adapterProblems } from '../adapters/index.mjs';
-import { acceptMode, acceptTypeName, acceptedTypes, workType, workTypeName, workTypeProblems } from '../lib/worktypes.mjs';
+import { ACCEPT_MODES, acceptMode, acceptPlace, acceptPlan, acceptTypeName, workType, workTypeName, workTypeProblems } from '../lib/worktypes.mjs';
 import { hasFragment, includesOf, loadStack } from '../lib/stack.mjs';
 import { reviewSchema } from '../lib/schemas.mjs';
 import { decide } from '../guard/core.mjs';
 import { repoRelative } from '../guard/paths.mjs';
-import { PRESET, presetConfig } from './helpers/preset.mjs';
+import { PRESET, presetConfig, stackConfig } from './helpers/preset.mjs';
 import { happyItem, makeSandbox, smokeStep } from './helpers/sandbox.mjs';
 
 const LOOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -61,7 +61,7 @@ describe('work types', () => {
     assert.equal(workTypeName({ ui: true }), 'ui');
     assert.equal(workTypeName({ ui: false }), 'default');
     assert.equal(workTypeName({}), 'default');
-    assert.deepEqual(workType(web, { ui: true }), { rubric: ['design_quality', 'originality', 'craft', 'functionality'], accept: 'site' });
+    assert.deepEqual(workType(web, { ui: true }), { rubric: ['design_quality', 'originality', 'craft', 'functionality'], accept: 'site-or-local' });
     assert.deepEqual(workType(cli, { type: 'command' }).rubric, ['help_and_errors', 'ergonomics', 'output', 'robustness']);
     assert.deepEqual(workType(cli, { type: 'unknown' }), { rubric: [], accept: 'none' });
   });
@@ -73,11 +73,46 @@ describe('work types', () => {
     assert.equal(acceptTypeName(cli, [{}, { type: 'command' }]), 'command');
     assert.equal(acceptTypeName(web, [{ ui: false }, { ui: true }]), 'ui');
     assert.equal(acceptTypeName(cli, [{}]), 'default');
-    // the product blocks that have the words for a milestone's acceptance: the types accepted that way, each once
-    assert.deepEqual(acceptedTypes(web, [{ ui: false }, { ui: true }, { type: 'ui' }], 'site'), ['ui']);
-    assert.deepEqual(acceptedTypes(cli, [{}, { type: 'command' }], 'local'), ['command']);
-    assert.deepEqual(acceptedTypes(cli, [{}], 'none'), ['default']);
-    assert.deepEqual(acceptedTypes(cli, undefined, 'local'), []);
+  });
+  test('a work type is accepted at one place: where it says, or for "site-or-local" where the stack runs the product', () => {
+    assert.deepEqual(ACCEPT_MODES, ['site', 'local', 'site-or-local', 'none']);
+    const deployed = { deploy: { adapter: 'http-health' } };
+    const notDeployed = { deploy: { adapter: 'none' } };
+    for (const cfg of [deployed, notDeployed]) {
+      assert.equal(acceptPlace(cfg, { accept: 'site' }), 'site');
+      assert.equal(acceptPlace(cfg, { accept: 'local' }), 'local');
+      assert.equal(acceptPlace(cfg, { accept: 'none' }), 'none');
+      assert.equal(acceptPlace(cfg, { accept: 'maybe' }), 'none');
+      assert.equal(acceptPlace(cfg, undefined), 'none');
+    }
+    assert.equal(acceptPlace(deployed, { accept: 'site-or-local' }), 'site');
+    assert.equal(acceptPlace(notDeployed, { accept: 'site-or-local' }), 'local');
+    // the web UI block on a stack that deploys nothing: the same block, accepted on the base
+    const local = stackConfig(['forge/github', 'toolchain/pnpm-vitest', 'product/web-ui', 'hosting/none']);
+    assert.equal(acceptPlace(web, workType(web, { ui: true })), 'site');
+    assert.equal(acceptPlace(local, workType(local, { ui: true })), 'local');
+    assert.equal(acceptMode(local, [{ ui: true }]), 'local');
+    assert.deepEqual(workTypeProblems(local, { items: [{ id: 'B', ui: true }] }), [], 'no deployed site is needed for it');
+    assert.ok(!configProblems(local, { backlog: { items: [{ ui: true }] } }).some((x) => /devUrl/.test(x)), 'and no dev URL');
+  });
+  test('a milestone is accepted in parts: one per place, each with the work types accepted there', () => {
+    const both = stackConfig(['forge/github', 'toolchain/pnpm-vitest', 'product/web-ui', 'product/cli-command', 'hosting/vercel']);
+    const items = [{ id: 'L1' }, { id: 'C1', type: 'command' }, { id: 'U1', ui: true }, { id: 'U2', type: 'ui' }, { id: 'C2', type: 'command' }];
+    assert.deepEqual(acceptPlan(both, items), [{ place: 'site', types: ['ui'] }, { place: 'local', types: ['command'] }]);
+    assert.equal(acceptMode(both, items), 'site', 'the one word for it is the first place');
+    assert.deepEqual(acceptPlan(both, [{ id: 'C1', type: 'command' }]), [{ place: 'local', types: ['command'] }]);
+    assert.deepEqual(acceptPlan(both, [{ id: 'L1' }]), []);
+    assert.deepEqual(acceptPlan(both, undefined), []);
+    // nothing deployed: both kinds on the base, in the order the items name them
+    const local = stackConfig(['forge/github', 'toolchain/pnpm-vitest', 'product/web-ui', 'product/cli-command', 'hosting/none']);
+    assert.deepEqual(acceptPlan(local, items), [{ place: 'local', types: ['command', 'ui'] }]);
+    // a fix item takes the type of the item its failure is about, when that item is accepted
+    assert.equal(acceptTypeName(both, items, 'C2'), 'command');
+    assert.equal(acceptTypeName(both, items, 'U2'), 'ui');
+    assert.equal(acceptTypeName(both, items, 'L1'), 'command', 'an item that is not accepted cannot lend its type: the first accepted one does');
+    assert.equal(acceptTypeName(both, items, 'nowhere'), 'command');
+    assert.equal(acceptTypeName(both, items), 'command');
+    assert.equal(acceptTypeName(both, [{ id: 'L1' }], 'L1'), 'default');
   });
   test('the review schema asks for exactly the rubric of the item\'s type', () => {
     assert.deepEqual(Object.keys(reviewSchema(['help_and_errors', 'output']).properties.scores.properties), ['help_and_errors', 'output']);
@@ -91,9 +126,10 @@ describe('work types', () => {
     assert.match(p[0], /backlog item B: work type "ui" is not one of the stack's \(command, default\); `ui: true` means the type "ui"/);
     assert.match(p[1], /backlog item C: work type "screen" is not one of the stack's/);
     assert.deepEqual(workTypeProblems(web, { items: [{ id: 'B', ui: true }] }), []);
-    const noSite = deepMerge(web, { deploy: { adapter: 'none' } });
+    // a type that says "site" and nothing else needs a deployed site
+    const noSite = deepMerge(web, { deploy: { adapter: 'none' }, workTypes: { ui: { accept: 'site' } } });
     assert.match(workTypeProblems(noSite, { items: [{ id: 'B', ui: true }] })[0], /work type "ui" is accepted on a deployed site, but deploy\.adapter is "none"/);
-    assert.match(workTypeProblems(deepMerge(web, { workTypes: { x: { rubric: ['Bad Name'], accept: 'maybe' } } }), null).join('|'), /workTypes\.x\.rubric.*workTypes\.x\.accept/);
+    assert.match(workTypeProblems(deepMerge(web, { workTypes: { x: { rubric: ['Bad Name'], accept: 'maybe' } } }), null).join('|'), /workTypes\.x\.rubric.*workTypes\.x\.accept must be one of site, local, site-or-local, none/);
   });
   test('the CLI profile needs no dev URL; the web profile needs one as soon as an item is a screen', () => {
     assert.ok(!configProblems(cli).some((x) => /devUrl/.test(x)));
@@ -139,6 +175,33 @@ describe('guard pack: npm', () => {
   test('the web profile does not carry the npm rules, and the CLI profile not the database ones', () => {
     assert.deepEqual(PRESET.guard.packs, ['github', 'supabase', 'vercel']);
     assert.deepEqual(cfg.guard.packs, ['github', 'npm']);
+  });
+});
+
+describe('a web UI that is not deployed: what its acceptance and its packet need from the guard', () => {
+  const ROOT = process.platform === 'win32' ? 'C:\\work\\app' : '/work/app';
+  const cfg = deepMerge(stackConfig(['forge/github', 'toolchain/pnpm-vitest', 'product/web-ui', 'hosting/none']), { repo: 'acme/app' });
+  const sh = (command, phase) => decide({ tool_name: 'Bash', tool_input: { command } }, { phase, item: 'M1', branch: 'develop', cfg, rel: (p) => repoRelative(ROOT, p), isOnBase: () => false, projectRules: [] });
+  for (const phase of ['accept', 'packet']) {
+    test(`the ${phase} step can build the merged base in its own folder, start it and drive it, although it is read-only`, () => {
+      const work = `.loop/work/M1/${phase}`;
+      for (const c of [
+        `git worktree add ${work}/wt origin/develop`,
+        `cd ${work}/wt && pnpm install --frozen-lockfile && pnpm build`,
+        `cd ${work}/wt && PORT=4873 pnpm start > ../server.log 2>&1 &`,
+        `curl -s http://localhost:4873/ > ${work}/home.html`,
+        `npx playwright test --config ${work}/playwright.config.mjs`,
+        `node ${work}/shots.mjs`,
+        `kill $(cat ${work}/server.pid)`,
+        `git worktree remove --force ${work}/wt`,
+      ]) assert.equal(sh(c, phase).block, false, `${phase}: ${c} → ${JSON.stringify(sh(c, phase))}`);
+      // and still nothing outside it
+      assert.equal(sh('pnpm build > build.log', phase).block, true);
+      assert.equal(sh('git commit -am x', phase).block, true);
+    });
+  }
+  test('the packet step can start the build the acceptance step left', () => {
+    assert.equal(sh('cd .loop/work/M1/accept/wt && PORT=4874 pnpm start > ../../packet/server.log 2>&1 &', 'packet').block, false);
   });
 });
 

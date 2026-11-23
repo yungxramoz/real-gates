@@ -23,8 +23,8 @@ import { READ_ONLY_PHASES } from './guard/core.mjs';
 import { packMilestones } from './lib/milestones.mjs';
 import { earlyRetro, retroState } from './lib/learn.mjs';
 import { holdRetro, noteHarness } from './lib/retro.mjs';
-import { workTypeProblems } from './lib/worktypes.mjs';
-import { expandIncludes, hasFragment, includesOf, loadStack } from './lib/stack.mjs';
+import { acceptPlace, workTypeName, workTypeProblems } from './lib/worktypes.mjs';
+import { expandIncludes, fragmentParts, hasFragment, includesOf, loadStack } from './lib/stack.mjs';
 import { adapterProblems, forgeAdapter, notifyAdapter } from './adapters/index.mjs';
 import { writeReport, printStatus } from './lib/report.mjs';
 import { createWork } from './lib/workdir.mjs';
@@ -167,15 +167,30 @@ function promptProblems() {
       if (!hasFragment(blocks, frag)) p.push(`loop/prompts/${f} includes {{>${frag}}}, but ${blocks.length ? `no block of the stack (${blocks.map((b) => b.id).join(', ')}) has a prompts/${frag}.md` : 'loop.config.json names no stack, so no block has words for it'}`);
     }
   }
+  if (p.length) return p;
+  // A work type the backlog uses is accepted at one place, and the acceptance and the packet
+  // need the words for exactly that place: a block that words a step for the deployed site only
+  // has nothing to say to a project that deploys nothing.
+  const used = [...new Set((backlog?.items || []).map(workTypeName))].filter((t) => cfg.workTypes?.[t]);
+  for (const type of used) {
+    const place = acceptPlace(cfg, cfg.workTypes[type]);
+    if (place === 'none') continue;
+    for (const f of ['accept.md', 'packet.md']) {
+      for (const frag of includesOf(fs.readFileSync(path.join(dir, f), 'utf8'))) {
+        if (!fragmentParts(blocks, frag, { variant: place, types: [type] }).length) p.push(`work type "${type}" is accepted ${place === 'site' ? 'on the deployed dev site' : `on the merged ${cfg.base}`}, but no block of the stack has a prompts/${frag}.${place}.md (or ${frag}.md) for it, which loop/prompts/${f} includes`);
+      }
+    }
+  }
   return p;
 }
 /**
  * A core prompt with the stack's words and the runner's values filled in. `types`: the work types
  * the step is about, which decides the product blocks that speak. `variant`: the wording a block
- * has for one case of the step (`<name>.<variant>.md`), where it has one.
+ * has for one case of the step (`<name>.<variant>.md`), where it has one. A step about several
+ * cases at once (a milestone accepted in two places) passes them as `cases` instead.
  */
-function render(name, vars, { variant, types } = {}) {
-  const tpl = expandIncludes(fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8'), blocks, { variant, types, where: `loop/prompts/${name}` });
+function render(name, vars, { variant, types, cases } = {}) {
+  const tpl = expandIncludes(fs.readFileSync(path.join(ROOT, 'loop', 'prompts', name), 'utf8'), blocks, { cases: cases || [{ variant, types }], where: `loop/prompts/${name}` });
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => {
     if (vars[k] === undefined) throw new Error(`loop/prompts/${name} uses {{${k}}}, but the runner supplies no value for it`);
     return String(vars[k] ?? '');

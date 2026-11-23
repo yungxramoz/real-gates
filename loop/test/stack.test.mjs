@@ -14,7 +14,7 @@ import { CATEGORIES, blockIds, composeStack, expandIncludes, fragmentParts, hasF
 import { DEFAULTS, configFor, configProblems, deepMerge, loadProfile, profileNames } from '../lib/config.mjs';
 import { PACKS } from '../guard/packs/index.mjs';
 import { adapterProblems } from '../adapters/index.mjs';
-import { workTypeProblems } from '../lib/worktypes.mjs';
+import { acceptPlace, workTypeProblems } from '../lib/worktypes.mjs';
 import { catalogue, describeStack } from '../scripts/stack.mjs';
 
 const LOOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -153,9 +153,23 @@ describe('the words of several blocks', () => {
     const tpl = ['6. Prove it.', '   {{>proof}}', '', '8. Not yours: {{>gate}} The guard', '   blocks it.', '{{>accept}}'].join('\n');
     assert.deepEqual(includesOf(tpl), ['proof', 'gate', 'accept']);
     assert.equal(
-      expandIncludes(tpl, blocks, { types: ['command'] }),
+      expandIncludes(tpl, blocks, { cases: [{ types: ['command'] }] }),
       ['6. Prove it.', '   - run the check', '   - add tests,', '     never fewer', '   - a test per command', '   - check the health endpoint', '', '8. Not yours: the scripts', 'and the configs. The guard', '   blocks it.', '2. install the package'].join('\n'),
     );
+  });
+  test('a step about several cases gives the words for each in turn, under the line that names it', () => {
+    const cases = [
+      { variant: 'site', types: ['ui'], label: '**The ui items, on the site:**' },
+      { variant: 'local', types: ['command'], label: '**The command items, on the base:**' },
+    ];
+    assert.equal(
+      expandIncludes('1. Read.\n{{>accept}}\n   {{>drive}}\n5. Judge.', blocks, { cases }),
+      ['1. Read.', '**The ui items, on the site:**', '2. open the site', '**The command items, on the base:**', '2. install the package', '   **The ui items, on the site:**', '   - open it in a browser', '   **The command items, on the base:**', '   - run the binary', '5. Judge.'].join('\n'),
+    );
+    // one case needs no heading
+    assert.equal(expandIncludes('{{>accept}}', blocks, { cases: [cases[1]] }), '2. install the package');
+    // a case no block has words for is named: the web block words acceptance for the site and the base, the CLI block for neither in particular
+    assert.throws(() => expandIncludes('{{>accept}}', blocks, { cases: [cases[0], { variant: 'elsewhere', types: ['ui'] }], where: 'loop/prompts/accept.md' }), /loop\/prompts\/accept\.md includes \{\{>accept\}\}, but no block of the stack \(forge\/f, toolchain\/t, product\/web, product\/cli, hosting\/h\) has a prompts\/accept\.elsewhere\.md or accept\.md for "ui" items/);
   });
   test('an include no block has words for is an error that names the stack', () => {
     assert.throws(() => expandIncludes('{{>drive}}', blocks.filter((b) => b.category !== 'product'), { where: 'loop/prompts/review.md' }), /loop\/prompts\/review\.md includes \{\{>drive\}\}, but no block of the stack \(forge\/f, toolchain\/t, hosting\/h\) has a prompts\/drive\.md/);
@@ -303,7 +317,14 @@ describe('a profile is a list of blocks, and says what it said as a whole', () =
       const before = JSON.parse(fs.readFileSync(path.join(V1, name, 'profile.json'), 'utf8'));
       // the type "ui" was a default every other stack had to remove; now the web UI block brings it
       const withUi = deepMerge(DEFAULTS, { workTypes: { ui: { rubric: ['design_quality', 'originality', 'craft', 'functionality'], accept: 'site' } } });
-      assert.deepEqual(settled(configFor(REPO, { profile: name })), settled(deepMerge(withUi, before)));
+      const now = settled(configFor(REPO, { profile: name }));
+      // a screen is accepted where the product runs, which for a deployed stack is the site, as before
+      if (now.workTypes.ui) {
+        assert.equal(now.workTypes.ui.accept, 'site-or-local');
+        assert.equal(acceptPlace(now, now.workTypes.ui), 'site');
+        now.workTypes.ui.accept = 'site';
+      }
+      assert.deepEqual(now, settled(deepMerge(withUi, before)));
       assert.deepEqual(configFor(REPO, { profile: name }).guard.packs, before.guard.packs, 'the guard packs keep their order');
       assert.deepEqual(configFor(REPO, { profile: name }).localGate.commands, before.localGate.commands, 'the local gate keeps its order');
     });
@@ -315,19 +336,21 @@ describe('a profile is a list of blocks, and says what it said as a whole', () =
       // how the runner renders each step: the build and the review for an item of one work type
       // (the review picks its variant by that type), acceptance and the packet for the accepted
       // types of a milestone, with the place they are accepted at as the variant
+      const place = (t) => acceptPlace(cfg, cfg.workTypes[t]);
+      const accepted = types.filter((t) => place(t) !== 'none').map((t) => ({ variant: place(t), types: [t] }));
       const renders = {
         'build.md': types.map((t) => ({ types: [t] })),
         'review.md': types.map((t) => ({ variant: t, types: [t] })),
-        'accept.md': types.filter((t) => cfg.workTypes[t].accept !== 'none').map((t) => ({ variant: cfg.workTypes[t].accept, types: [t] })),
-        // a milestone nothing of which is accepted still gets its packet
-        'packet.md': types.map((t) => ({ variant: cfg.workTypes[t].accept, types: [t] })),
+        // a milestone nothing of which is accepted still gets its packet, worded like an accepted one
+        'accept.md': accepted,
+        'packet.md': accepted,
       };
       const withIncludes = corePrompts().filter((x) => includesOf(x.text).length);
       assert.deepEqual(withIncludes.map((p) => p.name).sort(), Object.keys(renders).sort(), 'every prompt with an include is compared');
       for (const p of withIncludes) {
         const before = p.text.replace(/\{\{>([\w-]+)\}\}/g, (_, frag) => old(frag));
         assert.ok(renders[p.name].length > 0);
-        for (const how of renders[p.name]) assert.equal(expandIncludes(p.text, blocks, { ...how, where: p.name }), before, `${p.name} with ${JSON.stringify(how)}`);
+        for (const how of renders[p.name]) assert.equal(expandIncludes(p.text, blocks, { cases: [how], where: p.name }), before, `${p.name} with ${JSON.stringify(how)}`);
       }
       assert.deepEqual(configProblems(deepMerge(cfg, { repo: 'acme/app', gitAuthor: { name: 'A Person', email: 'person@example.com' }, deploy: { devUrl: 'https://dev.example.com' }, guard: { allowedDbProject: 'abcdefghijklmnopqrst' } })), []);
     });

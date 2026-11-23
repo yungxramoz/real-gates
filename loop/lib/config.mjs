@@ -191,7 +191,8 @@ export function configProblems(cfg, { backlog } = {}) {
   if (!/^[^@\s]+@[^@\s]+$/.test(cfg.gitAuthor?.email || '')) p.push('gitAuthor.email: the commit author email the loop uses (some hosts only build previews for commits by a verified account email)');
   // A dev URL is needed when something is accepted on a deployed site: an item of such a work
   // type in the backlog, or, before there is a backlog, any such type of the stack.
-  const onSite = (name) => cfg.workTypes?.[name]?.accept === 'site';
+  // ("site-or-local" is on the site whenever the stack deploys one, which the last test below asks.)
+  const onSite = (name) => ['site', 'site-or-local'].includes(cfg.workTypes?.[name]?.accept);
   const needsUrl = backlog ? (backlog.items || []).some((i) => onSite(i.type || (i.ui ? 'ui' : 'default'))) : Object.keys(cfg.workTypes || {}).some(onSite);
   if (needsUrl && cfg.deploy?.adapter !== 'none' && !/^https?:\/\//.test(cfg.deploy?.devUrl || '')) p.push('deploy.devUrl: the URL where the base branch is deployed (milestone acceptance runs there)');
   p.push(...packProblems(cfg)); // unknown guard packs, and what each listed pack needs

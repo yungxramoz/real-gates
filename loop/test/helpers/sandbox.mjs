@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { deepMerge } from '../../lib/config.mjs';
-import { WEB, presetConfig } from './preset.mjs';
+import { WEB, presetConfig, stackConfig } from './preset.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOOP = path.resolve(HERE, '..', '..');
@@ -42,7 +42,8 @@ function copyLoop(dest) {
   fs.cpSync(LOOP, dest, { recursive: true, filter: (src) => !src.includes(`${path.sep}test${path.sep}`) && !src.endsWith(`${path.sep}test`) });
 }
 
-export function makeSandbox({ backlog = DEFAULT_BACKLOG, config = {}, files = {}, profile = WEB } = {}) {
+/** `profile`: the proven stack the project names. `stack`: its own list of blocks instead. */
+export function makeSandbox({ backlog = DEFAULT_BACKLOG, config = {}, files = {}, profile = WEB, stack = null } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-sb-'));
   const origin = path.join(tmp, 'origin.git');
   const root = path.join(tmp, 'work');
@@ -55,7 +56,7 @@ export function makeSandbox({ backlog = DEFAULT_BACKLOG, config = {}, files = {}
   git(root, 'config', 'user.name', 'Loop Tester');
   git(root, 'config', 'core.autocrlf', 'false');
   copyLoop(path.join(root, 'loop'));
-  const cfg = deepMerge(deepMerge(presetConfig(profile), TEST_CONFIG), config);
+  const cfg = deepMerge(deepMerge(stack ? stackConfig(stack) : presetConfig(profile), TEST_CONFIG), config);
   fs.writeFileSync(path.join(root, 'loop', 'loop.config.json'), JSON.stringify(cfg, null, 2));
   fs.writeFileSync(path.join(root, 'loop', 'backlog.json'), JSON.stringify(backlog, null, 2));
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# Test project\n');

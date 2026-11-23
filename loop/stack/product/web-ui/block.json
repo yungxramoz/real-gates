@@ -1,10 +1,10 @@
 {
   "title": "Web UI",
-  "description": "Screens a person uses in a browser. An item of the work type `ui` needs an end-to-end journey, is driven by the reviewer in a browser at phone and desktop width, and is scored on design quality, originality, craft and functionality against DESIGN.md and the accepted mocks. A milestone with such items is accepted on the deployed dev site.",
+  "description": "Screens a person uses in a browser. An item of the work type `ui` needs an end-to-end journey, is driven by the reviewer in a browser at phone and desktop width, and is scored on design quality, originality, craft and functionality against DESIGN.md and the accepted mocks. A milestone with such items is accepted where the product runs: on the deployed dev site when the stack deploys one, otherwise on a production build of the merged base, started on the machine the loop runs on.",
   "choose": "The product has pages or screens people open in a browser.",
   "config": {
     "workTypes": {
-      "ui": { "rubric": ["design_quality", "originality", "craft", "functionality"], "accept": "site" }
+      "ui": { "rubric": ["design_quality", "originality", "craft", "functionality"], "accept": "site-or-local" }
     },
     "gates": { "files": ["playwright.config.*"] }
   }

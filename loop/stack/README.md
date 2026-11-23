@@ -127,12 +127,23 @@ type comes with the product block that says how its items are driven and scored.
   `review.minDesignScore`, blocks the item. `[]` means no scores.
 - `accept`: how a milestone that contains such an item is accepted.
   - `site`: on the deployed dev site, after the deploy adapter says it serves the merged commit.
-  - `local`: on the merged base branch itself, with nothing deployed.
+    A stack that deploys nothing cannot have such a type.
+  - `local`: on the merged base branch itself, on the machine the loop runs on, whatever is
+    deployed. A package is judged installed, not hosted.
+  - `site-or-local`: where the product runs. On the deployed dev site when the stack deploys
+    one, otherwise on the merged base itself. A web UI and an HTTP API are accepted this way, so
+    the same block serves a hosted project and one that only runs locally.
   - `none`: no acceptance step.
 
-The preflight refuses a backlog item whose type no block of the stack defines. Items the loop
-creates take a type too: an acceptance fix item gets the type its milestone is accepted by, a
-follow-up the type of the item that raised it.
+A milestone is accepted once, in one session, and that session covers every kind of product the
+milestone delivers, each where it runs: screens on the deployed site and a command from the
+installed package, when it has both. The session gets the words of each product block in turn,
+under a line that names the kind.
+
+The preflight refuses a backlog item whose type no block of the stack defines, and a type that is
+accepted at a place its product block has no words for. Items the loop creates take a type too: an
+acceptance fix item gets the type of the item its failure is about (otherwise the first accepted
+type of the milestone), a follow-up the type of the item that raised it.
 
 ### Ratchets
 
@@ -169,7 +180,8 @@ The `npm-node-test` toolchain keeps its floor in a JSON file of its own:
 `http-health` polls `deploy.devUrl + health` until the JSON body's `commitField` starts with the
 merged commit and every field in `expect` has one of its allowed values. Only then does milestone
 acceptance start. `bypassHeader` and `bypassSecretEnv` are for a site behind preview protection.
-`"adapter": "none"` means nothing is deployed; no work type may then use `"accept": "site"`.
+`"adapter": "none"` means nothing is deployed; no work type may then use `"accept": "site"`, and
+a type with `"site-or-local"` is accepted on the merged base.
 
 The hosting block names the adapter and the health path. What the health body must say about a
 service comes from that service's block: the Supabase block adds `expect.db`.
@@ -187,7 +199,7 @@ stack has words for an include.
 | `build-gate-files` | build, step 8 | in words, the files `gates` protects | the toolchain |
 | `review-drive` | review | how the reviewer starts the branch and uses it like a user | the product block |
 | `review-rubric` | review | what each score of the rubric means and what it is calibrated against | the product block |
-| `accept-drive` | acceptance, steps 2 and 3 | how the evaluator gets at the product (the deployed site, or an installed package) and walks every journey | the product block |
+| `accept-drive` | acceptance, steps 2 and 3 | how the evaluator gets at the product (the deployed site, a build started locally, an installed package) and walks every journey | the product block |
 | `accept-score` | acceptance, step 4 | what is scored, and where the evidence goes | the product block |
 | `packet-shots` | packet, steps 1 and 2 | how the evidence for the owner is taken | the product block |
 
@@ -197,8 +209,14 @@ acceptance of a milestone with such items. When the step is about a type no bloc
 item of the type `default`), every product block speaks and says for which items its words hold.
 
 **Variants.** `<name>.<variant>.md` wins over `<name>.md`. The review picks the variant by the
-item's work type (`review-drive.command.md`); acceptance and the packet by the way the milestone
-is accepted (`accept-drive.site.md`, `accept-drive.local.md`).
+item's work type (`review-drive.command.md`); acceptance and the packet by the place the work
+type is accepted at (`accept-drive.site.md`, `accept-drive.local.md`). A block whose product is
+accepted in one way only needs no variant (`accept-drive.md`); one whose product runs deployed
+or locally has both.
+
+**Several kinds in one step.** Acceptance and the packet are about a whole milestone. When it
+delivers more than one work type, each include gives the words for every type in turn, each under
+a line that names the type and its place, and the session does the step once per type.
 
 **Write them flush left.** The words stand in a list of the prompt; the loop gives every line
 after the first the indentation of the line the include stands on. A list item starts with `- `

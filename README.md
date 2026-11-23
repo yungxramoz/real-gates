@@ -33,7 +33,7 @@ flowchart TD
   post -- "no" --> hold
   post -- "yes" --> ms{"Milestone complete?"}
   ms -- "no" --> pick
-  ms -- "yes" --> accept{"Acceptance on the deployed dev site"}
+  ms -- "yes" --> accept{"Acceptance where the product runs"}
   accept -- "failures" --> acc["ACC fix items, first in line"] --> pick
   accept -- "pass, or 2 rounds done" --> retro["Retro<br/>keep, change, impediments"]
   retro -- "action items and minutes" --> learn["LEARN item, first in line<br/>lesson, test, rule or tool"] --> pick
