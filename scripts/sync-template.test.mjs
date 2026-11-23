@@ -56,11 +56,15 @@ function copyOfRepo(name) {
 }
 
 /** A project made from the template: its own config, backlog, a learned rule, a pending patch, its docs. */
-function makeProject(template, { preset } = {}) {
+function makeProject(template, { preset, stack } = {}) {
   const dir = copyOfRepo('project');
   if (preset) {
     const applied = node(['scripts/apply-preset.mjs', preset], dir);
     assert.equal(applied.status, 0, applied.stderr);
+  }
+  if (stack) {
+    const built = node(['scripts/build-stack.mjs', '--stack', stack.join(',')], dir);
+    assert.equal(built.status, 0, built.stderr);
   }
   const cfg = JSON.parse(read(dir, 'loop/loop.config.json'));
   Object.assign(cfg, {
@@ -280,6 +284,48 @@ test(
     }
   },
 );
+
+test('a project built from its own blocks takes the workflow and the scripts of those blocks, never the web ones', () => {
+  const stack = [
+    'forge/github',
+    'toolchain/vite-plus',
+    'framework/fastify',
+    'product/http-api',
+    'hosting/none',
+  ];
+  const template = copyOfRepo('template');
+  const project = makeProject(template, { stack });
+  const gates = read(project, 'gates/test.ts');
+  const files = path.join(template, 'loop', 'stack', 'toolchain', 'vite-plus', 'files');
+  evolve(template);
+  fs.appendFileSync(
+    path.join(files, '.github', 'workflows', 'ci.yml'),
+    '\n# block workflow changed\n',
+  );
+  fs.appendFileSync(path.join(files, 'scripts', 'check-gates.mjs'), '\n// block script changed\n');
+  fs.appendFileSync(path.join(files, 'gates', 'test.ts'), '\n// block gate changed\n');
+  fs.appendFileSync(path.join(files, 'CLAUDE.md'), '\nA block rule changed.\n');
+  commitAll(template, 'later');
+  const r = node(['scripts/sync-template.mjs', '--from', template], project);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.match(read(project, '.github/workflows/ci.yml'), /block workflow changed/);
+  assert.doesNotMatch(read(project, '.github/workflows/ci.yml'), /web workflow changed/);
+  assert.match(read(project, 'scripts/check-gates.mjs'), /block script changed/);
+  // what the project owns after the build stays as it is: its rules, its thresholds
+  assert.equal(read(project, 'gates/test.ts'), gates);
+  assert.doesNotMatch(read(project, 'CLAUDE.md'), /A block rule changed/);
+  assert.deepEqual(JSON.parse(read(project, 'loop/loop.config.json')).stack, stack);
+  assert.ok(!fs.existsSync(path.join(project, 'src', 'app')), 'the web app is not brought back');
+  // a block the template no longer has is a problem, not a silent loss
+  fs.rmSync(path.join(template, 'loop', 'stack', 'product', 'http-api'), { recursive: true });
+  commitAll(template, 'a block is gone');
+  const gone = node(['scripts/sync-template.mjs', '--from', template, '--dry-run'], project);
+  assert.equal(gone.status, 1, gone.stdout);
+  assert.match(
+    gone.stderr + gone.stdout,
+    /the template has no block "product\/http-api" \(loop\/stack\/product\/http-api\/\): this project's stack would lose it/,
+  );
+});
 
 test('a shallow clone of the template still names the files that are yours and changed', async () => {
   const { sync } = await import('./sync-template.mjs');

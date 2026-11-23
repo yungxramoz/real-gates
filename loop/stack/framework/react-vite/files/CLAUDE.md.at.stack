@@ -1,0 +1,2 @@
+- **React** for the screens, in `src/web/`, built by Vite into `dist/`. A component test names
+  its environment in its first line (`// @vitest-environment happy-dom`)

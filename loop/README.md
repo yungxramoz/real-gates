@@ -58,7 +58,9 @@ Behind the blocks' choices sit **adapters** (`loop/adapters/`: the forge, the de
 post-merge steps, notifications) and **guard packs** (`loop/guard/packs/`: the rules for one tool
 or service). The core only calls their interfaces. Another tool is another block; another forge or
 host is another adapter. The contract: [stack/README.md](stack/README.md).
-`node loop/scripts/stack.mjs` prints this project's blocks and what they add up to.
+`node loop/scripts/stack.mjs` prints this project's blocks and what they add up to, and
+`node scripts/build-stack.mjs --stack …` builds a project from a list of blocks that is not a
+profile.
 
 A block is **proven** (a real project was built with it) or a **draft** (tested, and no project
 has run on it yet); the run says before it starts when its stack uses a draft. A **profile**
@@ -577,6 +579,7 @@ URL. A project that does not have the command yet runs the template's copy from 
 | The template's | `loop/` (the runner, the guard, every stack block and profile), `.claude/skills/`, the shared scripts, `loop-runner.yml`, the CI workflow of your stack | replaced; a file the template dropped is removed |
 | Yours, inside `loop/` | `loop.config.json`, `backlog.json`, `rules/project-rules.json`, `patches/` | never touched |
 | Yours | docs, `CLAUDE.md`, the app, `package.json` | never touched; when the template changed one since your last sync, the command names it |
+| A project built from blocks | the CI workflow and the files in `scripts/` its blocks brought | replaced by the blocks' later version; everything else a block brought is yours |
 
 The list lives in `loop/harness.json`. The command refuses a working tree with uncommitted
 changes, and records the template commit it synced from in `loop/template.lock.json`.

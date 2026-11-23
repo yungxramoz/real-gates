@@ -59,14 +59,13 @@ broke something is recorded once, without anything waiting for you
 
 ## Quick start
 
-| Step | You do                                                           | You get                                                                               |
-| ---- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 1    | **Use this template** on GitHub, then clone your copy            | A repo with no history                                                                |
-| 2    | Not a web app? `node scripts/apply-preset.mjs` lists the stacks  | The project files of that stack ([presets/node-cli](presets/node-cli/README.md))      |
-| 3    | `/setup-loop` in Claude Code                                     | `loop/loop.config.json`, guard settings, CI values, branches                          |
-| 4    | `/shape-project`                                                 | `docs/BRIEF.md`, `docs/REQUIREMENTS.md`, `loop/backlog.json`, `docs/OWNER-ACTIONS.md` |
-| 5    | `/draft-design` (a web app only)                                 | `DESIGN.md` and `design/mocks/accepted/`                                              |
-| 6    | `pnpm loop --dry-run`, then `pnpm loop --once`, then `pnpm loop` | The app, merged item by item, with a packet per milestone                             |
+| Step | You do                                                                                                  | You get                                                                                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 1    | **Use this template** on GitHub, then clone your copy                                                   | A repo with no history                                                                                                    |
+| 2    | `/setup-loop` in Claude Code: say what you are building, choose the stack from the blocks it recommends | The project files of that stack, built from its blocks, then `loop/loop.config.json`, guard settings, CI values, branches |
+| 3    | `/shape-project`                                                                                        | `docs/BRIEF.md`, `docs/REQUIREMENTS.md`, `loop/backlog.json`, `docs/OWNER-ACTIONS.md`                                     |
+| 4    | `/draft-design` (a project with screens)                                                                | `DESIGN.md` and `design/mocks/accepted/`                                                                                  |
+| 5    | `pnpm loop --dry-run`, then `pnpm loop --once`, then `pnpm loop`                                        | The app, merged item by item, with a packet per milestone                                                                 |
 
 You need Node 22 or newer, pnpm, `gh` logged in, and Claude Code logged in. The preflight checks
 the versions and tells you what is missing. Details: [loop/README.md](loop/README.md).

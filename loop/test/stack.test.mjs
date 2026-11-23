@@ -476,6 +476,68 @@ describe('the Vite+ toolchain keeps its rules although every tool reads one conf
   });
 });
 
+describe('what the blocks bring into a project fits together', () => {
+  const ids = blockIds(REPO);
+  const filesOf = (id) => {
+    const dir = path.join(loadBlock(REPO, id).dir, 'files');
+    const walk = (d) => (fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.relative(dir, path.join(d, e.name)).replace(/\\/g, '/')])) : []);
+    return { dir, files: walk(dir) };
+  };
+  const bases = ids.filter((id) => id.startsWith('toolchain/') && fs.existsSync(path.join(filesOf(id).dir, 'package.json')));
+  test('a toolchain that a stack can be built on brings the four names a project is called by', () => {
+    assert.deepEqual(bases, ['toolchain/vite-plus']);
+    for (const id of bases) {
+      const pkg = JSON.parse(fs.readFileSync(path.join(filesOf(id).dir, 'package.json'), 'utf8'));
+      for (const name of ['check', 'build', 'start', 'test:e2e']) assert.ok(pkg.scripts[name], `${id}: no "${name}" script`);
+      // the local gate of the block is a script it brings
+      for (const command of loadBlock(REPO, id).config.localGate.commands) {
+        const script = command.match(/^pnpm (\S+)$/)?.[1];
+        const file = command.match(/^node (scripts\/\S+)$/)?.[1];
+        assert.ok((script && pkg.scripts[script]) || file, `${id}: local gate "${command}"`);
+      }
+    }
+  });
+  test('only a toolchain owns the four names; the other blocks bring scripts of their own under them', () => {
+    for (const id of ids.filter((i) => !i.startsWith('toolchain/'))) {
+      const file = path.join(filesOf(id).dir, 'package.json');
+      if (!fs.existsSync(file)) continue;
+      const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+      for (const key of Object.keys(pkg)) assert.ok(['scripts', 'dependencies', 'devDependencies'].includes(key), `${id}: package.json part sets "${key}", which is the toolchain's`);
+      for (const name of Object.keys(pkg.scripts || {})) assert.match(name, /^(build|start|dev):[a-z]+$/, `${id}: script "${name}"`);
+      for (const [name, version] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) assert.match(version, /^\d+\.\d+\.\d+$/, `${id}: ${name} is pinned to one version`);
+    }
+  });
+  test('every part a block adds to a shared page has its slot in a page a toolchain brings', () => {
+    let parts = 0;
+    for (const id of ids) {
+      for (const rel of filesOf(id).files) {
+        const slot = /^(.*)\.at\.([a-z][a-z0-9-]*)$/.exec(rel);
+        if (!slot) continue;
+        parts++;
+        if (slot[2] === 'end') continue; // goes to the end of a file, wherever that comes from
+        for (const base of bases) {
+          const page = path.join(filesOf(base).dir, slot[1]);
+          assert.ok(fs.existsSync(page), `${id} adds to ${slot[1]}, which ${base} does not bring`);
+          assert.match(fs.readFileSync(page, 'utf8'), new RegExp(`^<!-- stack:${slot[2]} -->$`, 'm'), `${id} adds to ${slot[1]} at "${slot[2]}", and ${base}'s page has no such line`);
+        }
+      }
+    }
+    assert.ok(parts >= 10, 'the blocks of a built stack say their part on the shared pages');
+  });
+  test('no two blocks that may be in one stack bring the same file', () => {
+    const owner = new Map();
+    for (const id of ids) {
+      for (const rel of filesOf(id).files.filter((f) => f !== 'package.json' && !/\.at\.[a-z][a-z0-9-]*$/.test(f))) {
+        const other = owner.get(rel);
+        // two toolchains, or two hosting blocks, are never in one stack
+        const exclusive = other && other.split('/')[0] === id.split('/')[0] && ['toolchain', 'forge', 'hosting'].includes(id.split('/')[0]);
+        assert.ok(!other || exclusive, `${other} and ${id} both bring ${rel}`);
+        owner.set(rel, id);
+      }
+    }
+  });
+});
+
 describe('a database the app migrates itself: its migrations are frozen without a step after a merge', () => {
   test('the frozen folders are the post-merge steps\' and the ones the config names, each once', () => {
     assert.deepEqual(migrationDirs({}), []);

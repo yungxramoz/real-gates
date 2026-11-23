@@ -1,0 +1,18 @@
+{
+  "scripts": {
+    "dev:web": "vp dev",
+    "build:web": "vp build",
+    "start:web": "vp preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "happy-dom": "21.0.4"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "",
+  "type": "module",
+  "packageManager": "pnpm@12.9.1",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "check": "node scripts/check-gates.mjs && vp check && vp test run --coverage",
+    "build": "node scripts/run-scripts.mjs --all build:web build:server",
+    "start": "node scripts/run-scripts.mjs --first start:server start:web",
+    "test:e2e": "playwright test --pass-with-no-tests",
+    "format": "vp fmt",
+    "test:loop": "node --test \"loop/test/**/*.test.mjs\"",
+    "test:scripts": "node --test \"scripts/*.test.mjs\"",
+    "ac-trace": "node scripts/ac-trace.mjs",
+    "arch-check": "node scripts/arch-check.mjs",
+    "check:rules": "node loop/scripts/check-rules.mjs",
+    "check:skills": "node scripts/check-skills.mjs",
+    "sanitize": "node scripts/sanitize-scan.mjs",
+    "loop": "node loop/run.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
+    "vite-plus": "1.7.0"
+  }
+}

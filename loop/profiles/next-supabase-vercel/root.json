@@ -1,0 +1,7 @@
+{
+  "$comment": "The template's root is the project of this profile. These are its own files: what scripts/build-stack.mjs takes away when it turns a fresh copy of the template into a project of another stack. `keep` names the ones a block still needs there: the web UI block scores screens against DESIGN.md and the accepted mocks, whatever the app is built with.",
+  "files": ["src", "tests", "supabase", "design", "examples", "DESIGN.md", "next.config.ts", "postcss.config.mjs", "playwright.config.ts", "vitest.config.mts", "eslint.config.mjs", "tsconfig.json", ".prettierrc.json", ".prettierignore", "pnpm-lock.yaml", "pnpm-workspace.yaml"],
+  "keep": {
+    "product/web-ui": ["DESIGN.md", "design"]
+  }
+}

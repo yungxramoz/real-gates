@@ -134,18 +134,43 @@ export function plan(project, source) {
     if (fs.existsSync(path.join(source, rel))) add(rel, path.join(source, rel));
   }
 
-  // Files that differ per stack come from the preset of the profile this project uses. The
-  // template's own root is the preset of the profile its own config names.
-  const profile = readJson(path.join(project, 'loop', 'loop.config.json'), {}).profile || '';
+  // Files that differ per stack. A project that names a profile takes them from that profile's
+  // preset; the template's own root is the preset of the profile its own config names. A project
+  // that lists its own blocks (scripts/build-stack.mjs made it) takes them from the blocks:
+  // each block's files/ holds what it brought, and what of that is the template's to keep up to
+  // date is the CI workflow and the scripts, which a loop session cannot change.
+  const own = readJson(path.join(project, 'loop', 'loop.config.json'), {});
+  const profile = own.profile || '';
+  const stack = Array.isArray(own.stack) ? own.stack.filter((id) => typeof id === 'string') : null;
   const rootProfile = readJson(path.join(source, 'loop', 'loop.config.json'), {}).profile || '';
-  for (const rel of manifest.presetFiles || []) {
-    const fromPreset = path.join(source, 'presets', profile, 'files', rel);
-    const from = profile && profile !== rootProfile ? fromPreset : path.join(source, rel);
-    if (fs.existsSync(from)) add(rel, from);
-    else
-      notes.push(
-        `${rel}: the template has no version of it for the profile "${profile}"; your copy stays`,
-      );
+  const blockFiles = (id) => path.join(source, 'loop', 'stack', ...id.split('/'), 'files');
+  if (stack) {
+    const brought = new Set();
+    for (const id of stack) {
+      if (!fs.existsSync(path.join(blockFiles(id), '..', 'block.json'))) {
+        problems.push(
+          `the template has no block "${id}" (loop/stack/${id}/): this project's stack would lose it`,
+        );
+        continue;
+      }
+      for (const rel of walk(blockFiles(id), blockFiles(id))) {
+        if (!(manifest.presetFiles || []).includes(rel) && !rel.startsWith('scripts/')) continue;
+        brought.add(rel);
+        add(rel, path.join(blockFiles(id), rel));
+      }
+    }
+    for (const rel of (manifest.presetFiles || []).filter((r) => !brought.has(r)))
+      notes.push(`${rel}: no block of your stack brings it; your copy stays`);
+  } else {
+    for (const rel of manifest.presetFiles || []) {
+      const fromPreset = path.join(source, 'presets', profile, 'files', rel);
+      const from = profile && profile !== rootProfile ? fromPreset : path.join(source, rel);
+      if (fs.existsSync(from)) add(rel, from);
+      else
+        notes.push(
+          `${rel}: the template has no version of it for the profile "${profile}"; your copy stays`,
+        );
+    }
   }
 
   if (profile && !fs.existsSync(path.join(source, 'loop', 'profiles', profile, 'profile.json'))) {

@@ -1,0 +1,2 @@
+- **Server:** Fastify on Node.js, run from the TypeScript source without a build step; it also
+  serves the built web app when the project has one

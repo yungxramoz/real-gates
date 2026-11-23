@@ -1,0 +1,2 @@
+- **SQLite** for the data, in one file beside the app (`node:sqlite`). The schema is the files in
+  `migrations/`, applied in order at start

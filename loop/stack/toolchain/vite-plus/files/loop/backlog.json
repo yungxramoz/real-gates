@@ -1,0 +1,21 @@
+{
+  "$comment": "Written by /shape-project; edited only by the owner, between runs (loop sessions cannot change it). Items point at docs instead of copying acceptance criteria. An item names what it delivers with \"type\" (node loop/scripts/stack.mjs lists the work types of this stack): the reviewer then scores it on that type's rubric and its milestone is accepted the way the type says. LOOP-0 proves the pipeline end to end before any real work.",
+  "milestones": [
+    "M0"
+  ],
+  "items": [
+    {
+      "id": "LOOP-0",
+      "milestone": "M0",
+      "title": "Prove the pipeline end to end on a harmless change",
+      "refs": [
+        "loop/README.md",
+        "docs/REQUIREMENTS.md#e0--platform",
+        "docs/DECISIONS.md"
+      ],
+      "scope": "A harmless change that exercises every gate once: record the next free decision ID in docs/DECISIONS.md (row and log bullet: the pipeline was proven end to end by LOOP-0), and make sure every AC of E0 in docs/REQUIREMENTS.md has a passing test whose title carries its ID. Open a PR to the base branch, let the local gate, CI, review, merge, landed check and base CI run. Change nothing under loop/, .github/ or .claude/.",
+      "type": "default",
+      "dependsOn": []
+    }
+  ]
+}

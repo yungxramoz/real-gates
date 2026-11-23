@@ -1,8 +1,8 @@
 ---
 name: setup-loop
-description: Sets up the unattended build loop in a clone of this template. Asks for the GitHub repo, branches, dev database project, forbidden projects, preview URL, notify topic and git author one question at a time, writes loop/loop.config.json and .env.example, creates the base branch, then proves the setup with a validator, a dry run and the LOOP-0 item. Use right after "Use this template", when the dry run or preflight reports config problems, or when the repo, branches, database or deploy URL change. Safe to run again.
+description: Sets up the unattended build loop in a clone of this template. In a fresh copy it first asks what is being built, recommends the stack blocks and lets the user choose them, then builds the project from that choice. Asks for the GitHub repo, branches, dev database project, forbidden projects, preview URL, notify topic and git author one question at a time, writes loop/loop.config.json and .env.example, creates the base branch, then proves the setup with a validator, a dry run and the LOOP-0 item. Use right after "Use this template", when the dry run or preflight reports config problems, or when the repo, branches, database or deploy URL change. Safe to run again.
 disable-model-invocation: true
-allowed-tools: Bash(node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"*) Bash(node loop/run.mjs --dry-run*) Bash(node loop/run.mjs --status*) Bash(gh auth status*) Bash(gh repo view*) Bash(git status*) Bash(git branch*) Bash(git remote*) Bash(git ls-remote*) Bash(claude --version*)
+allowed-tools: Bash(node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"*) Bash(node loop/scripts/stack.mjs*) Bash(node scripts/build-stack.mjs * --dry-run*) Bash(node scripts/build-stack.mjs * --json*) Bash(node loop/run.mjs --dry-run*) Bash(node loop/run.mjs --status*) Bash(gh auth status*) Bash(gh repo view*) Bash(git status*) Bash(git branch*) Bash(git remote*) Bash(git ls-remote*) Bash(claude --version*)
 ---
 
 # Set up the loop
@@ -22,7 +22,9 @@ Done means: `node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"` prints `ready`
    (`gh auth login`, `claude` → `/login`) themselves.
 4. **Write only these files**: `loop/loop.config.json`, `.env.example`, the `branches:` filters in
    `.github/workflows/*.yml`, and new rows in `docs/OWNER-ACTIONS.md`. Never edit `loop/run.mjs`,
-   `loop/lib/`, `loop/guard*` or `loop/backlog.json`.
+   `loop/lib/`, `loop/guard*` or `loop/backlog.json`. Step 0 is the one exception: there
+   `scripts/build-stack.mjs` or `scripts/apply-preset.mjs` writes the project's files, after the
+   user said yes to its dry run. You never write those files yourself.
 5. **Ask only what this stack needs.** The project's stack is a list of blocks (`loop/stack/`),
    named by `profile` or listed under `stack` in `loop/loop.config.json`. Run
    `node loop/scripts/stack.mjs` first: it prints the blocks and what they add up to. "After a
@@ -37,6 +39,7 @@ Copy this checklist into your reply and tick it off as you go:
 
 ```
 Setup progress:
+- [ ] 0. Stack: in a fresh copy of the template, choose the blocks and build the project
 - [ ] 1. Baseline: run the validator, read the current config
 - [ ] 2. Tools: Node, Claude Code, gh, dependencies installed, a browser for the tests if the stack uses one
 - [ ] 3. Repo and branches (repo, base, production, ciCheck)
@@ -49,6 +52,34 @@ Setup progress:
 - [ ] 10. LOOP-0: commit the setup, offer to run the first item
 ```
 
+### 0. Stack
+
+Only in a fresh copy of the template: it still has a `presets/` folder and
+`loop/loop.config.json` names the profile `next-supabase-vercel` without a `stack` list. Anywhere
+else the stack is chosen: show it in one line (`node loop/scripts/stack.mjs`) and go on.
+
+1. **Interview.** Ask what is being built, what a person or a program touches (screens, commands,
+   endpoints), where it runs and where the data lives. One question at a time.
+2. **Recommend.** `node loop/scripts/stack.mjs --list --json` lists every block with the sentence
+   that says when to choose it. Recommend the blocks whose sentence is true for the answers.
+3. **Let the user choose.** One question per category (forge, toolchain, framework, product,
+   database, hosting) with every block of it as an option: the recommended one first and marked,
+   a draft marked as one, several selectable where a category holds several, "none" where it may
+   be empty. Use the question tool when there is one. The user's choice stands, also against
+   your recommendation.
+4. **Build.** The web profile needs nothing. The CLI profile is
+   `node scripts/apply-preset.mjs node-cli`. Any other list:
+
+   ```bash
+   node scripts/build-stack.mjs --stack <block>,<block>,… --dry-run
+   ```
+
+   Show what it removes and writes, ask for a yes, run it without `--dry-run`, install the
+   dependencies, run the project's gate once and propose the commit.
+
+The interview questions, how to recommend, the layout of the chooser and what to do with each
+outcome: [reference/stack.md](reference/stack.md).
+
 ### 1. Baseline
 
 ```bash
@@ -57,7 +88,9 @@ node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"
 
 Every `PROBLEM` line is a to-do for one of the steps below. Read `loop/loop.config.json` and
 `loop/README.md`. Tell the user in two lines what is set and what is missing, then start with the
-first missing step. Skip steps whose values are set and confirmed.
+first missing step. Skip steps whose values are set and confirmed. In a fresh copy of the template
+step 0 comes before this one: until the project has its own stack, the validator checks it against
+the web profile.
 
 ### 2. Tools
 

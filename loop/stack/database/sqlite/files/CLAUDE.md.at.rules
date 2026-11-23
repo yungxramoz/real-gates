@@ -1,0 +1,13 @@
+## HARD RULES — Database
+
+1. **Every schema change is a new file** in `migrations/`, numbered after the last one, committed
+   and reviewed. The app applies the files it has not run yet when it starts.
+2. **Applied migrations are frozen.** Never edit a migration that is already on the base branch:
+   a database that ran it will not run it again. Fix forward with a new file.
+3. **Destructive SQL** (`DROP`, unbounded `DELETE`, a data-losing type change, removing a column)
+   only after the owner approved that statement. It goes to `.loop/OWNER-ACTIONS.md` first.
+4. **A database file a person uses is not yours.** Tests, and the app you start to try a change,
+   use a file of their own in a temporary folder or under `.loop/`. Never open, copy, move or
+   delete another one.
+5. No database file in git.
+
