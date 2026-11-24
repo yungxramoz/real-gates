@@ -593,4 +593,11 @@ key or a preflight check; the dry run names what it needs.
 
 `pnpm test:loop` runs the runner suite: a fake `claude` and a fake `gh` play scripted sessions
 through every branch (red CI, review changes, held post-merge, usage limit, crash and resume),
-in a few minutes and without tokens. CI runs it on Linux, macOS and Windows.
+in a few minutes and without tokens. The `ci` job runs it on Linux for any change under `loop/`.
+`loop-runner.yml` runs it on Linux, macOS and Windows, in the template only: your `loop/` is a
+copy of what the template tested on all three, so in a project those jobs are skipped and cost no
+minutes.
+
+The scenarios are in `loop/test/run.*.test.mjs`, one file per subject. Node runs test files side
+by side and the tests of one file in turn, so a new scenario goes into the file of its subject
+and a file that has grown much longer than the others is split.
