@@ -3,6 +3,11 @@ name: loop-runner
 # The loop runner is Node built-ins only and runs on whatever machine its owner has, so its suite
 # runs on all three OSes whenever loop/ changes. No `pnpm install`: the runner must work before
 # one. Windows is where path separators and CRLF bite; macOS where BSD tools differ.
+#
+# Only in the template. A project's loop/ is a copy of what the template tested on all three at
+# that commit, and its own `ci` job runs this suite on Linux for any change under loop/. A private
+# repository pays for these minutes, and a Windows or macOS minute counts as several: there the
+# jobs are skipped, which costs nothing.
 
 on:
   pull_request:
@@ -22,6 +27,8 @@ permissions:
 jobs:
   loop-runner:
     name: loop-runner (${{ matrix.os }})
+    # "Template repository" in the repository's settings. A project made from it does not have it.
+    if: ${{ github.event.repository.is_template }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -45,5 +52,9 @@ jobs:
 
       # A glob, quoted so Node expands it (not the shell): Node 22+ reads a bare directory
       # argument as a module path and fails with "Cannot find module '…/loop/test'".
+      #
+      # One test file per core: Node's own default leaves a core free, which on a machine with
+      # two is one file at a time. bash, so the line is the same on all three OSes.
       - name: node --test loop/test
-        run: node --test "loop/test/**/*.test.mjs"
+        shell: bash
+        run: node --test --test-concurrency="$(node -p 'os.availableParallelism()')" "loop/test/**/*.test.mjs"
