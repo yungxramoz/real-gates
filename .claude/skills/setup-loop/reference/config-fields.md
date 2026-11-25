@@ -56,7 +56,7 @@ lets agents talk to that one project and blocks every ref in `forbiddenRefs`.
 | `guard.forbiddenRefs` | "Which other projects are on this account?" | all of them, production first |
 | `postMerge[0].dbUrlEnv` | do not ask | `DEV_DB_URL` |
 | `postMerge[0].migrationsDir` | do not ask | `supabase/migrations` |
-| `guard.dbSchema` | "Which schema do the app tables live in?" | the default in `loop/lib/config.mjs` |
+| `guard.dbSchema` | "Which schema do the app tables live in?" | a schema of the app's own, never `public`. Empty (the default) lets a write touch any schema except the platform's |
 
 Finding a Supabase project ref: it is the subdomain of the project URL
 (`https://<ref>.supabase.co`) and the path segment in the dashboard URL

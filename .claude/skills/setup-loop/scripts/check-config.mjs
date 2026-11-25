@@ -3,7 +3,7 @@
 //
 // It loads loop/loop.config.json through the runner's own module (loop/lib/config.mjs), so the
 // answer matches what the runner's preflight will say, then checks what the config cannot know:
-// .env.example, the git remote and branches, gh login, the Claude Code version floor, Node and the
+// .env.example, the CLAUDE.md placeholders, the git remote and branches, gh login, the Claude Code version floor, Node and the
 // Playwright browsers. It never prints secret values and never changes anything.
 //
 // Usage: node check-config.mjs [--root <repo dir>] [--config-only]
@@ -20,6 +20,7 @@ const HELP = `Usage: node check-config.mjs [--root <repo dir>] [--config-only]
 Checks that this clone is ready for the unattended loop:
   - loop/loop.config.json loads and loop/lib/config.mjs reports no config problems
   - .env.example names every secret the config points at, with no value filled in
+  - CLAUDE.md has no setup-loop placeholder left
   - git remote "origin" exists and has the base and production branches
   - gh is logged in and can see the configured repo
   - Claude Code is at least the version floor in loop/lib/config.mjs
@@ -138,6 +139,15 @@ function checkEnvExample(root, cfg) {
   if (!problems.some((p) => p.startsWith('.env.example'))) ok('.env.example', `names ${names.join(', ')}`);
 }
 
+/** CLAUDE.md names the repo, branches and database every session works with: no blank left. */
+function checkClaudeMd(root) {
+  const file = path.join(root, 'CLAUDE.md');
+  if (!fs.existsSync(file)) return;
+  const keys = [...fs.readFileSync(file, 'utf8').matchAll(/<!--\s*setup-loop:\s*([^>]*?)\s*-->/g)].map((m) => m[1]);
+  if (keys.length) problem('CLAUDE.md', `${keys.length} setup-loop placeholder(s) not filled (${[...new Set(keys)].join(', ')}); setup-loop step 7`);
+  else ok('CLAUDE.md', 'no setup-loop placeholder left');
+}
+
 function checkGit(root, cfg) {
   const remote = run('git remote get-url origin', root);
   if (!remote.found) return problem('git', 'git is not on PATH');
@@ -247,6 +257,7 @@ async function main() {
 
   const { cfg, mod } = await checkConfig(root);
   if (cfg) checkEnvExample(root, cfg);
+  checkClaudeMd(root);
   if (!args.configOnly) {
     checkNode();
     if (cfg) checkGit(root, cfg);
