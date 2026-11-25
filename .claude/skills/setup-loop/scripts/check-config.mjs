@@ -20,7 +20,8 @@ const HELP = `Usage: node check-config.mjs [--root <repo dir>] [--config-only]
 Checks that this clone is ready for the unattended loop:
   - loop/loop.config.json loads and loop/lib/config.mjs reports no config problems
   - .env.example names every secret the config points at, with no value filled in
-  - CLAUDE.md has no setup-loop placeholder left
+  - CLAUDE.md has no setup-loop placeholder left, and names the repo, dev URL and database refs
+    the config holds
   - git remote "origin" exists and has the base and production branches
   - gh is logged in and can see the configured repo
   - Claude Code is at least the version floor in loop/lib/config.mjs
@@ -139,13 +140,26 @@ function checkEnvExample(root, cfg) {
   if (!problems.some((p) => p.startsWith('.env.example'))) ok('.env.example', `names ${names.join(', ')}`);
 }
 
-/** CLAUDE.md names the repo, branches and database every session works with: no blank left. */
-function checkClaudeMd(root) {
+/**
+ * CLAUDE.md names the repo, the dev site and the databases every session works with: no blank
+ * left, and none of them out of date after the config changed.
+ */
+function checkClaudeMd(root, cfg) {
   const file = path.join(root, 'CLAUDE.md');
   if (!fs.existsSync(file)) return;
-  const keys = [...fs.readFileSync(file, 'utf8').matchAll(/<!--\s*setup-loop:\s*([^>]*?)\s*-->/g)].map((m) => m[1]);
-  if (keys.length) problem('CLAUDE.md', `${keys.length} setup-loop placeholder(s) not filled (${[...new Set(keys)].join(', ')}); setup-loop step 7`);
-  else ok('CLAUDE.md', 'no setup-loop placeholder left');
+  const text = fs.readFileSync(file, 'utf8');
+  const keys = [...text.matchAll(/<!--\s*setup-loop:\s*([^>]*?)\s*-->/g)].map((m) => m[1]);
+  if (keys.length) return problem('CLAUDE.md', `${keys.length} setup-loop placeholder(s) not filled (${[...new Set(keys)].join(', ')}); setup-loop step 7`);
+  // Values distinct enough to look for: a branch name like "main" is in the text anyway.
+  const values = [
+    ['repo', cfg?.repo],
+    ['deploy.devUrl', cfg?.deploy?.devUrl],
+    ['guard.allowedDbProject', cfg?.guard?.allowedDbProject],
+    ...(cfg?.guard?.forbiddenRefs || []).map((r) => ['guard.forbiddenRefs', r]),
+  ].filter(([, v]) => typeof v === 'string' && v);
+  const missing = values.filter(([, v]) => !text.includes(v));
+  if (missing.length) problem('CLAUDE.md', `does not name ${missing.map(([k, v]) => `${k} "${v}"`).join(', ')} from loop/loop.config.json; update it (setup-loop step 7)`);
+  else ok('CLAUDE.md', 'its setup values match loop/loop.config.json');
 }
 
 function checkGit(root, cfg) {
@@ -257,7 +271,7 @@ async function main() {
 
   const { cfg, mod } = await checkConfig(root);
   if (cfg) checkEnvExample(root, cfg);
-  checkClaudeMd(root);
+  checkClaudeMd(root, cfg);
   if (!args.configOnly) {
     checkNode();
     if (cfg) checkGit(root, cfg);

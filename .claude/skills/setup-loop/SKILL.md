@@ -21,9 +21,10 @@ Done means: `node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"` prints `ready`
    starting the loop. Show the exact command, wait for a yes. The user runs interactive logins
    (`gh auth login`, `claude` → `/login`) themselves.
 4. **Write only these files**: `loop/loop.config.json`, `.env.example`, the `branches:` filters in
-   `.github/workflows/*.yml`, new entries in `docs/OWNER-ACTIONS.md`, and the
-   `<!-- setup-loop: … -->` placeholders in `CLAUDE.md` (each replaced by its value, nothing else
-   in that file). Never edit `loop/run.mjs`,
+   `.github/workflows/*.yml`, new entries in `docs/OWNER-ACTIONS.md`, and the setup
+   values in `CLAUDE.md`: its `<!-- setup-loop: … -->` placeholders, and on a later run the
+   values that replaced them (the project name, the Environments table, the forbidden refs in
+   database rule 1). Nothing else in that file. Never edit `loop/run.mjs`,
    `loop/lib/`, `loop/guard*` or `loop/backlog.json`. Step 0 is the one exception: there
    `scripts/build-stack.mjs` or `scripts/apply-preset.mjs` writes the project's files, after the
    user said yes to its dry run. You never write those files yourself.
@@ -184,8 +185,9 @@ asked.
 5. Replace every `<!-- setup-loop: <key> -->` placeholder in `CLAUDE.md` with its value: `project
    name` with the name from step 3, every other key with that value from the config (`gitAuthor`
    as `name <email>`, `guard.forbiddenRefs` as a list in backticks). A value that is empty
-   because the stack does not need it (no database, nothing deployed) becomes "none". Leave the
-   `shape-project:` placeholders to `/shape-project`.
+   because the stack does not need it (no database, nothing deployed) becomes "none". On a later
+   run the placeholders are gone: update those same places wherever a value changed in this run.
+   Leave the `shape-project:` placeholders to `/shape-project`.
 
 ### 8. Validate
 
