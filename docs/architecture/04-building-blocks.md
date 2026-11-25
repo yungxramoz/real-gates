@@ -23,18 +23,21 @@ flowchart TB
   db[("supabase/migrations")]
   pages --> i18n
   pages --> styles
-  pages --> supa
+  pages --> env
   api --> supa
+  api --> env
+  api --> stub
   supa --> env
+  stub --> env
   supa -.-> db
 ```
 
-| Block              | Path                  | Responsibility                                      | Depends on         |
-| ------------------ | --------------------- | --------------------------------------------------- | ------------------ |
-| Health             | `src/app/api/health/` | Reports `{ commit, db }` for acceptance             | `src/lib/supabase` |
-| Config             | `src/lib/env.ts`      | Reads and validates environment variables           | —                  |
-| Data access        | `src/lib/supabase/`   | Server and browser clients                          | Config             |
-| Stubs              | `src/lib/stub.ts`     | Fakes external services in preview and CI           | Config             |
-| Strings            | `src/i18n/`           | Every user-facing string, in one place              | —                  |
-| Design tokens      | `src/styles/`         | The colours of `DESIGN.md` as CSS custom properties | —                  |
-| <!-- new block --> |                       |                                                     |                    |
+| Block              | Path                  | Responsibility                                      | Depends on                 |
+| ------------------ | --------------------- | --------------------------------------------------- | -------------------------- |
+| Health             | `src/app/api/health/` | Reports `{ commit, db }` for acceptance             | Data access, Config, Stubs |
+| Config             | `src/lib/env.ts`      | Reads and validates environment variables           | —                          |
+| Data access        | `src/lib/supabase/`   | Server and browser clients                          | Config                     |
+| Stubs              | `src/lib/stub.ts`     | Fakes external services in preview and CI           | Config                     |
+| Strings            | `src/i18n/`           | Every user-facing string, in one place              | —                          |
+| Design tokens      | `src/styles/`         | The colours of `DESIGN.md` as CSS custom properties | —                          |
+| <!-- new block --> |                       |                                                     |                            |

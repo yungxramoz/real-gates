@@ -3,7 +3,8 @@
 Every key of `loop/loop.config.json`: the question to ask, the recommended answer, and where the
 value comes from. `profile` names a proven stack (a folder under `loop/profiles/`), which is a
 list of stack blocks (`loop/stack/`); a project may list its blocks itself under `stack`. Either
-is already set by the template or by `scripts/apply-preset.mjs`, so read it, do not ask. A key
+is already set by the template, by `scripts/apply-preset.mjs` or by `scripts/build-stack.mjs`
+(`/setup-loop` step 0), so read it, do not ask. A key
 left out of the file keeps the value the blocks give it, and what no block sets keeps its
 default from `loop/lib/config.mjs` (`DEFAULTS`). Ask only for this project's own values. What
 belongs to the stack (check commands, gate files, work types, guard packs, adapters, the health
@@ -100,7 +101,8 @@ wrong.
 
 **Not deployed yet**: leave `devUrl` empty and write an owner action ("connect the repo to the
 host, deploy `<base>`, then rerun /setup-loop"). The validator keeps naming the gap while any
-backlog item has `"ui": true`.
+backlog item's work type is accepted on the deployed site (`ui`, `api`), or, before there is a
+backlog, while the stack has such a work type.
 
 ## Notify and git author
 
@@ -130,7 +132,7 @@ user asks, and keep `budgets.maxUsdPerSession` set: it stops a single runaway se
 | `stack` | the project's own list of stack blocks, instead of a profile's (`node loop/scripts/stack.mjs --list` prints every block) | the profile's list |
 | `migrations.dirs` | folders whose `.sql` files are frozen once they are on the base branch, for a database the app migrates itself | what the database block sets; `[]` |
 | `budgets.maxUsdPerRun` | stops the run once its sessions cost this much; `0` = no cap | `0` |
-| `localGate.commands` | shell commands the runner runs on the pushed head before waiting for CI | preset: `["pnpm check"]` |
+| `localGate.commands` | shell commands the runner runs on the pushed head before waiting for CI | the toolchain block's: `["pnpm check", "node scripts/arch-check.mjs"]` (npm: `npm run check`) |
 | `sessionEnvDeny` | extra environment variables no agent session may see | `[]` |
 | `guard.requireBranchProtection` | the preflight refuses to start when the base branch is unprotected | `true` |
 | `contractsDir` | where build sessions write `<item>.md` contracts | `docs/contracts` |
@@ -145,7 +147,8 @@ noticed after it happened.
 
 ## Owner actions this step usually produces
 
-Append to `docs/OWNER-ACTIONS.md`, one row each, with how to verify it:
+Append to `docs/OWNER-ACTIONS.md`, one `### OA-<n>` block each in the format the file shows. The
+usual ones, with the check that proves each:
 
 | Action | Verify |
 |---|---|

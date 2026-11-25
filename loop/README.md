@@ -139,7 +139,7 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | Blocked actions | `.loop/logs/guard.log` (time, item, phase, rule, reason, what was refused) |
 | What the loop learned | `.loop/retros/R-<n>.md` (the minutes of each retro), filed in `docs/retros/` |
 | Defects in the harness the run recorded | `.loop/IMPEDIMENTS.md` (a record; nothing in the run waits for it) |
-| Time and cost per session | `.loop/ledger.jsonl` (item, phase, duration, turns, cost, outcome) |
+| Time and cost per session | `.loop/ledger.jsonl` (item, phase, whether it ended ok, turns, duration, cost) |
 | What happened, for a program | `.loop/events.jsonl` (one JSON line per event, see below) |
 | **Things only you can do** | `.loop/OWNER-ACTIONS.md` |
 | **Milestone "come look"** | `.loop/reviews/<milestone>.md`, with screenshots |
@@ -229,10 +229,10 @@ every call, and the packs are part of the snapshot. Together they block:
 | Database | any Supabase project except `guard.allowedDbProject`, every ref in `guard.forbiddenRefs`, `apply_migration`, `supabase db push` / `reset`, writing or destructive SQL from a session |
 | SQL | judged with comments removed, the way Postgres reads it, so a comment can neither trip a rule nor hide a write |
 | Files | `loop/**` and the other `guard.protectedPaths`, `.env*`, migrations already on base (in the folder of a post-merge step, or one `migrations.dirs` names), broad deletes |
-| Read-only steps | review, accept and packet: any write outside `.loop/`, any git write. These sessions also start without write tools |
+| Read-only steps | review, accept, packet and retro: any write outside `.loop/`, any git write. These sessions also start without write tools |
 | Hosting | Vercel settings writes |
 
-**Where a read-only step may write.** A review, acceptance or packet session keeps its evidence
+**Where a read-only step may write.** A review, acceptance, packet or retro session keeps its evidence
 under `.loop/`. A redirect (`>`, `>>`, `2>`, `&>`) or a `tee` passes when its target is there:
 
 | The line | Passes? | Why |
@@ -250,8 +250,9 @@ every `>` as a redirect and accepts only a target spelled out as the null device
 or a path through `.loop/`. What a program writes by itself (`node -e`, a script, `cp`) no command
 pattern can see: the check after the session, below, covers tracked files.
 
-**After every session** the runner checks what no command pattern can be trusted to catch, and
-stops the run (`.loop/STOP`, with an entry in `.loop/OWNER-ACTIONS.md`) if any fails:
+**After every session** the runner checks what no command pattern can be trusted to catch. The
+first two stop the run (`.loop/STOP`, with an entry in `.loop/OWNER-ACTIONS.md`) when they fail;
+the third counts a guard violation and lets the run go on:
 
 | Check | Why |
 | --- | --- |

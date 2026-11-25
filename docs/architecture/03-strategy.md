@@ -10,7 +10,7 @@
 | Validation        | Zod at every boundary                                                        |                          |
 | Hosting           | Vercel; base branch = dev site, production branch = live site                |                          |
 | Tests             | Vitest (coverage ratchet), Playwright + axe against a local production build |                          |
-| External services | Stub mode (`APP_ENV=preview`) so CI never calls them                         |                          |
+| External services | Stub mode (`APP_ENV=preview` with `STUB_MODE=1`) so CI never calls them      |                          |
 
 ## Key ideas
 

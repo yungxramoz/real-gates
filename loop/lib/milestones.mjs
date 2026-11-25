@@ -110,7 +110,7 @@ async function packetSession(L, m, plan) {
     ACCEPT_WORK: L.work.path(m, 'accept'), // what acceptance installed is still there for the packet
     ITEM_TABLE: items.map((i) => `- ${i.id} · ${i.title} · ${L.store.st(i.id).status}${L.store.st(i.id).prs?.length ? ` · PR ${L.store.st(i.id).prs.map((p) => '#' + p).join(', ')}` : ''}`).join('\n'),
     OWNER_ACTIONS: L.ownerActionsTail(60),
-    RETRO: retro && retro !== 'none' ? `The loop's retro for this milestone is in \`.loop/retros/${retro}.md\`: what went well, what went wrong, the action items and the impediments that wait for the owner (\`.loop/IMPEDIMENTS.md\`).` : 'No retro was held for this milestone.',
+    RETRO: retro && retro !== 'none' ? `The loop's retro for this milestone is in \`.loop/retros/${retro}.md\`: what went well, what went wrong, the action items and the impediments it recorded (\`.loop/IMPEDIMENTS.md\`: defects in the harness, nothing the owner is asked to do).` : 'No retro was held for this milestone.',
     ACCEPT_JSON: JSON.stringify({ ...readJson(path.join(L.paths.run, `accept-${m}.json`), { note: 'no acceptance run (no item of an accepted work type)' }), ...(L.store.S.accept[m]?.unverified ? { fixesNotReAccepted: 'These failures are from the last acceptance round. Their fix items merged through CI and review but were not re-tested: say so in the packet.' } : {}) }, null, 2),
   }, { cases: packetCases(L, plan) }));
   L.setStatus('packet', { id: m, title: `packet ${m}` });

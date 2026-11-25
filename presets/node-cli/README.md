@@ -34,5 +34,5 @@ stay. It refuses to run on a working tree with uncommitted changes, so `git chec
 - Backlog items use `"type": "command"` instead of `"ui": true`.
 - There is no `DESIGN.md`; `docs/CLI-CONVENTIONS.md` takes that place. The `/draft-design` skill stays
   in the repository (the skill check expects all five) but has nothing to do here.
-- npm instead of pnpm. No linter or formatter is set up: `npm run check` only checks that every
-  file parses. Adding one is a normal backlog item (it changes gate files, so the owner applies it).
+- npm instead of pnpm. No linter or formatter is set up: `npm run check` checks that every file
+  parses and runs the unit tests with coverage, nothing more. Adding one is a normal backlog item (it changes gate files, so the owner applies it).

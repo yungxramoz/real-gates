@@ -75,7 +75,7 @@ data and integrations → constraints (locale, accessibility, legal, budget) →
 must create. Question bank with recommended defaults: [reference/interview.md](reference/interview.md).
 
 Stop a topic when you could write its part of the brief without guessing. Do not ask about the
-stack: the template's preset fixes it.
+stack: `/setup-loop` chose it (`node loop/scripts/stack.mjs` shows it).
 
 Three things hold however complete the owner's first message looks:
 
@@ -123,7 +123,8 @@ directly: each must be covered by an item that refs its section; otherwise add a
 ### 8. Decisions and owner actions
 
 - `docs/DECISIONS.md`: one row per call made during shaping, including the defaults you chose
-  under rule 7. Append after the last row and continue its ID sequence.
+  under rule 7. Each gets a table row and a log bullet; the next free ID is in the last log
+  bullet.
 - `docs/OWNER-ACTIONS.md`: every account, DNS record, secret, payment or legal step only the owner
   can do, with when the loop needs it (milestone) and how to verify it.
 
@@ -145,4 +146,5 @@ If more than five guesses came back, run the builder check once more after the f
 Show a table of milestones with item counts and the first three items. Name the open owner
 actions. Propose committing on a branch `docs/shape-project` and opening a PR into the base branch;
 wait for a yes before `git push`. Recommend `/draft-design` next if any item has `ui: true` and
-there is no `DESIGN.md`.
+`DESIGN.md` has no accepted tokens yet (it is still the skeleton with its `draft-design`
+comments).

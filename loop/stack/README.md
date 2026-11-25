@@ -213,7 +213,7 @@ stack has words for an include.
 
 | Fragment | Used in | Says | Whose it is |
 | --- | --- | --- | --- |
-| `build-proof` | build, step 6 | which commands must pass locally, what tests new work needs, how a change is proven | the toolchain, then every product block for its own items |
+| `build-proof` | build, step 6 | which commands must pass locally, what tests new work needs, how a change is proven | the toolchain, then every other block that has one (a product block for its own items) |
 | `build-gate-files` | build, step 8 | in words, the files `gates` protects | the toolchain |
 | `review-drive` | review | how the reviewer starts the branch and uses it like a user | the product block |
 | `review-rubric` | review | what each score of the rubric means and what it is calibrated against | the product block |
@@ -271,8 +271,10 @@ where the others have something to say.
 **The names a project is called by.** `check`, `build`, `start` and `test:e2e` are what the
 loop, CI and a person run, and a pull request cannot change the scripts in `package.json`. The
 toolchain block owns those four. A framework block brings scripts of its own under them
-(`build:web`, `start:server`), and `scripts/run-scripts.mjs` runs the ones a project has: every
-`build:*` to build, the first `start:*` to start.
+(`build:web`, `start:server`), and `scripts/run-scripts.mjs` runs the ones a project has from a
+fixed list in the toolchain's `package.json`: `build` runs every one of `build:web` and
+`build:server`, `start` the first of `start:server` and `start:web`. A framework block with a new
+script name needs that list extended in the toolchain block.
 
 **Which blocks can be built with.** A toolchain block brings the base of the project:
 `package.json`, the configs, the CI workflow, `CLAUDE.md` and the docs pages. A stack is built on

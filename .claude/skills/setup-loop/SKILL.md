@@ -2,7 +2,7 @@
 name: setup-loop
 description: Sets up the unattended build loop in a clone of this template. In a fresh copy it first asks what is being built, recommends the stack blocks and lets the user choose them, then builds the project from that choice. Asks for the GitHub repo, branches, dev database project, forbidden projects, preview URL, notify topic and git author one question at a time, writes loop/loop.config.json and .env.example, creates the base branch, then proves the setup with a validator, a dry run and the LOOP-0 item. Use right after "Use this template", when the dry run or preflight reports config problems, or when the repo, branches, database or deploy URL change. Safe to run again.
 disable-model-invocation: true
-allowed-tools: Bash(node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"*) Bash(node loop/scripts/stack.mjs*) Bash(node scripts/build-stack.mjs * --dry-run*) Bash(node scripts/build-stack.mjs * --json*) Bash(node loop/run.mjs --dry-run*) Bash(node loop/run.mjs --status*) Bash(gh auth status*) Bash(gh repo view*) Bash(git status*) Bash(git branch*) Bash(git remote*) Bash(git ls-remote*) Bash(claude --version*)
+allowed-tools: Bash(node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"*) Bash(node loop/scripts/stack.mjs*) Bash(node scripts/apply-preset.mjs * --dry-run*) Bash(node scripts/build-stack.mjs * --dry-run*) Bash(node scripts/build-stack.mjs * --json*) Bash(node loop/run.mjs --dry-run*) Bash(node loop/run.mjs --status*) Bash(gh auth status*) Bash(gh repo view*) Bash(git status*) Bash(git branch*) Bash(git remote*) Bash(git ls-remote*) Bash(claude --version*)
 ---
 
 # Set up the loop
@@ -68,8 +68,14 @@ else the stack is chosen: show it in one line (`node loop/scripts/stack.mjs`) an
    marked, a draft marked as one, several selectable where a category holds several, "none"
    where it may be empty. Use the question tool when there is one. The user's choice stands,
    also against your recommendation.
-4. **Build.** The web profile needs nothing. The CLI profile is
-   `node scripts/apply-preset.mjs node-cli`. Any other list:
+4. **Build.** The web profile is the template as it stands: only remove `presets/` (with a
+   yes), so a later run sees the stack is chosen. The CLI profile:
+
+   ```bash
+   node scripts/apply-preset.mjs node-cli --dry-run
+   ```
+
+   Any other list:
 
    ```bash
    node scripts/build-stack.mjs --stack <block>,<block>,… --dry-run
@@ -163,7 +169,8 @@ asked.
 3. If `base` or `production` differ from the `branches:` filters in `.github/workflows/*.yml`,
    update the filters.
 4. Append owner actions (accounts, secrets, branch protection, host env vars) to
-   `docs/OWNER-ACTIONS.md`, one row each: what, where, why, and how to verify. Always include
+   `docs/OWNER-ACTIONS.md`, one `### OA-<n>` block each in the format the file shows: why,
+   where, the exact steps, and how to check it. Always include
    branch protection on `base`: require a pull request and the `ciCheck` status check, no direct
    pushes, no force-pushes, no required approvals (nobody approves the loop's PRs). Nobody
    reviews them either, so this is what stops a session's stray push at GitHub; the runner's

@@ -22,4 +22,4 @@ Loop sessions record small, reversible calls here instead of asking. Calls that 
 
 ## Log
 
-- D-001 added (built with real-gates) — template — affects `loop/`, `CLAUDE.md`. Next free ID: **D-002**
+- D-001 added (built with real-gates) — template — affects `loop/`, `CLAUDE.md`, `.github/workflows/`. Next free ID: **D-002**

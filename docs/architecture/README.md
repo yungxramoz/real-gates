@@ -22,5 +22,5 @@ matching page in the same PR. Two things hold it to that, with nobody watching:
 | 3   | [Solution strategy](03-strategy.md)         | Stack preset and key decisions                  | `/setup-loop`, then rarely                | 4 Solution strategy         |
 | 4   | [Building blocks](04-building-blocks.md)    | Module map from the folder tree                 | A new module or route group, same PR      | 5 Building block view       |
 | 5   | [Crosscutting concepts](05-crosscutting.md) | Auth, data access, errors, i18n, a11y, security | A changed rule, same PR                   | 8 Crosscutting concepts     |
-| 6   | [Decisions](06-decisions.md)                | Links into `docs/DECISIONS.md`, never copies    | Automatically: it is a link               | 9 Architecture decisions    |
+| 6   | [Decisions](06-decisions.md)                | Links into `docs/DECISIONS.md`, never copies    | Every new architecture decision           | 9 Architecture decisions    |
 | 7   | [Risks and tech debt](07-risks.md)          | Follow-ups and known gaps from packets          | `/sync-arc42` per milestone               | 11 Risks and technical debt |

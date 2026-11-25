@@ -119,25 +119,32 @@ Items: E1-1, E2-1, E2-2
 
 ## docs/DECISIONS.md
 
-Append after the last row and continue its ID sequence. One row per call:
+Follow "How to add one" at the top of the file. The next free ID is in the **last log bullet**;
+IDs have three digits (`D-002`) and are never reused. One table row per call:
 
 | Column | Content |
 |---|---|
-| ID | next free `D-<n>` |
-| Decision | the call, in one sentence |
+| ID | the next free `D-0nn` |
+| Decision | the call in bold, in one sentence, so a fresh session can act on it |
 | Why | the reason or source, in one sentence |
-| Revisit when | the condition that would change it, or "no" |
+| Affects | the files or areas it governs |
+
+Then one log bullet at the bottom: date, ID, a short summary, who, the files it affects, and the
+next free ID.
 
 ## docs/OWNER-ACTIONS.md
 
-One row per thing only the owner can do:
+One block per thing only the owner can do, under `## Open`, in the format the file shows:
 
-| Column | Content |
-|---|---|
-| Action | what to do, concretely |
-| Where | the service and the page in it |
-| Needed by | the milestone that blocks without it |
-| Verify | a command or observation that proves it is done |
+```markdown
+### OA-<n> — <short title>
+
+- **Why:** what is blocked until this is done (item IDs, the milestone that needs it)
+- **Where:** the account or dashboard
+- **Steps:** numbered, with the exact values to enter
+- **Check:** the command or page that proves it is done
+- [ ] done
+```
 
 ## Sizing items
 
