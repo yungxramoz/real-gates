@@ -25,7 +25,7 @@ The owner is the person who runs this repo and makes the product, design and rel
 
 - **Next.js (App Router) + TypeScript** (`strict`)
 - Supabase via `@supabase/ssr`, Zod at every boundary, Vitest + Playwright (with axe), pnpm
-- Deployed on Vercel. External services have a stub mode (`APP_ENV=preview`) so e2e runs in CI
+- Deployed on Vercel. External services have a stub mode (`APP_ENV=preview` with `STUB_MODE=1`) so e2e runs in CI
 - Locale <!-- shape-project: locale, e.g. en-GB -->, time zone <!-- shape-project: time zone -->, currency <!-- shape-project: currency or "none" -->
 - A change to the stack is a decision: record it in `docs/DECISIONS.md` first
 

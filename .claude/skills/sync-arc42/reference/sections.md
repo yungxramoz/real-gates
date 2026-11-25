@@ -17,7 +17,7 @@ arc42 section each stands for.
 | Goals | `01-goals.md` | 1 Introduction and goals | links to `docs/BRIEF.md` | `/shape-project` |
 | Context and scope | `02-context.md` | 3 Context and scope | external services the code calls, user groups | a new integration |
 | Solution strategy | `03-strategy.md` | 4 Solution strategy | the stack preset and the key decisions | `/setup-loop`, then rarely |
-| Building blocks | `04-building-blocks.md` | 5 Building block view | the folder tree under `src/` and `supabase/` | a new module or route group |
+| Building blocks | `04-building-blocks.md` | 5 Building block view | the paths `architecture.blocks` names in the stack (`node loop/scripts/stack.mjs`) | a new module or route group |
 | Crosscutting concepts | `05-crosscutting.md` | 8 Crosscutting concepts | auth, data access, errors, i18n, a11y, security rules in code | a changed rule |
 | Decisions | `06-decisions.md` | 9 Architecture decisions | links into `docs/DECISIONS.md` | every new architecture decision |
 | Risks and technical debt | `07-risks.md` | 11 Risks and technical debt | packet follow-ups, open gaps, held items | every milestone |
@@ -40,7 +40,10 @@ webhook route) that is not a node in the context diagram; a removed one that sti
 **Strategy**: a decision in the range that changes the stack, hosting, data store or the testing
 approach, not reflected here. Link the decision; one sentence of consequence.
 
-**Building blocks**: compare the module map with the tree:
+**Building blocks**: compare the module map with the tree. The stack's `architecture.blocks`
+names which paths are building blocks (for the web profile `src/*/` and `src/lib/*`, for the CLI
+profile `bin/*` and `src/*`); list those, plus the migrations folder if the stack has one. For
+the web profile:
 
 ```bash
 git ls-files src supabase | cut -d/ -f1-3 | sort -u
@@ -58,10 +61,11 @@ has.
 one line each:
 
 ```markdown
-- [D-12](../DECISIONS.md#d-12) Data access only through server actions; see Crosscutting concepts.
+- [D-012](../DECISIONS.md) Data access only through server actions; see Crosscutting concepts.
 ```
 
-Check that the anchor matches the heading or row ID format `docs/DECISIONS.md` uses.
+`docs/DECISIONS.md` is a table, so the link has no anchor. Use the ID exactly as the table writes
+it (`D-012`): `scripts/arch-check.mjs` fails on an ID the file does not have.
 
 **Risks**: follow-ups from the milestone packet, items that needed a human, held items, known
 gaps; each with impact, likelihood and the item or decision that would close it. Remove risks that

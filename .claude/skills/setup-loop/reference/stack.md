@@ -18,7 +18,7 @@ them, how to show the choice, and what to run for each outcome.
 | What you find | The project's stack | Do |
 | --- | --- | --- |
 | `loop/loop.config.json` has a `stack` list | chosen, the project was built from blocks | Skip the step. Show the stack in one line |
-| No `presets/` folder | chosen, a preset was applied | Skip the step. Show the stack in one line |
+| No `presets/` folder | chosen: a profile was taken or a preset applied | Skip the step. Show the stack in one line |
 | A `presets/` folder, `profile` is `next-supabase-vercel`, no `stack` | not chosen: this is a fresh copy of the template | Run the step |
 
 `node loop/scripts/stack.mjs` prints the stack and what it adds up to.
@@ -89,8 +89,8 @@ changed.
 
 | The chosen blocks are | Run | Then |
 | --- | --- | --- |
-| The profile `next-supabase-vercel` | nothing: the template as it stands is that project | Continue with step 1 |
-| The profile `node-cli` | `node scripts/apply-preset.mjs node-cli` | Commit, continue with step 1 |
+| The profile `next-supabase-vercel` | the template as it stands is that project. Only remove `presets/` (show `git rm -r -q presets`, ask for a yes), so a later run of this skill sees the stack is chosen | Commit, continue with step 1 |
+| The profile `node-cli` | `node scripts/apply-preset.mjs node-cli --dry-run`, show it, ask for a yes, then the same without `--dry-run` | Commit, continue with step 1 |
 | Any other list | `node scripts/build-stack.mjs --stack <a>,<b>,… --dry-run`, then the same without `--dry-run` | See below |
 
 For a built stack:

@@ -19,7 +19,7 @@ flowchart TD
   gate -- "pass" --> ci{"CI green?"}
   gate -- "pass" --> review{"Independent review<br/>read-only, every score ≥ 7"}
   ci -- "red" --> fixci["One fix session<br/>failing log and findings"] --> gate
-  ci -- "cancelled, no runner" --> rerun["Re-run, never 'fix'"] --> ci
+  ci -- "cancelled, no runner" --> rerun["Re-run, up to 3 times"] --> ci
   review -- "changes" --> fixci
   ci -- "green" --> both{"Green and approved<br/>on the same commit?"}
   review -- "approve" --> both
@@ -67,8 +67,9 @@ broke something is recorded once, without anything waiting for you
 | 4    | `/draft-design` (a project with screens)                                                                | `DESIGN.md` and `design/mocks/accepted/`                                                                                  |
 | 5    | `pnpm loop --dry-run`, then `pnpm loop --once`, then `pnpm loop`                                        | The app, merged item by item, with a packet per milestone                                                                 |
 
-You need Node 22 or newer, pnpm, `gh` logged in, and Claude Code logged in. The preflight checks
-the versions and tells you what is missing. Details: [loop/README.md](loop/README.md).
+You need Node 22 or newer, pnpm, `gh` logged in, and Claude Code logged in. `/setup-loop` checks
+them and tells you what is missing; the loop's preflight checks Claude Code, git and `gh` again at
+every start. Details: [loop/README.md](loop/README.md).
 
 During the run the loop keeps `docs/architecture/` true itself: a check fails every PR whose code
 the pages do not name. After the app is done, `/run-retro` carries what the run learned and the
@@ -104,7 +105,7 @@ flowchart TB
   L4["4 · Project — written by you and the skills<br/>BRIEF · REQUIREMENTS · DECISIONS · LESSONS · DESIGN.md · arc42 · backlog.json"]
   L3["3 · Skills — .claude/skills/<br/>/setup-loop · /shape-project · /draft-design · /run-retro · /sync-arc42"]
   L2a["2a · Stack blocks — loop/stack/&lt;category&gt;/&lt;name&gt;/<br/>check commands · gate files · ratchets · work types · guard packs · adapter choice · prompt fragments"]
-  L2b["2b · App skeleton and CI — repo root, or presets/&lt;name&gt;/files/<br/>the app · its CI job · coverage · e2e · AC trace"]
+  L2b["2b · App skeleton and CI — repo root, a block's files/, or presets/node-cli/files/<br/>the app · its CI job · coverage · e2e · AC trace"]
   L1b["1b · Adapters and guard packs — loop/adapters/, loop/guard/packs/<br/>forge · deploy probe · post-merge · notify · tool rules"]
   L1["1a · Core loop — human-owned, never edited by the loop<br/>loop/run.mjs · engine · gates · guard core · prompts · state · budgets"]
   L4 --> L3 --> L2a --> L1b --> L1
@@ -112,14 +113,14 @@ flowchart TB
   L2a --> L1
 ```
 
-| Layer                | Where                                                                 | Changes                                                                 |
-| -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 1a · Core loop       | `loop/`                                                               | Never by the loop. A change it wants ships as `loop/patches/<id>.patch` |
-| 1b · Adapters, packs | `loop/adapters/`, `loop/guard/packs/`                                 | When a new forge, host or tool is supported                             |
-| 2a · Stack blocks    | `loop/stack/<category>/<name>/`, profiles in `loop/profiles/`         | Per tool; a project lists its blocks in `loop/loop.config.json`         |
-| 2b · App skeleton    | `src/`, `tests/`, `.github/`, `supabase/`; other stacks in `presets/` | Per stack                                                               |
-| 3 · Skills           | `.claude/skills/`                                                     | Rarely. Hidden from the loop (`disable-model-invocation: true`)         |
-| 4 · Project          | `docs/`, `DESIGN.md`, `CLAUDE.md`, `loop/backlog.json`                | Every project                                                           |
+| Layer                | Where                                                                             | Changes                                                                 |
+| -------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 1a · Core loop       | `loop/`                                                                           | Never by the loop. A change it wants ships as `loop/patches/<id>.patch` |
+| 1b · Adapters, packs | `loop/adapters/`, `loop/guard/packs/`                                             | When a new forge, host or tool is supported                             |
+| 2a · Stack blocks    | `loop/stack/<category>/<name>/`, profiles in `loop/profiles/`                     | Per tool; a project lists its blocks in `loop/loop.config.json`         |
+| 2b · App skeleton    | `src/`, `tests/`, `.github/`, `supabase/`; other stacks from the blocks' `files/` | Per stack                                                               |
+| 3 · Skills           | `.claude/skills/`                                                                 | Rarely. Hidden from the loop (`disable-model-invocation: true`)         |
+| 4 · Project          | `docs/`, `DESIGN.md`, `CLAUDE.md`, `loop/backlog.json`                            | Every project                                                           |
 
 ## Where to watch a run
 
@@ -140,17 +141,17 @@ flowchart TB
 
 ## What is in the box
 
-| Path                                  | What                                                                                                                                           |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loop/`                               | Runner, guard, rule table, prompts, adapters, test suite. [loop/README.md](loop/README.md)                                                     |
-| `.claude/skills/`                     | The five skills: `/setup-loop`, `/shape-project`, `/draft-design`, `/run-retro`, `/sync-arc42`                                                 |
-| `docs/`                               | Brief, requirements, backlog, decisions, lessons, owner actions, retro minutes, [architecture](docs/architecture/README.md)                    |
-| `DESIGN.md`, `design/mocks/accepted/` | The design system and the mocks the reviewer scores against                                                                                    |
-| `CLAUDE.md`                           | Project rules every session reads                                                                                                              |
-| `examples/sample-backlog/`            | A tiny sample project to read before you shape your own                                                                                        |
-| `presets/`                            | Project files of other stacks, swapped in by `scripts/apply-preset.mjs`: [a Node.js command-line tool](presets/node-cli/README.md)             |
-| `scripts/`                            | The AC gate, the architecture check, the preset and template-sync scripts, and the scan that keeps emails, keys and names out of a public repo |
-| `WHY.md`                              | The incident behind each gate                                                                                                                  |
+| Path                                  | What                                                                                                                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loop/`                               | Runner, guard, rule table, prompts, adapters, test suite. [loop/README.md](loop/README.md)                                                                                                                  |
+| `.claude/skills/`                     | The five skills: `/setup-loop`, `/shape-project`, `/draft-design`, `/run-retro`, `/sync-arc42`                                                                                                              |
+| `docs/`                               | Brief, requirements, backlog, decisions, lessons, owner actions, retro minutes, [architecture](docs/architecture/README.md)                                                                                 |
+| `DESIGN.md`, `design/mocks/accepted/` | The design system and the mocks the reviewer scores against                                                                                                                                                 |
+| `CLAUDE.md`                           | Project rules every session reads                                                                                                                                                                           |
+| `examples/sample-backlog/`            | A tiny sample project to read before you shape your own                                                                                                                                                     |
+| `presets/`                            | The CLI profile's project files, swapped in by `scripts/apply-preset.mjs`: [a Node.js command-line tool](presets/node-cli/README.md). Any other stack is built from its blocks by `scripts/build-stack.mjs` |
+| `scripts/`                            | The AC gate, the architecture and skill checks, the stack, preset and template-sync scripts, and the scan that keeps emails, keys and names out of a public repo                                            |
+| `WHY.md`                              | The incident behind each gate                                                                                                                                                                               |
 
 ## The talk
 

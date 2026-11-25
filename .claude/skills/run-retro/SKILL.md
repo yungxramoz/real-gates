@@ -146,8 +146,11 @@ the copy (never with `git checkout`, which would also drop other uncommitted wor
 
 Write `.loop/retro/template-lessons.md` in the format in
 [reference/template-lessons.md](reference/template-lessons.md). Then re-read it against rule 4 and
-remove anything that identifies the project. If the repo has `scripts/sanitize-scan.mjs`, run it on
-the file and fix every finding.
+remove anything that identifies the project. If the repo has `scripts/sanitize-scan.mjs`, scan the
+file with it. The scan reads only files git tracks or would add, and `.loop/` is ignored, so give
+it a folder of its own: copy the file into a new, empty folder outside the repo, run `git init -q`
+there, then `node scripts/sanitize-scan.mjs --template <that folder>`. Fix every finding in
+`.loop/retro/template-lessons.md` and scan again until it is clean.
 
 ### 8. Hand off
 

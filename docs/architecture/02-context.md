@@ -8,7 +8,7 @@ flowchart LR
   user(["User<br/>browser, phone"]) -->|HTTPS| app["The app<br/>Next.js on Vercel"]
   owner(["Owner"]) -->|admin pages| app
   app -->|SQL via Supabase client, RLS| db[("Supabase<br/>Postgres + Auth")]
-  app -.->|"stubbed when APP_ENV=preview"| ext["External services<br/>email, payments …"]
+  app -.->|"stubbed when APP_ENV=preview and STUB_MODE=1"| ext["External services<br/>email, payments …"]
   ci["GitHub Actions<br/>ci"] -->|build, test, e2e on a local build| app
 ```
 

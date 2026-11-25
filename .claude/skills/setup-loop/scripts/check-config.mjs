@@ -3,7 +3,7 @@
 //
 // It loads loop/loop.config.json through the runner's own module (loop/lib/config.mjs), so the
 // answer matches what the runner's preflight will say, then checks what the config cannot know:
-// .env.example, the git remote and branches, gh login, the Claude Code version floor, Node and the
+// .env.example, the CLAUDE.md placeholders, the git remote and branches, gh login, the Claude Code version floor, Node and the
 // Playwright browsers. It never prints secret values and never changes anything.
 //
 // Usage: node check-config.mjs [--root <repo dir>] [--config-only]
@@ -20,6 +20,8 @@ const HELP = `Usage: node check-config.mjs [--root <repo dir>] [--config-only]
 Checks that this clone is ready for the unattended loop:
   - loop/loop.config.json loads and loop/lib/config.mjs reports no config problems
   - .env.example names every secret the config points at, with no value filled in
+  - CLAUDE.md has no setup-loop placeholder left, and names the repo, dev URL and database refs
+    the config holds
   - git remote "origin" exists and has the base and production branches
   - gh is logged in and can see the configured repo
   - Claude Code is at least the version floor in loop/lib/config.mjs
@@ -138,6 +140,28 @@ function checkEnvExample(root, cfg) {
   if (!problems.some((p) => p.startsWith('.env.example'))) ok('.env.example', `names ${names.join(', ')}`);
 }
 
+/**
+ * CLAUDE.md names the repo, the dev site and the databases every session works with: no blank
+ * left, and none of them out of date after the config changed.
+ */
+function checkClaudeMd(root, cfg) {
+  const file = path.join(root, 'CLAUDE.md');
+  if (!fs.existsSync(file)) return;
+  const text = fs.readFileSync(file, 'utf8');
+  const keys = [...text.matchAll(/<!--\s*setup-loop:\s*([^>]*?)\s*-->/g)].map((m) => m[1]);
+  if (keys.length) return problem('CLAUDE.md', `${keys.length} setup-loop placeholder(s) not filled (${[...new Set(keys)].join(', ')}); setup-loop step 7`);
+  // Values distinct enough to look for: a branch name like "main" is in the text anyway.
+  const values = [
+    ['repo', cfg?.repo],
+    ['deploy.devUrl', cfg?.deploy?.devUrl],
+    ['guard.allowedDbProject', cfg?.guard?.allowedDbProject],
+    ...(cfg?.guard?.forbiddenRefs || []).map((r) => ['guard.forbiddenRefs', r]),
+  ].filter(([, v]) => typeof v === 'string' && v);
+  const missing = values.filter(([, v]) => !text.includes(v));
+  if (missing.length) problem('CLAUDE.md', `does not name ${missing.map(([k, v]) => `${k} "${v}"`).join(', ')} from loop/loop.config.json; update it (setup-loop step 7)`);
+  else ok('CLAUDE.md', 'its setup values match loop/loop.config.json');
+}
+
 function checkGit(root, cfg) {
   const remote = run('git remote get-url origin', root);
   if (!remote.found) return problem('git', 'git is not on PATH');
@@ -247,6 +271,7 @@ async function main() {
 
   const { cfg, mod } = await checkConfig(root);
   if (cfg) checkEnvExample(root, cfg);
+  checkClaudeMd(root, cfg);
   if (!args.configOnly) {
     checkNode();
     if (cfg) checkGit(root, cfg);

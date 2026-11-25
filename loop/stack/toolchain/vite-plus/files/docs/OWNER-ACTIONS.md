@@ -1,8 +1,8 @@
 # Owner actions
 
 Things only the owner can do: they need the owner's accounts, money, legal identity or a call that
-is theirs. Written by `/shape-project` at setup time. Asks raised **during a run** go to
-`.loop/OWNER-ACTIONS.md`, which the loop writes and `pnpm loop --status` points to.
+is theirs. Written by `/setup-loop` and `/shape-project` at setup time. Asks raised **during a
+run** go to `.loop/OWNER-ACTIONS.md`, which the loop writes and `.loop/REPORT.md` points to.
 
 Each action says what to do with exact clicks and values, so nobody has to guess. Tick it when done
 and note how it was checked.

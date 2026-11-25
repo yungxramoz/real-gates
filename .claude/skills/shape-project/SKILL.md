@@ -1,6 +1,6 @@
 ---
 name: shape-project
-description: Shapes an app idea into the documents the unattended loop builds from. Interviews the owner one question at a time, then writes docs/BRIEF.md, docs/REQUIREMENTS.md with numbered testable acceptance criteria (AC-n.n), milestones, loop/backlog.json items that point at those docs, seed rows in docs/DECISIONS.md and docs/OWNER-ACTIONS.md, validates the backlog, and ends with a builder check by a fresh subagent. Use when starting a project from the template, when the owner describes what to build, wants to brainstorm, plan or scope an app, writes requirements or user stories, or adds an epic or milestone.
+description: Shapes an app idea into the documents the unattended loop builds from. Interviews the owner one question at a time, then writes docs/BRIEF.md, docs/REQUIREMENTS.md with numbered testable acceptance criteria (AC-n.n), milestones, loop/backlog.json items that point at those docs, the project's summary, locale and product rules in CLAUDE.md, the goals page of docs/architecture, seed rows in docs/DECISIONS.md and docs/OWNER-ACTIONS.md, validates the backlog, and ends with a builder check by a fresh subagent. Use when starting a project from the template, when the owner describes what to build, wants to brainstorm, plan or scope an app, writes requirements or user stories, or adds an epic or milestone.
 disable-model-invocation: true
 argument-hint: "[epic or milestone to add]"
 allowed-tools: Bash(node "${CLAUDE_SKILL_DIR}/scripts/check-backlog.mjs"*)
@@ -55,6 +55,7 @@ Shaping progress:
 - [ ] 4. Write docs/BRIEF.md
 - [ ] 5. Write docs/REQUIREMENTS.md (epics, stories, ACs)
 - [ ] 6. Cut milestones; write loop/backlog.json and docs/BACKLOG.md
+- [ ] 6b. Fill the shape-project placeholders in CLAUDE.md and docs/architecture/01-goals.md
 - [ ] 7. Validate: run check-backlog, fix, repeat until OK
 - [ ] 8. Seed docs/DECISIONS.md, write docs/OWNER-ACTIONS.md
 - [ ] 9. Builder check with a fresh subagent
@@ -75,7 +76,7 @@ data and integrations → constraints (locale, accessibility, legal, budget) →
 must create. Question bank with recommended defaults: [reference/interview.md](reference/interview.md).
 
 Stop a topic when you could write its part of the brief without guessing. Do not ask about the
-stack: the template's preset fixes it.
+stack: `/setup-loop` chose it (`node loop/scripts/stack.mjs` shows it).
 
 Three things hold however complete the owner's first message looks:
 
@@ -109,6 +110,13 @@ Formats and examples for every file: [reference/doc-formats.md](reference/doc-fo
   stack with other work types (`node loop/scripts/stack.mjs` lists them), set `type` instead.
   `dependsOn` only for real build order.
 - `docs/BACKLOG.md`: the milestones in prose: goal, what "done" looks like, the items in order.
+- `CLAUDE.md`: replace every `<!-- shape-project: … -->` placeholder: the one sentence on what it
+  is and for whom, the locale, time zone and currency ("none" when no money is involved), and
+  under "Product rules" the few rules a builder would easily miss, one bullet each (brand rules
+  from the interview go here too). Leave the `setup-loop:` placeholders and every other line as
+  they are.
+- `docs/architecture/01-goals.md`: the three quality goals that win a trade-off, in order, and
+  one stakeholder row per user group of the brief, replacing its examples and placeholder.
 
 ### 7. Validate
 
@@ -123,7 +131,8 @@ directly: each must be covered by an item that refs its section; otherwise add a
 ### 8. Decisions and owner actions
 
 - `docs/DECISIONS.md`: one row per call made during shaping, including the defaults you chose
-  under rule 7. Append after the last row and continue its ID sequence.
+  under rule 7. Each gets a table row and a log bullet; the next free ID is in the last log
+  bullet.
 - `docs/OWNER-ACTIONS.md`: every account, DNS record, secret, payment or legal step only the owner
   can do, with when the loop needs it (milestone) and how to verify it.
 
@@ -145,4 +154,5 @@ If more than five guesses came back, run the builder check once more after the f
 Show a table of milestones with item counts and the first three items. Name the open owner
 actions. Propose committing on a branch `docs/shape-project` and opening a PR into the base branch;
 wait for a yes before `git push`. Recommend `/draft-design` next if any item has `ui: true` and
-there is no `DESIGN.md`.
+`DESIGN.md` has no accepted tokens yet (it is still the skeleton with its `draft-design`
+comments).

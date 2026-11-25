@@ -1,8 +1,8 @@
 ---
 name: setup-loop
-description: Sets up the unattended build loop in a clone of this template. In a fresh copy it first asks what is being built, recommends the stack blocks and lets the user choose them, then builds the project from that choice. Asks for the GitHub repo, branches, dev database project, forbidden projects, preview URL, notify topic and git author one question at a time, writes loop/loop.config.json and .env.example, creates the base branch, then proves the setup with a validator, a dry run and the LOOP-0 item. Use right after "Use this template", when the dry run or preflight reports config problems, or when the repo, branches, database or deploy URL change. Safe to run again.
+description: Sets up the unattended build loop in a clone of this template. In a fresh copy it first asks what is being built, recommends the stack blocks and lets the user choose them, then builds the project from that choice. Asks for the GitHub repo, branches, dev database project, forbidden projects, preview URL, notify topic and git author one question at a time, writes loop/loop.config.json, .env.example and the CLAUDE.md placeholders, creates the base branch, then proves the setup with a validator, a dry run and the LOOP-0 item. Use right after "Use this template", when the dry run or preflight reports config problems, or when the repo, branches, database or deploy URL change. Safe to run again.
 disable-model-invocation: true
-allowed-tools: Bash(node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"*) Bash(node loop/scripts/stack.mjs*) Bash(node scripts/build-stack.mjs * --dry-run*) Bash(node scripts/build-stack.mjs * --json*) Bash(node loop/run.mjs --dry-run*) Bash(node loop/run.mjs --status*) Bash(gh auth status*) Bash(gh repo view*) Bash(git status*) Bash(git branch*) Bash(git remote*) Bash(git ls-remote*) Bash(claude --version*)
+allowed-tools: Bash(node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"*) Bash(node loop/scripts/stack.mjs*) Bash(node scripts/apply-preset.mjs * --dry-run*) Bash(node scripts/build-stack.mjs * --dry-run*) Bash(node scripts/build-stack.mjs * --json*) Bash(node loop/run.mjs --dry-run*) Bash(node loop/run.mjs --status*) Bash(gh auth status*) Bash(gh repo view*) Bash(git status*) Bash(git branch*) Bash(git remote*) Bash(git ls-remote*) Bash(claude --version*)
 ---
 
 # Set up the loop
@@ -21,7 +21,10 @@ Done means: `node "${CLAUDE_SKILL_DIR}/scripts/check-config.mjs"` prints `ready`
    starting the loop. Show the exact command, wait for a yes. The user runs interactive logins
    (`gh auth login`, `claude` → `/login`) themselves.
 4. **Write only these files**: `loop/loop.config.json`, `.env.example`, the `branches:` filters in
-   `.github/workflows/*.yml`, and new rows in `docs/OWNER-ACTIONS.md`. Never edit `loop/run.mjs`,
+   `.github/workflows/*.yml`, new entries in `docs/OWNER-ACTIONS.md`, and the setup
+   values in `CLAUDE.md`: its `<!-- setup-loop: … -->` placeholders, and on a later run the
+   values that replaced them (the project name, the Environments table, the forbidden refs in
+   database rule 1). Nothing else in that file. Never edit `loop/run.mjs`,
    `loop/lib/`, `loop/guard*` or `loop/backlog.json`. Step 0 is the one exception: there
    `scripts/build-stack.mjs` or `scripts/apply-preset.mjs` writes the project's files, after the
    user said yes to its dry run. You never write those files yourself.
@@ -42,11 +45,11 @@ Setup progress:
 - [ ] 0. Stack: in a fresh copy of the template, choose the blocks and build the project
 - [ ] 1. Baseline: run the validator, read the current config
 - [ ] 2. Tools: Node, Claude Code, gh, dependencies installed, a browser for the tests if the stack uses one
-- [ ] 3. Repo and branches (repo, base, production, ciCheck)
-- [ ] 4. Database (allowed project, forbidden projects, DB URL variable), if the stack has one
+- [ ] 3. Project name, repo and branches (repo, base, production, ciCheck)
+- [ ] 4. Database (allowed project, forbidden projects, schema, DB URL variable), if the stack has one
 - [ ] 5. Deploy (dev URL, health path, bypass secret variable), if the stack deploys
 - [ ] 6. Notify topic and git author
-- [ ] 7. Write the config, .env.example, CI branch filters, owner actions
+- [ ] 7. Write the config, .env.example, CI branch filters, owner actions, the CLAUDE.md placeholders
 - [ ] 8. Validate: run check-config, fix, repeat until "ready"
 - [ ] 9. Dry run: node loop/run.mjs --dry-run
 - [ ] 10. LOOP-0: commit the setup, offer to run the first item
@@ -68,8 +71,14 @@ else the stack is chosen: show it in one line (`node loop/scripts/stack.mjs`) an
    marked, a draft marked as one, several selectable where a category holds several, "none"
    where it may be empty. Use the question tool when there is one. The user's choice stands,
    also against your recommendation.
-4. **Build.** The web profile needs nothing. The CLI profile is
-   `node scripts/apply-preset.mjs node-cli`. Any other list:
+4. **Build.** The web profile is the template as it stands: only remove `presets/` (with a
+   yes), so a later run sees the stack is chosen. The CLI profile:
+
+   ```bash
+   node scripts/apply-preset.mjs node-cli --dry-run
+   ```
+
+   Any other list:
 
    ```bash
    node scripts/build-stack.mjs --stack <block>,<block>,… --dry-run
@@ -108,10 +117,11 @@ MCP servers: loop sessions see only servers in the repo's own `.mcp.json` (the r
 `--strict-mcp-config`). Run `claude mcp list` and tell the user which personal servers the loop will
 *not* see. Details and the isolation preflight: [reference/environment.md](reference/environment.md).
 
-### 3. Repo and branches
+### 3. Project name, repo and branches
 
 Ask, in this order, with the recommendation from [reference/config-fields.md](reference/config-fields.md):
-`repo` (recommend the output of `gh repo view --json nameWithOwner -q .nameWithOwner`), `base`
+the project name as people say it (recommend the repo's name in words; it only goes into
+`CLAUDE.md`), `repo` (recommend the output of `gh repo view --json nameWithOwner -q .nameWithOwner`), `base`
 (recommend `develop`), `production` (recommend `main`). `ciCheck` must equal the job name in
 `.github/workflows/ci.yml` (the preset uses `ci`); read it, don't ask.
 
@@ -131,7 +141,9 @@ The preset's post-merge step applies migrations to **one** dev database. Ask:
 1. `guard.allowedDbProject`: the dev project's ref. Recommend a dedicated dev project, never
    production.
 2. `guard.forbiddenRefs`: every other project ref on the same account, production first.
-3. The DB URL variable name (`postMerge[0].dbUrlEnv`, default `DEV_DB_URL`). Keep the default.
+3. `guard.dbSchema`: the one schema the app's tables live in. Recommend a schema of the app's own,
+   never `public`. Left empty, the guard lets a write touch any schema except the platform's.
+4. The DB URL variable name (`postMerge[0].dbUrlEnv`, default `DEV_DB_URL`). Keep the default.
 
 Where to find refs, and what to do when the project has no database:
 [reference/config-fields.md](reference/config-fields.md#database).
@@ -163,12 +175,19 @@ asked.
 3. If `base` or `production` differ from the `branches:` filters in `.github/workflows/*.yml`,
    update the filters.
 4. Append owner actions (accounts, secrets, branch protection, host env vars) to
-   `docs/OWNER-ACTIONS.md`, one row each: what, where, why, and how to verify. Always include
+   `docs/OWNER-ACTIONS.md`, one `### OA-<n>` block each in the format the file shows: why,
+   where, the exact steps, and how to check it. Always include
    branch protection on `base`: require a pull request and the `ciCheck` status check, no direct
    pushes, no force-pushes, no required approvals (nobody approves the loop's PRs). Nobody
    reviews them either, so this is what stops a session's stray push at GitHub; the runner's
    after-session check only notices it afterwards. The preflight asks GitHub and refuses a real
    run while the base branch is unprotected (the dry run warns).
+5. Replace every `<!-- setup-loop: <key> -->` placeholder in `CLAUDE.md` with its value: `project
+   name` with the name from step 3, every other key with that value from the config (`gitAuthor`
+   as `name <email>`, `guard.forbiddenRefs` as a list in backticks). A value that is empty
+   because the stack does not need it (no database, nothing deployed) becomes "none". On a later
+   run the placeholders are gone: update those same places wherever a value changed in this run.
+   Leave the `shape-project:` placeholders to `/shape-project`.
 
 ### 8. Validate
 

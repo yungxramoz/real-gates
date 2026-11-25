@@ -1,8 +1,8 @@
 # Owner actions
 
 Things only the owner can do: they need the owner's accounts, money, legal identity or a call that
-is theirs. Written by `/shape-project` at setup time. Asks raised **during a run** go to
-`.loop/OWNER-ACTIONS.md`, which the loop writes and `pnpm loop --status` points to.
+is theirs. Written by `/setup-loop` and `/shape-project` at setup time. Asks raised **during a
+run** go to `.loop/OWNER-ACTIONS.md`, which the loop writes and `.loop/REPORT.md` points to.
 
 Each action says what to do with exact clicks and values, so nobody has to guess. Tick it when done
 and note how it was checked.
@@ -22,7 +22,7 @@ and note how it was checked.
 ## Open
 
 <!-- shape-project: accounts, DNS, secrets, legal content, decisions only the owner can make.
-Typical ones for this preset:
+Typical ones for the web profile (Next.js, Supabase, Vercel); another stack has its own:
 - Connect the repo to a Vercel project; base branch deploys the dev site.
 - Create a Vercel protection-bypass secret and store it as the VERCEL_BYPASS environment variable.
 - Create the dev Supabase project; store its database URL as the DEV_DB_URL environment variable.
