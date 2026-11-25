@@ -442,8 +442,12 @@ describe('the Vite+ toolchain keeps its rules although every tool reads one conf
     // Vite+ in a project on that toolchain, plain Vite in the template itself
     const loader = (await import('vite-plus').catch(() => null)) ? 'vite-plus' : (await import('vite').catch(() => null)) ? 'vite' : null;
     if (!loader) return t.skip('neither Vite+ nor Vite is installed in this repository: the check needs their config loader');
-    // inside the repository, so the config's import of Vite resolves; under .loop/, which git ignores
-    fs.mkdirSync(path.join(REPO, '.loop'), { recursive: true });
+    // inside the repository, so the config's import of Vite resolves; under .loop/, which git
+    // ignores. A .loop/ this test made goes again: a clean checkout has none.
+    if (!fs.existsSync(path.join(REPO, '.loop'))) {
+      fs.mkdirSync(path.join(REPO, '.loop'));
+      tmp.push(path.join(REPO, '.loop'));
+    }
     const root = fs.mkdtempSync(path.join(REPO, '.loop', 'check-gates-'));
     tmp.push(root);
     fs.cpSync(files, root, { recursive: true });

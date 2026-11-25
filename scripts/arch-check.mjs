@@ -15,7 +15,9 @@
  *    page has its path, or a path inside it, in backticks. Test files, type declarations and
  *    dotfiles are not blocks.
  * 2. **Paths.** Every repository path the building-blocks page names in backticks exists, spelled
- *    with the same capitals.
+ *    with the same capitals. A path under a folder git ignores (the runner's `.loop/`,
+ *    `node_modules/`) is not a repository path: whether it exists depends on the machine, and the
+ *    check gives the same answer on every checkout.
  * 3. **Decisions.** Every decision ID a page names (`D-012`) is a row in `docs/DECISIONS.md`.
  * 4. **Links.** Every relative link on a page leads to a file that exists.
  *
@@ -29,6 +31,7 @@
  * Exits 1 on any problem, and when the pages are missing. Node built-ins only.
  */
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -102,6 +105,15 @@ export function existsExactly(root, rel) {
     dir = join(dir, segment);
   }
   return true;
+}
+
+/**
+ * Whether git ignores this top-level name in `root`. Outside a git repository, or without git,
+ * nothing is ignored.
+ */
+export function ignoredByGit(root, name) {
+  const r = spawnSync('git', ['check-ignore', '-q', '--', name], { cwd: root, encoding: 'utf8' });
+  return r.status === 0;
 }
 
 /** The blocks a pattern finds in the tree, as repository paths. */
@@ -217,11 +229,18 @@ export function checkArchitecture({ root, blocks = [] }) {
   const file = `${PAGES}/${blockPage}`;
   const named = namedPaths(readFileSync(join(dir, blockPage), 'utf8'));
 
-  // what the page names must exist; a text whose first name is nothing in the repository is not a path
+  // what the page names must exist; a text whose first name is nothing in the repository, or a
+  // folder git ignores, is not a path in the repository
   const reported = new Set();
+  const ignored = new Map();
+  const isIgnored = (first) => {
+    if (!ignored.has(first)) ignored.set(first, ignoredByGit(root, first));
+    return ignored.get(first);
+  };
   for (const { path, line } of named) {
-    if (!path.includes('/') || !existsExactly(root, path.split('/')[0]) || reported.has(path))
-      continue;
+    if (!path.includes('/') || reported.has(path)) continue;
+    const first = path.split('/')[0];
+    if (!existsExactly(root, first) || isIgnored(first)) continue;
     counts.paths++;
     if (existsExactly(root, path)) continue;
     reported.add(path);

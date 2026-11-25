@@ -171,6 +171,24 @@ test('only what looks like a path in this repository is read as one', () => {
   );
 });
 
+test('a path under a folder git ignores is not checked: the answer is the same with or without a run', () => {
+  const page = `# 4 · Building blocks\n\n\`bin/cli.mjs\` and \`src/cli.mjs\` read \`.loop/state.json\` and \`.loop/lock\`, and \`src/gone.mjs\`.\n`;
+  const root = repo({ 'docs/architecture/04-building-blocks.md': page, '.gitignore': '.loop/\n' });
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: root }).status, 0);
+  const before = texts(checkArchitecture({ root, blocks: CLI }));
+  // a loop ran here: .loop/ exists, without the files the page names
+  fs.mkdirSync(path.join(root, '.loop', 'work'), { recursive: true });
+  assert.deepEqual(texts(checkArchitecture({ root, blocks: CLI })), before);
+  assert.equal(before.length, 1, 'a path that is not ignored is still checked');
+  assert.match(before[0], /`src\/gone\.mjs` is named here and is not in the repository/);
+  // the same folder, not ignored, is a folder like any other
+  fs.rmSync(path.join(root, '.gitignore'));
+  assert.match(
+    texts(checkArchitecture({ root, blocks: CLI })).join('\n'),
+    /`\.loop\/state\.json` is named here/,
+  );
+});
+
 test('a decision ID a page names must be a row in docs/DECISIONS.md', () => {
   const root = repo({
     'docs/architecture/06-decisions.md': `# 6 · Decisions\n\n| Decision | Topic |\n| --- | --- |\n| [D-001](../DECISIONS.md) | built |\n| [D-007](../DECISIONS.md) | never recorded |\n\nSee also D-002, D-001 and AD-9 and D-7x.\n`,
