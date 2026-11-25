@@ -50,11 +50,20 @@ const WEB_NOT_DEPLOYED = ['forge/github', 'toolchain/pnpm-vitest', 'product/web-
 
 test('a web UI that is not deployed is accepted on a build of the merged base, started locally', async () => {
   const sb = box({ stack: WEB_NOT_DEPLOYED, backlog: { milestones: ['M1'], items: [{ id: 'U1', milestone: 'M1', title: 'screen', ui: true }] } });
-  sb.queue(smokeStep(), happyItem('U1', { ui: true }), { structured: { pass: true, failures: [], summary: 'good' } }, { structured: { markdown: '# M1\n\nOpen it.\n', screenshots: [] } });
+  sb.queue(
+    smokeStep(),
+    happyItem('U1', { ui: true }),
+    { structured: { pass: true, failures: [], owner: ['Set SMTP_HOST in the hosting settings so sign-up mail goes out'], summary: 'good' }, writes: { '.loop/work/M1/accept/wt/built.txt': 'the merged base' } },
+    { structured: { markdown: '# M1\n\nOpen it.\n', screenshots: [] } },
+  );
   const r = await sb.run();
   assert.equal(r.code, 0, r.stderr + r.stdout);
   assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'accept', 'packet']);
   assert.equal(sb.state().accept.M1.passed, true);
+  // a round that passed still hands on what only the owner can do
+  assert.match(sb.file('.loop/OWNER-ACTIONS.md'), /\*\*M1\*\* — Set SMTP_HOST in the hosting settings/);
+  // nothing merged after the round: the packet works from the build acceptance left
+  assert.deepEqual(sb.calls()[4].work['M1/accept'], ['wt']);
   assert.match(sb.file('.loop/PROGRESS.md'), /acceptance round 1 on develop: \*\*pass\*\*/);
   assert.deepEqual(events(sb, 'acceptance.round').map((e) => [e.mode, e.places, e.pass]), [['local', ['local'], true]]);
   const [, , review, accept, packet] = sb.calls().map((c) => c.task);
@@ -116,6 +125,22 @@ test('a milestone with a screen and a command is accepted once, each kind where 
   } finally {
     server.close();
   }
+});
+
+test('after a last round that failed, the packet does not see the build from before the fixes', async () => {
+  const sb = box({ stack: WEB_NOT_DEPLOYED, backlog: { milestones: ['M1'], items: [{ id: 'U1', milestone: 'M1', title: 'screen', ui: true }] }, config: { maxAcceptRounds: 1 } });
+  sb.queue(
+    smokeStep(),
+    happyItem('U1', { ui: true }),
+    { structured: { pass: false, failures: [{ title: 'Save button does nothing', scope: 'No feedback after save.' }], summary: 'one failure' }, writes: { '.loop/work/M1/accept/wt/built.txt': 'the base before the fix' } },
+    happyItem('ACC-M1-1-1', { ui: true }),
+    { structured: { markdown: '# M1\n', screenshots: [] } },
+  );
+  const r = await sb.run();
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.deepEqual(sb.calls().map((c) => c.phase), ['smoke', 'build', 'review', 'accept', 'build', 'review', 'packet']);
+  assert.equal(sb.calls()[6].work['M1/accept'], undefined, 'the stale build is gone before the packet starts');
+  assert.match(sb.file('.loop/PROGRESS.md'), /M1 · acceptance built [0-9a-f]{7}; develop is at [0-9a-f]{7} now: the packet builds it again/);
 });
 
 test('after the last acceptance round the packet waits for the fix items and says they were not re-accepted', async () => {

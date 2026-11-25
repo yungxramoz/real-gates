@@ -626,6 +626,7 @@ test('the retro sheet says how an item ended, also when it ended before the stre
       { at: at(2), item: 'NOW-DONE', phase: 'build', costUsd: 1, durationMs: 60000 },
       { at: at(3), item: 'MERGED', phase: 'build', costUsd: 1, durationMs: 60000 },
       { at: at(4), item: 'RUNNING', phase: 'build', costUsd: 1, durationMs: 60000 },
+      { at: at(4), item: 'RUNNING', phase: 'review', costUsd: null, durationMs: 60000 }, // killed: no cost reported
     ];
     const events = [
       { at: '2026-01-01T10:00:00.000Z', type: 'item.finished', item: 'OLD-DONE', status: 'done' }, // before the stretch: not read
@@ -639,6 +640,10 @@ test('the retro sheet says how an item ended, also when it ended before the stre
     const L = { root: dir, cfg: { retro: {} }, paths: { events: path.join(dir, 'events.jsonl'), ledger: path.join(dir, 'ledger.jsonl'), guardLog: path.join(dir, 'guard.log') }, store: { S, allItems: () => ids.map((id) => ({ id })) } };
     const rows = Object.fromEntries(buildSheet(L, since).markdown.split('\n').filter((l) => /^\| [A-Z-]+ \| backlog \|/.test(l)).map((l) => l.split('|').map((c) => c.trim())).map((c) => [c[1], c[3]]));
     assert.deepEqual(rows, { 'OLD-DONE': 'done', 'OLD-SKIP': 'skipped', 'NOW-DONE': 'done', MERGED: 'merged', RUNNING: 'open' });
+    // a session of unknown cost is named, never added as $0
+    const sheet = buildSheet(L, since).markdown;
+    assert.ok(sheet.includes('5 item(s), 6 session(s), $5.00 + 1 unknown since'), sheet);
+    assert.ok(sheet.includes('| RUNNING | backlog | open | 0 | nothing | 2 | $1.00 + 1 unknown | 2 |'), sheet);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -283,19 +283,28 @@ function remoteHeads() {
   const at = (b) => proc.gitTry('rev-parse', '--verify', `origin/${b}`).out || null;
   return { base: at(cfg.base), production: at(cfg.production) };
 }
-/** One line per session in .loop/ledger.jsonl, and the running cost in the state. */
+/**
+ * One line per session in .loop/ledger.jsonl, and the running cost in the state. The cost comes
+ * from the session's final message. A session that never wrote one (the timeout killed it, it
+ * crashed) has an unknown cost: null in the ledger and counted apart, never a silent $0. The run
+ * dollar cap counts it at the session cap, the most it could have spent; a session the API turned
+ * away (a usage limit, an overload) is retried, and counting each try at the cap would end a run
+ * that spent nothing, so the cap counts those at nothing.
+ */
 function recordSession(res, phase, item) {
-  const cost = Number(res.cost) || 0;
+  const known = typeof res.cost === 'number' && Number.isFinite(res.cost);
+  const cost = known ? res.cost : 0;
   const id = item?.id || '-';
   const cents = (n) => Math.round(n * 100) / 100;
-  runCostUsd += cost;
+  runCostUsd += known || res.limited || res.transient ? cost : cfg.budgets.maxUsdPerSession;
   const c = (store.S.cost ||= { totalUsd: 0, byItem: {} });
   c.totalUsd = cents(c.totalUsd + cost);
   c.byItem[id] = cents((c.byItem[id] || 0) + cost);
+  if (!known) c.unknownSessions = (c.unknownSessions || 0) + 1;
   // what learning costs, for its share of the run (loop/lib/learn.mjs)
   if (phase === 'retro' || item?.kind === 'learn') retroState(store.S).sessions++;
   store.save();
-  fs.appendFileSync(paths.ledger, JSON.stringify({ at: new Date().toISOString(), session: path.basename(res.log || ''), item: id, phase, ok: !!res.ok, limited: !!res.limited, timedOut: !!res.timedOut, turns: res.turns ?? null, durationMs: res.durationMs ?? null, costUsd: cost }) + '\n');
+  fs.appendFileSync(paths.ledger, JSON.stringify({ at: new Date().toISOString(), session: path.basename(res.log || ''), item: id, phase, ok: !!res.ok, limited: !!res.limited, timedOut: !!res.timedOut, turns: res.turns ?? null, durationMs: res.durationMs ?? null, costUsd: known ? cost : null }) + '\n');
 }
 function afterSession(res, phase, item) {
   try {

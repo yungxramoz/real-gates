@@ -166,6 +166,7 @@ export async function packMilestones(L, only) {
         }
       }
       a.rounds++;
+      a.sha = sha; // what this round's build is: the packet reuses it only while the base is still this
       L.store.save();
       const res = await acceptSession(L, m, a.rounds, sha, plan);
       // A stop or a spent budget ends the run after this step, not instead of its result: a round
@@ -178,6 +179,8 @@ export async function packMilestones(L, only) {
         L.store.save();
         return {};
       }
+      // what only the owner can do, from a round that passed as much as from one that failed
+      for (const x of res?.owner || []) L.ownerAction(m, x);
       if (res?.pass) {
         a.passed = true;
         L.progress(`${m} · acceptance round ${a.rounds} ${where}: **pass**`);
@@ -193,7 +196,6 @@ export async function packMilestones(L, only) {
         failures.forEach((f, i) =>
           L.store.addExtra({ kind: 'fix', id: `ACC-${m}-${a.rounds}-${i + 1}`, milestone: m, title: short(f.title || 'acceptance failure', 120), scope: short(`${f.scope || ''} Evidence: ${f.evidence || '-'}${f.relatedItem ? ` (related: ${f.relatedItem})` : ''}`, 1200), refs: [`.loop/accept-${m}.json`, 'docs/REQUIREMENTS.md', 'loop/prompts/learn.md'], type: acceptTypeName(L.cfg, items, f.relatedItem), dependsOn: [] }),
         );
-        for (const x of res?.owner || []) L.ownerAction(m, x);
         L.progress(`${m} · acceptance round ${a.rounds} ${where}: **${failures.length} failure(s)** → fix items queued first in line`);
         L.event('acceptance.round', { milestone: m, round: a.rounds, mode, places, pass: false, failures: failures.length });
         L.store.save();
@@ -219,6 +221,17 @@ export async function packMilestones(L, only) {
       a.unverified = true;
       L.ownerAction(m, `Milestone ${m}: acceptance still found failures in its last round (${a.rounds} of ${L.cfg.maxAcceptRounds}). Their fix items (ACC-${m}-${a.rounds}-*) went through CI and review, but nothing re-tested them ${plan.map((part) => (part.place === 'site' ? 'on the dev site' : `on ${L.cfg.base}`)).join(' and ')}. Check them yourself against .loop/accept-${m}.json before you rely on ${m}.`);
       L.progress(`${m} · packed with the last acceptance round's fixes not re-accepted ${where}`);
+    }
+    // The packet shows what acceptance left built, while that is still the base. Once something
+    // merged after the round (the last round's fix items, a LEARN item), that build shows a product
+    // that is gone: it goes, and the packet builds the merged base again.
+    if (a.sha) {
+      L.proc.gitTry('fetch', 'origin', '--prune');
+      const now = L.proc.gitTry('rev-parse', `origin/${L.cfg.base}`).out;
+      if (now && now !== a.sha) {
+        L.work.done(m, 'accept');
+        L.progress(`${m} · acceptance built ${a.sha.slice(0, 7)}; ${L.cfg.base} is at ${now.slice(0, 7)} now: the packet builds it again`);
+      }
     }
     S.packed.push(m);
     L.event('milestone.packed', { milestone: m, unverified: !!a.unverified });

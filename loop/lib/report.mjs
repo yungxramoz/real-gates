@@ -22,7 +22,7 @@ export function writeReport(L, reason, runSessions) {
     openImpediments.length ? `Defects in the harness the run recorded (.loop/IMPEDIMENTS.md; nothing waits for them):\n${openImpediments.map((i) => `- ${i.id} (${i.part}, ${i.status}) ${i.title}`).join('\n')}` : '',
   ].filter(Boolean).join('\n\n');
   const sections = [
-    `# Loop report\n\n${new Date().toISOString()} — stopped because: **${reason}**\n\nSessions this run: ${runSessions} · total: ${L.store.S.iterations} · cost so far: ~$${(L.store.S.cost?.totalUsd || 0).toFixed(2)} (per session: .loop/ledger.jsonl)`,
+    `# Loop report\n\n${new Date().toISOString()} — stopped because: **${reason}**\n\nSessions this run: ${runSessions} · total: ${L.store.S.iterations} · cost so far: ${costSoFar(L.store.S)} (per session: .loop/ledger.jsonl)`,
     `## Held — merged, not verified (${items.filter((i) => isHeld(L, i)).length})\n\n${items.filter((i) => isHeld(L, i)).map((i) => `${line(i)}\n  - hold: ${st(i.id).hold?.kind} — ${st(i.id).hold?.why}`).join('\n') || '—'}`,
     `## Done (${by('done').length})\n\n${by('done').map(line).join('\n') || '—'}`,
     `## Needs you (${by('needs_human').length + by('blocked').length})\n\n${[...by('needs_human'), ...by('blocked')].map(line).join('\n') || '—'}`,
@@ -36,13 +36,19 @@ export function writeReport(L, reason, runSessions) {
   fs.writeFileSync(L.paths.report, sections.join('\n\n') + '\n');
 }
 
+/** The cost the sessions reported, and how many of them could not report one. */
+export function costSoFar(S) {
+  const n = S.cost?.unknownSessions || 0;
+  return `~$${(S.cost?.totalUsd || 0).toFixed(2)}${n ? ` + ${n} session(s) of unknown cost` : ''}`;
+}
+
 export function printStatus(L) {
   const items = L.store.allItems();
   const st = L.store.st;
   const counts = {};
   for (const it of items) counts[st(it.id).status] = (counts[st(it.id).status] || 0) + 1;
   console.log(`\nloop — ${items.length} items · ${Object.entries(counts).map(([k, v]) => `${k}: ${v}`).join(' · ')}`);
-  console.log(`sessions so far: ${L.store.S.iterations} · cost so far: ~$${(L.store.S.cost?.totalUsd || 0).toFixed(2)} · started ${L.store.S.startedAt}\n`);
+  console.log(`sessions so far: ${L.store.S.iterations} · cost so far: ${costSoFar(L.store.S)} · started ${L.store.S.startedAt}\n`);
   let m = '';
   for (const it of items) {
     if (it.milestone !== m) console.log(`\n${(m = it.milestone)}`);

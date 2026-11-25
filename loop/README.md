@@ -32,7 +32,7 @@ pick next item (backlog order, dependencies done; held, FIX, ACC and LEARN items
  └─ milestone complete?    → acceptance where the product runs: on the deployed dev site, after
                              /api/health reports the merged commit and db ok, or on the merged
                              base itself when nothing is deployed. Failures become ACC items,
-                             max 2 rounds
+                             max 2 rounds; asks for the owner go to OWNER-ACTIONS, pass or fail
                            → retro: what went well, what went wrong and why. Its action
                              items become one LEARN item, built before the packet; causes in
                              the harness are recorded as impediments; nothing waits
@@ -139,7 +139,7 @@ reboot and it continues, including an item that was mid-CI or mid-review.
 | Blocked actions | `.loop/logs/guard.log` (time, item, phase, rule, reason, what was refused) |
 | What the loop learned | `.loop/retros/R-<n>.md` (the minutes of each retro), filed in `docs/retros/` |
 | Defects in the harness the run recorded | `.loop/IMPEDIMENTS.md` (a record; nothing in the run waits for it) |
-| Time and cost per session | `.loop/ledger.jsonl` (item, phase, whether it ended ok, turns, duration, cost) |
+| Time and cost per session | `.loop/ledger.jsonl` (item, phase, whether it ended ok, turns, duration, cost). A session that ended without reporting its cost (killed by its timeout, crashed) has `costUsd: null`; the report and the retro count those apart instead of adding $0 |
 | What happened, for a program | `.loop/events.jsonl` (one JSON line per event, see below) |
 | **Things only you can do** | `.loop/OWNER-ACTIONS.md` |
 | **Milestone "come look"** | `.loop/reviews/<milestone>.md`, with screenshots |
@@ -158,7 +158,7 @@ the folder before the session and removes it when what the step worked on is fin
 | --- | --- | --- | --- |
 | `.loop/work/<item>/build/` | the build sessions of an item | the first one only: a fix round finds what the round before left | when the item is done |
 | `.loop/work/<item>/review/` | its review sessions | every review session | when the item is done |
-| `.loop/work/<milestone>/accept/` | acceptance: what it installs, its scratch folders | every acceptance round | when the milestone is packed |
+| `.loop/work/<milestone>/accept/` | acceptance: what it installs, its scratch folders | every acceptance round | when the milestone is packed, or before the packet once something merged after the round: the packet then builds the merged base again |
 | `.loop/work/<milestone>/packet/` | the packet session | the session | when the milestone is packed |
 | `.loop/work/<retro>/retro/` | the retro session | the session | when the retro is over |
 
@@ -360,7 +360,7 @@ bypass permissions. Generated settings turn auto memory off.
 | Sessions per run | 150 |
 | Hours per run | 120 |
 | Dollars per session | 25 |
-| Dollars per run (`budgets.maxUsdPerRun`) | 0 = no cap |
+| Dollars per run (`budgets.maxUsdPerRun`) | 0 = no cap. A session of unknown cost counts at the session cap; one the API turned away (usage limit, overload) at nothing |
 | Failed attempts per item | 3 |
 | Build rounds per item, fixes included | 8 |
 | CI fix rounds per item | 3 |
