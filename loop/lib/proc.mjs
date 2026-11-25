@@ -20,7 +20,7 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
  * little later works. A run once ended on `gh pr view` → "dial tcp …: connectex: …" while the
  * machine's network came back minutes later.
  */
-export const TRANSIENT_GH = /dial tcp|connectex|could not resolve host|no such host|error connecting to|i\/o timeout|tls handshake timeout|connection (?:reset|refused|timed out)|unexpected eof|http 50[234]\b|bad gateway|service unavailable|gateway time-?out/i;
+export const TRANSIENT_GH = /dial tcp|connectex|could not resolve host|no such host|error connecting to|i\/o timeout|tls handshake timeout|connection (?:reset|refused|timed out)|unexpected eof|": eof\b|http 50[234]\b|bad gateway|service unavailable|gateway time-?out/i;
 /** The request never reached GitHub: sending it again cannot do anything twice. */
 export const UNSENT_GH = /dial tcp|connectex|could not resolve host|no such host|error connecting to/i;
 /** Waits between gh tries, in units of LOOP_GH_RETRY_MS (5 s): about eight minutes in all. */

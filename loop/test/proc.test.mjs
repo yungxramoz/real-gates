@@ -93,6 +93,7 @@ test('what counts as a network failure', () => {
 const DIAL =
   'Post "https://api.github.com/graphql": dial tcp 20.250.119.72:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time.\n';
 const BAD_GATEWAY = 'HTTP 502: 502 Bad Gateway (https://api.github.com/repos/acme/app/pulls/22)\n';
+const CLOSED = 'Get "https://api.github.com/repos/acme/app/actions/runs/7/jobs?per_page=100": EOF\n';
 
 test('a gh read that could not reach GitHub is tried again, and the run goes on', () => {
   const g = fakeGit({ name: 'gh', fails: 2, stderr: DIAL, code: 1 });
@@ -101,6 +102,10 @@ test('a gh read that could not reach GitHub is tried again, and the run goes on'
   // a GitHub hiccup on a read counts too
   const t = fakeGit({ name: 'gh', fails: 1, stderr: BAD_GATEWAY, code: 1 });
   assert.deepEqual([t.proc.ghTry('api', 'repos/acme/app/commits/abc/check-runs').ok, t.count()], [true, 2]);
+  // a connection closed before the answer came: gh says only "EOF"
+  const eof = fakeGit({ name: 'gh', fails: 1, stderr: CLOSED, code: 1 });
+  assert.equal(eof.proc.gh('api', 'repos/acme/app/actions/runs/7/jobs?per_page=100'), 'ok');
+  assert.equal(eof.count(), 2);
 });
 
 test('GitHub out of reach for good is reported after six tries, with what gh said', () => {
@@ -121,6 +126,10 @@ test('a gh write is sent again only when it never left, so nothing happens twice
   const sent = fakeGit({ name: 'gh', fails: 99, stderr: BAD_GATEWAY, code: 1 });
   assert.equal(sent.proc.ghTry('pr', 'merge', '22', '--squash').ok, false);
   assert.equal(sent.count(), 1);
+  // so may a connection that closed before the answer
+  const closed = fakeGit({ name: 'gh', fails: 99, stderr: CLOSED.replace('Get', 'Post'), code: 1 });
+  assert.equal(closed.proc.ghTry('pr', 'review', '22', '--comment', '--body-file', 'x').ok, false);
+  assert.equal(closed.count(), 1);
   // and a failure that is no network failure is never repeated, read or write
   const notFound = fakeGit({ name: 'gh', fails: 99, stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 99.\n', code: 1 });
   assert.throws(() => notFound.proc.ghJson('pr', 'view', '99'));
@@ -137,7 +146,7 @@ test('which gh calls only read', () => {
 });
 
 test('what counts as GitHub out of reach, and what as never sent', () => {
-  for (const line of [DIAL, BAD_GATEWAY, 'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com', 'Get "https://api.github.com/user": net/http: TLS handshake timeout', 'read tcp 10.0.0.2:5050->140.82.121.6:443: wsarecv: An existing connection was forcibly closed by the remote host. connection reset', 'HTTP 503: Service Unavailable']) {
+  for (const line of [DIAL, BAD_GATEWAY, CLOSED, 'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com', 'Get "https://api.github.com/user": net/http: TLS handshake timeout', 'read tcp 10.0.0.2:5050->140.82.121.6:443: wsarecv: An existing connection was forcibly closed by the remote host. connection reset', 'HTTP 503: Service Unavailable']) {
     assert.ok(TRANSIENT_GH.test(line), line);
   }
   for (const line of ['HTTP 404: Not Found (https://api.github.com/repos/a/b)', 'GraphQL: Could not resolve to a PullRequest with the number of 99.', 'Head branch was modified. Review and try the merge again.', 'HTTP 401: Bad credentials', 'Pull request is not mergeable']) {
@@ -146,5 +155,6 @@ test('what counts as GitHub out of reach, and what as never sent', () => {
   assert.ok(UNSENT_GH.test(DIAL));
   assert.ok(UNSENT_GH.test('error connecting to api.github.com'));
   assert.ok(!UNSENT_GH.test(BAD_GATEWAY));
+  assert.ok(!UNSENT_GH.test(CLOSED));
   assert.ok(!UNSENT_GH.test('connection reset by peer'));
 });
