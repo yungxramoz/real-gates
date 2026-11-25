@@ -183,7 +183,10 @@ test('a path under a folder git ignores is not checked: the answer is the same w
   assert.match(before[0], /`src\/gone\.mjs` is named here and is not in the repository/);
   // the same folder, not ignored, is a folder like any other
   fs.rmSync(path.join(root, '.gitignore'));
-  assert.match(texts(checkArchitecture({ root, blocks: CLI })).join('\n'), /`\.loop\/state\.json` is named here/);
+  assert.match(
+    texts(checkArchitecture({ root, blocks: CLI })).join('\n'),
+    /`\.loop\/state\.json` is named here/,
+  );
 });
 
 test('a decision ID a page names must be a row in docs/DECISIONS.md', () => {
