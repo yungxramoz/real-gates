@@ -370,7 +370,11 @@ bypass permissions. Generated settings turn auto memory off.
 
 **One loop at a time**: a lock file refuses a second instance.
 **Usage limits**: the loop sleeps until the reset and retries the same step; the session is not
-counted. **Destructive migrations** (`DROP`, `TRUNCATE`, unbounded `DELETE`) are never applied
+counted. **Network failures**: a `git fetch`, `pull` or `ls-remote` that could not reach the
+remote is tried again after 5, 20 and 60 s. A `gh` call that could not reach GitHub is tried
+again over about eight minutes (5 s, 20 s, 1, 2 and 5 min): a read after any network failure or
+GitHub 5xx, a merge, review or CI re-run only when the request never left, so nothing happens
+twice. **Destructive migrations** (`DROP`, `TRUNCATE`, unbounded `DELETE`) are never applied
 automatically; they go to `.loop/OWNER-ACTIONS.md`. **The production branch is never touched.**
 
 ## Holds
