@@ -4,7 +4,8 @@
 //
 // Step: { mode: ok|limit|crash|transient, guard: "<shell command>", commit: { branch, files, message,
 //         mergeBase }, createPr: { title }, result: {...}, writes: { relPath: content }, structured,
-//         text, initExtra }
+//         text, initExtra, cost (null: the result carries no cost, as when a session never
+//         reported one) }
 // Placeholders: "$OPEN" = the branch of the newest open PR, "$PR" = the PR of the current branch.
 // Every call also records `work`: what is in .loop/work/ as the session starts, { "<id>/<step>": [names] }.
 // `guard` runs the PreToolUse hook command from the --settings file exactly as Claude Code would.
@@ -125,5 +126,5 @@ try {
   process.exit(1);
 }
 
-emit({ type: 'result', subtype: 'success', is_error: false, result: step.text ?? 'done', structured_output: step.structured, num_turns: 3, total_cost_usd: 0.01 });
+emit({ type: 'result', subtype: 'success', is_error: false, result: step.text ?? 'done', structured_output: step.structured, num_turns: 3, ...(step.cost === null ? {} : { total_cost_usd: step.cost ?? 0.01 }) });
 process.exit(0);

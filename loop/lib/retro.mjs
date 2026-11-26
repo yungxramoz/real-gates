@@ -34,7 +34,9 @@ const parse = (l) => {
 };
 const cell = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || '-';
 const table = (head, rows) => (rows.length ? [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...rows.map((r) => `| ${r.map(cell).join(' | ')} |`)].join('\n') : 'None.');
-const usd = (n) => `$${(n || 0).toFixed(2)}`;
+/** Dollars, and the sessions whose cost is unknown (no final message: killed or crashed), never added as $0. */
+const usd = (n, unknown = 0) => `$${(n || 0).toFixed(2)}${unknown ? ` + ${unknown} unknown` : ''}`;
+const unknownCost = (s) => (typeof s.costUsd === 'number' ? 0 : 1);
 
 /** The harness version a project runs on: the template commit of its last sync (null in the template itself). */
 export const harnessVersion = (root) => readJson(path.join(root, 'loop', 'template.lock.json'), null)?.commit || null;
@@ -72,7 +74,7 @@ export function buildSheet(L, since) {
   const defs = new Map(L.store.allItems().map((i) => [i.id, i]));
   const items = new Map();
   const row = (id) => {
-    if (!items.has(id)) items.set(id, { id, sessions: 0, usd: 0, min: 0, rounds: 0, back: {}, merged: false, status: '' });
+    if (!items.has(id)) items.set(id, { id, sessions: 0, usd: 0, unknown: 0, min: 0, rounds: 0, back: {}, merged: false, status: '' });
     return items.get(id);
   };
   const learning = (s) => s.phase === 'retro' || defs.get(s.item)?.kind === 'learn';
@@ -80,6 +82,7 @@ export function buildSheet(L, since) {
     const x = row(s.item);
     x.sessions++;
     x.usd += s.costUsd || 0;
+    x.unknown += unknownCost(s);
     x.min += (s.durationMs || 0) / 60_000;
     x.step ||= ['accept', 'packet', 'retro'].includes(s.phase) ? s.phase : '';
   }
@@ -95,8 +98,8 @@ export function buildSheet(L, since) {
   const ended = (x) => x.status || (TERMINAL.has(S.items?.[x.id]?.status) ? S.items[x.id].status : x.merged ? 'merged' : 'open');
   const kind = (x) => defs.get(x.id)?.kind || 'backlog';
   const firstTime = built.filter((x) => kind(x) !== 'learn' && x.merged && x.rounds <= 1 && !Object.keys(x.back).length);
-  const total = ledger.reduce((a, s) => ({ sessions: a.sessions + 1, usd: a.usd + (s.costUsd || 0), min: a.min + (s.durationMs || 0) / 60_000 }), { sessions: 0, usd: 0, min: 0 });
-  const learn = ledger.filter(learning).reduce((a, s) => ({ sessions: a.sessions + 1, usd: a.usd + (s.costUsd || 0) }), { sessions: 0, usd: 0 });
+  const total = ledger.reduce((a, s) => ({ sessions: a.sessions + 1, usd: a.usd + (s.costUsd || 0), unknown: a.unknown + unknownCost(s), min: a.min + (s.durationMs || 0) / 60_000 }), { sessions: 0, usd: 0, unknown: 0, min: 0 });
+  const learn = ledger.filter(learning).reduce((a, s) => ({ sessions: a.sessions + 1, usd: a.usd + (s.costUsd || 0), unknown: a.unknown + unknownCost(s) }), { sessions: 0, usd: 0, unknown: 0 });
 
   const blocks = new Map();
   for (const f of lines(L.paths.guardLog).map((l) => l.split('\t'))) {
@@ -120,11 +123,11 @@ export function buildSheet(L, since) {
     }
   })();
   const limit = L.cfg.retro?.maxLessons ?? 20;
-  const covers = `${built.length} item(s), ${total.sessions} session(s), ${usd(total.usd)}${since ? ` since ${since.slice(0, 16).replace('T', ' ')}Z` : ' since the run began'}`;
+  const covers = `${built.length} item(s), ${total.sessions} session(s), ${usd(total.usd, total.unknown)}${since ? ` since ${since.slice(0, 16).replace('T', ' ')}Z` : ' since the run began'}`;
 
   const markdown = [
-    `## The numbers\n\n${covers}. Of that, learning (retros and LEARN items): ${learn.sessions} session(s), ${usd(learn.usd)}.`,
-    `### Items\n\n${table(['Item', 'Kind', 'Ended', 'Build rounds', 'Sent back by', 'Sessions', 'Cost', 'Minutes'], built.map((x) => [x.id, kind(x), ended(x), x.rounds, Object.entries(x.back).map(([k, n]) => `${k} ×${n}`).join(', ') || 'nothing', x.sessions, usd(x.usd), x.min.toFixed(0)]))}`,
+    `## The numbers\n\n${covers}. Of that, learning (retros and LEARN items): ${learn.sessions} session(s), ${usd(learn.usd, learn.unknown)}.`,
+    `### Items\n\n${table(['Item', 'Kind', 'Ended', 'Build rounds', 'Sent back by', 'Sessions', 'Cost', 'Minutes'], built.map((x) => [x.id, kind(x), ended(x), x.rounds, Object.entries(x.back).map(([k, n]) => `${k} ×${n}`).join(', ') || 'nothing', x.sessions, usd(x.usd, x.unknown), x.min.toFixed(0)]))}`,
     `### Merged at the first attempt, sent back by nothing\n\n${firstTime.map((x) => x.id).join(', ') || 'None.'}`,
     `### Signals: failures counted since the last retro\n\nA signal with "calls this retro" showed up in enough different items to call it.\n\n${table(['Signal', 'Items since the last retro', 'All time', 'Latest cases', 'Note'], signals.map(([sig, e]) => [`\`${sig}\``, (e.items || []).join(', ') || '-', e.count, (e.details || []).slice(-3).join(' // '), [r.due?.signals?.includes(sig) ? 'calls this retro' : '', e.muted ? `reported (${e.muted.by})` : ''].filter(Boolean).join(', ')]))}`,
     `### Guard refusals\n\nThe guard working. This table is the cost only: a refusal is not a problem, not an impediment and not a subject for an action item. Leave it out of your result, whatever the count.\n\n${table(['Rule', 'Times', 'Items', 'Steps', 'What the guard said', 'Refused lines (examples)'], [...blocks.values()].map((b) => [`\`${b.rule}\``, b.n, [...b.items].join(', '), [...b.phases].join(', '), b.reason, b.examples.map((x) => `\`${x.replace(/`/g, "'")}\``).join(' // ') || '(not logged)']))}`,

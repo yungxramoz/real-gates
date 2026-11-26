@@ -100,6 +100,27 @@ test('every session is in the ledger with its cost, and a run dollar cap stops t
   assert.match(capped.file('.loop/REPORT.md'), /budget reached \(sessions, hours or dollars\)/);
 });
 
+test('a session that reported no cost is unknown in the ledger, never $0, and the run cap counts it at the session cap', async () => {
+  const sb = box();
+  const [build, review] = happyItem('A1');
+  sb.queue(smokeStep(), { ...build, cost: null }, review);
+  assert.equal((await sb.run()).code, 0);
+  const rows = sb.file('.loop/ledger.jsonl').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(rows.map((r) => [r.phase, r.costUsd]), [['smoke', 0.01], ['build', null], ['review', 0.01], ['packet', 0.01]]);
+  assert.equal(sb.state().cost.totalUsd, 0.03);
+  assert.equal(sb.state().cost.unknownSessions, 1);
+  assert.match(sb.file('.loop/REPORT.md'), /cost so far: ~\$0\.03 \+ 1 session\(s\) of unknown cost/);
+
+  // with a cap of $30 and sessions capped at $25, one session of unknown cost may have spent $25
+  const capped = box({ backlog: { milestones: ['M1'], items: [{ id: 'A1', milestone: 'M1', title: 'one' }, { id: 'A2', milestone: 'M1', title: 'two' }] }, config: { budgets: { maxUsdPerRun: 30, maxUsdPerSession: 25 }, milestonePackets: false } });
+  const [b1, r1] = happyItem('A1');
+  capped.queue(smokeStep(), { ...b1, cost: null }, { ...r1, cost: null }, happyItem('A2'));
+  await capped.run();
+  assert.equal(capped.state().items.A1.status, 'done');
+  assert.notEqual(capped.state().items.A2?.status, 'done');
+  assert.match(capped.file('.loop/REPORT.md'), /budget reached/);
+});
+
 test('agent sessions do not see the database URL; only the deployed-site steps see the bypass secret', async () => {
   const sb = box({ config: { postMerge: [{ adapter: 'supabase-cli', dbUrlEnv: 'DEV_DB_URL', migrationsDir: 'supabase/migrations', holdOnUnverified: true }] } });
   Object.assign(sb.env, { DEV_DB_URL: 'postgres://dev', VERCEL_BYPASS: 'secret', LOOP_FAKE_RECORD_ENV: 'DEV_DB_URL,VERCEL_BYPASS' });
